@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+#
+# Re-pack the Gesso packages out of the sibling checkout into vendor/.
+#
+# This exists because the README's advice — re-run `create-gesso-app
+# --local --force` over this directory — also rewrites src/, README.md
+# and package.json from the template, which would delete this project.
+# Phase 0 expects to change the engine, so the loop has to be safe to
+# run a hundred times.
+#
+#   ./scripts/vendor-gesso.sh              # build what is stale, then pack
+#   ./scripts/vendor-gesso.sh --no-build   # pack whatever dist/ holds now
+#   GESSO_REPO=/path/to/gesso ./scripts/vendor-gesso.sh
+#
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+GESSO="${GESSO_REPO:-$(cd "$HERE/../gesso" 2>/dev/null && pwd || true)}"
+PACKAGES=(core framework components devtools vite-plugin)
+
+if [ -z "$GESSO" ] || [ ! -f "$GESSO/pnpm-workspace.yaml" ]; then
+  echo "No Gesso checkout found. Set GESSO_REPO to point at one." >&2
+  exit 1
+fi
+
+if [ "${1:-}" != "--no-build" ]; then
+  filters=()
+  for pkg in "${PACKAGES[@]}"; do filters+=(--filter "./packages/$pkg"); done
+  echo "building ${PACKAGES[*]} in $GESSO…"
+  (cd "$GESSO" && pnpm "${filters[@]}" build)
+fi
+
+echo "packing into vendor/…"
+rm -rf "$HERE/vendor"
+mkdir -p "$HERE/vendor"
+for pkg in "${PACKAGES[@]}"; do
+  (cd "$GESSO/packages/$pkg" && pnpm pack --pack-destination "$HERE/vendor" >/dev/null)
+done
+
+# The tarball names carry the version, so a version bump in the
+# workspace changes every specifier in package.json and
+# pnpm-workspace.yaml. Rewrite both from what actually landed.
+node - "$HERE" <<'NODE'
+const { readFileSync, writeFileSync, readdirSync } = require('node:fs');
+const { join } = require('node:path');
+const root = process.argv[2];
+const tarballs = readdirSync(join(root, 'vendor')).filter(f => f.endsWith('.tgz'));
+const spec = {};
+for (const file of tarballs) {
+  const name = file.replace(/-\d+\.\d+\.\d+.*\.tgz$/, '');
+  spec[name] = `file:vendor/${file}`;
+}
+const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+for (const field of ['dependencies', 'devDependencies', 'overrides']) {
+  for (const name of Object.keys(manifest[field] ?? {})) {
+    if (spec[name]) manifest[field][name] = spec[name];
+  }
+}
+writeFileSync(join(root, 'package.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+const lines = [
+  '# The tarballs in vendor/ again, for pnpm.',
+  '#',
+  '# Written by scripts/vendor-gesso.sh. pnpm 11 reads overrides only',
+  '# from this file, not from package.json.',
+  'overrides:'
+];
+for (const [name, value] of Object.entries(spec)) lines.push(`  ${name}: ${value}`);
+writeFileSync(join(root, 'pnpm-workspace.yaml'), `${lines.join('\n')}\n`);
+console.log(`vendored ${tarballs.length} packages`);
+NODE
+
+cd "$HERE" && pnpm install
