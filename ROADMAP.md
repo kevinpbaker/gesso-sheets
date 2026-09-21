@@ -12,7 +12,8 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** scaffolded. Phase 0 has not started.
+**Status:** Phase 0 done and its exit criterion met — see
+[`PHASE0.md`](PHASE0.md). Phase 1 has not started.
 
 ---
 
@@ -29,7 +30,13 @@ worker never learns about a cell that is not on screen.
 
 Concretely: the render worker sends `setViewport({ r0, r1, c0, c1 })` as
 a command, and the app worker publishes only that window plus an
-overscan band, as plain arrays of already-formatted display strings.
+overscan band, as already-formatted display strings.
+
+Not as arrays, though: Phase 0 measured the two shapes and a row-major
+array costs eighty times the bytes of a map keyed by absolute row and
+column, because `diffArray` finds no common prefix or suffix in a
+window that scrolled and falls through to one patch per cell. See
+[`PHASE0.md`](PHASE0.md) §4.
 
 This is not an optimization, it is forced. Gesso's channel wire carries
 plain data only — `requirePlainData` in `channel/plainData.ts` rejects
@@ -50,10 +57,18 @@ band, keeping last-known values instead of clearing them, and a pending
 cell treatment that is not a flash. Phase 0 exists to find out how bad
 this is before anything is built on top of it.
 
+Phase 0's answer: the band is 8 rows and 2 columns at a 9,000 px/s
+fling, and it belongs on the **fetch** side. Widening the band the
+render worker mounts buys the same lookahead, costs four times the
+nodes, and past eight rows makes the frame slow enough to lose more
+coverage than it gained. What the round trip cannot survive is a recalc
+that blocks the publish: 30 ms of application thread leaves the sheet
+blank in 89% of frames while the scroll itself stays at 60fps.
+
 ## What Gesso does not have yet
 
-Two gaps found by reading the engine, both of which this project will
-have to close. Both are plausibly worth upstreaming rather than working
+Three gaps, two found by reading the engine and one by scrolling the
+Phase 0 spike by hand, all of which this project will have to close. Both are plausibly worth upstreaming rather than working
 around, and that decision should be made once the shape is known, not
 now.
 
@@ -62,6 +77,26 @@ now.
 declared tracks shared with the header through `subgrid: 'columns'`.
 Nothing windows columns. This is the main engine work, and the reason
 Phase 0 is a spike rather than a start.
+
+*Closed by Phase 0* as `UiVirtualSheet` / `LazySheet`, a peer of
+`UiLazyList` rather than a second axis on `UiVirtualWindow`: a sheet is
+told its geometry, so there is nothing to measure, and without
+measurement the correction table, the scroll anchoring and the
+per-frame extent walk all go away. It does not use `subgrid` either —
+sharing tracks costs a full-content measure of every mounted cell on
+every layout, and a sheet's column widths are given rather than
+derived. The shape is now known, so the upstreaming decision this file
+deferred can be taken.
+
+**Two-axis scroll input.** *Found in Phase 0, and not one of the two
+this file started with.* `UiWheelController` asked a scroll container
+for a single axis, derived from its flex direction, so a container that
+overflows both ways dropped every wheel delta on the axis it was not
+classified as — a trackpad could not scroll the sheet sideways at all.
+Fixed by asking each axis whether it has room. The scrollbar thumb's
+grab target was also the six pixels it paints, which made a press page
+the track instead of dragging. `UiTouchScroller` is still one-axis and
+will need the same treatment before a tablet is in scope.
 
 **Paste into a range.** `UiEditingController.paste` routes pasted text
 into the focused editable. A spreadsheet needs to intercept a paste when
@@ -84,7 +119,7 @@ first phase rather than retrofitted. (It is `cell`, not `gridcell`.)
 Each phase ends at something observable, not at "done". Where a phase
 borrows an exit criterion from Gesso's own gates, it says so.
 
-### Phase 0 — Burn down the two risks
+### Phase 0 — Burn down the two risks — **done**
 
 Timeboxed, throwaway code. Spike two-axis windowing and the viewport
 round trip together, with fake data and no formulas.
@@ -93,6 +128,13 @@ round trip together, with fake data and no formulas.
 values arriving from the app worker, and the overscan band that keeps it
 clean is a known number. If this cannot be hit, the rest of this file
 changes.
+
+**Met.** 10,000 × 100 cells, both axes, at 3,000 and 9,000 px/s: a
+16.6–16.7 ms frame gap on 4.2–5.2 ms of work, and no visible cell
+without a value in any frame of any of the four runs. The band is 8
+rows and 2 columns. `pnpm phase0` reproduces the whole table; the
+findings, including the three that change later phases, are in
+[`PHASE0.md`](PHASE0.md).
 
 ### Phase 1 — The sheet model, headless
 
@@ -120,11 +162,26 @@ One keystroke in a cell with 50,000 dependents should emit patches
 proportional to the visible window, not to the dependents. That single
 assertion is the whole thesis.
 
+Two things Phase 0 adds to this phase. The window is a map keyed by
+absolute row and column, not arrays — the shape decides the patch count
+more than the contents do. And a second spec is owed beside the
+patch-count one: editing a large graph *while the viewport moves*, so
+that a recalc which blocks the publish is caught here rather than felt
+as a blank sheet.
+
 ### Phase 3 — The grid surface
 
 Frozen row and column headers through `position: 'sticky'`, which is
-already conformance-tested against Chrome. Selection rectangle, active
-cell ring, column resize by drag, A/B/C and 1/2/3 headers.
+already conformance-tested against Chrome — though not against a
+two-axis window, which is the piece Phase 0 did not cover. Selection
+rectangle, active cell ring, column resize by drag, A/B/C and 1/2/3
+headers.
+
+Column resize turns every offset from a multiplication into a prefix
+sum, which `UiVirtualSheet` does not do yet. And cell-element identity
+is a performance contract here, not a detail: Phase 0's whole frame
+budget went on allocating cell bindings until the elements were
+memoized by the cell they hold.
 
 **Exit:** specs querying the semantics tree as `grid` / `row` /
 `columnheader` / `cell`, and `toHaveBox` assertions pinning the frozen
@@ -199,6 +256,13 @@ the loop has to be cheap:
 `vendor/` is gitignored: it is 2MB of tarballs that change on every
 engine iteration, and the script regenerates them in seconds. A fresh
 clone runs the script once, before `pnpm install`.
+
+Each tarball's name carries a hash of its own bytes, and that is not
+cosmetic. pnpm resolves a `file:` dependency by path and version and
+then trusts its store, so an engine change that leaves the version
+alone — which every change during a phase does — used to be re-packed
+under the same name and never unpacked. `pnpm install` said "Already up
+to date" and the app went on running the previous build.
 
 Do **not** follow the generated `README.md`'s advice to re-run
 `create-gesso-app --local --force` over this directory. It rewrites

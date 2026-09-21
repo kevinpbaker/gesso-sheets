@@ -37,6 +37,21 @@ for pkg in "${PACKAGES[@]}"; do
   (cd "$GESSO/packages/$pkg" && pnpm pack --pack-destination "$HERE/vendor" >/dev/null)
 done
 
+# Stamp each tarball with a hash of its own bytes.
+#
+# Without this the loop silently does nothing. pnpm resolves a `file:`
+# tarball by its path and version and then trusts its store, so an
+# engine change that leaves the version alone — which every change
+# during a phase does — re-packs a new tarball under the old name and
+# is never unpacked: `pnpm install` says "Already up to date" and the
+# app keeps running the previous build. A content hash in the name
+# makes every real change a new specifier, which is the only thing
+# pnpm reliably notices.
+for tarball in "$HERE"/vendor/*.tgz; do
+  sum="$(sha256sum "$tarball" | cut -c1-8)"
+  mv "$tarball" "${tarball%.tgz}-$sum.tgz"
+done
+
 # The tarball names carry the version, so a version bump in the
 # workspace changes every specifier in package.json and
 # pnpm-workspace.yaml. Rewrite both from what actually landed.

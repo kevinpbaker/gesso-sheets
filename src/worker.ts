@@ -1,12 +1,12 @@
 /**
  * The render worker: everything the person sees.
  *
- * A component cannot cross `postMessage`, so the root is named here
- * rather than passed in from `main.ts`. That one constraint is the
- * only reason this file exists, and it is why every Gesso application
- * has three files rather than two.
+ * `useChannel(Sheet)` with no worker named resolves to whichever
+ * application worker the shell spawned, so this file never learns
+ * where the cells come from.
  */
 import { renderRoot } from 'gesso-framework';
 import { App } from './App';
+import { Sheet } from './spike/SheetContract';
 
-renderRoot(App);
+renderRoot(App).useChannel(Sheet);
