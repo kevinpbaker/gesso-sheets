@@ -22,11 +22,13 @@ import { SheetService } from './SheetService';
  */
 const document = new SheetDocument();
 seed(document);
+// Settled before the service exists, so that the first status it
+// publishes is the true one. Recalculating afterwards would leave the
+// service holding the count it was built with — the sheet would be
+// right and the readout would say there was work outstanding forever.
+document.sheet.recalculate();
 
 const service = new SheetService(document);
-// The seed queued a few dozen formulas; settle them before anyone
-// looks, so the first window is the sheet and not its skeleton.
-document.sheet.recalculate();
 
 serveChannels([
   serve(Sheet, {

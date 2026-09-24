@@ -13,11 +13,22 @@ was clean in every run.
 | `confirm-x-3000` | horizontal | 3,000 | 16.69 ms | 4.63 ms | 0% |
 | `confirm-x-9000` | horizontal | 9,000 | 16.67 ms | 5.18 ms | 0% |
 
-Reproduce with `pnpm phase0`. It builds the spike, opens it in headless
-Chrome with `?bench`, runs twenty-eight configurations of about three
-seconds each, and prints the table. The numbers here are from a run on
-one Linux machine under software rendering; what matters is the shape
-of the differences, which held across four runs, not the third decimal.
+The numbers here are from a run on one Linux machine under software
+rendering; what matters is the shape of the differences, which held
+across four runs, not the third decimal.
+
+**The harness is gone, and the numbers are not reproducible from the
+current tree.** `pnpm phase0` built the spike, opened it in headless
+Chrome with `?bench`, ran twenty-eight configurations and printed the
+table; the spike it drove was retired in Phase 3, when the real grid
+replaced it. Everything here reproduces from commit `e4ea6e1`, which
+is the last one where `src/spike` and `scripts/phase0.ts` exist.
+
+That leaves the project without a frame budget in CI, which Phase 7
+asks for by name — and it should be rebuilt against the real grid
+rather than the spike, driving *input* rather than writing scroll
+offsets. Both times hand-scrolling found something the bench could
+not, it was because the bench went in through a side door.
 
 So the phases in `ROADMAP.md` stand. What follows is what changes
 inside them.
@@ -285,10 +296,10 @@ Worth keeping:
   so the upstreaming decision it wanted to defer can be made. It is
   written as a peer of `UiLazyList` and has no sheet-specific
   vocabulary in it.
-- **`scripts/phase0.ts`**, which is Phase 7's proof surface in
-  miniature: a frame budget in CI that fails when a change regresses it
-  is exactly what Phase 7 asks for, and this already produces the
-  numbers.
+- **`scripts/phase0.ts`**, which was Phase 7's proof surface in
+  miniature. Retired in Phase 3 with the spike it drove; the shape of
+  it is what Phase 7 should rebuild, against the real grid and through
+  the input path.
 - **The fix to `scripts/vendor-gesso.sh`.** pnpm resolves a `file:`
   tarball by path and version and then trusts its store, so an engine
   change that leaves the version alone — every change during a phase —

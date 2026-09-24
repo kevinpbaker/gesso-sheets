@@ -8,14 +8,13 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "phase0": "node scripts/phase0.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
   "dependencies": {
     "gesso-components": "file:vendor/gesso-components-0.2.1-09b194c5.tgz",
-    "gesso-core": "file:vendor/gesso-core-0.2.1-1a6a770e.tgz",
-    "gesso-framework": "file:vendor/gesso-framework-0.2.1-399ba802.tgz",
+    "gesso-core": "file:vendor/gesso-core-0.2.1-f026e427.tgz",
+    "gesso-framework": "file:vendor/gesso-framework-0.2.1-625f5c79.tgz",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
@@ -24,11 +23,12 @@
     "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz",
     "typescript": "~7.0.2",
     "vite": "^8.2.0",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "gesso-testing": "file:vendor/gesso-testing-0.2.1-a146cf09.tgz"
   },
   "overrides": {
-    "gesso-core": "file:vendor/gesso-core-0.2.1-1a6a770e.tgz",
-    "gesso-framework": "file:vendor/gesso-framework-0.2.1-399ba802.tgz",
+    "gesso-core": "file:vendor/gesso-core-0.2.1-f026e427.tgz",
+    "gesso-framework": "file:vendor/gesso-framework-0.2.1-625f5c79.tgz",
     "gesso-components": "file:vendor/gesso-components-0.2.1-09b194c5.tgz",
     "gesso-devtools": "file:vendor/gesso-devtools-0.2.1-463f467f.tgz",
     "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz"

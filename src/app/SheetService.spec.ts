@@ -127,3 +127,16 @@ describe('SheetService', () => {
     expect(service.recalculating).toBe(false);
   });
 });
+
+describe('a service built over a sheet that is already settled', () => {
+  it('does not claim there is work outstanding', () => {
+    const { document, service } = harness();
+    document.sheet.setCell(0, 0, '=1+1');
+    document.sheet.recalculate();
+
+    // The status published at construction is the one a screen reads
+    // before anything happens; a service built over a settled sheet
+    // that reported otherwise would say so forever.
+    expect(latest<SheetStatus>(service.status).pending).toBe(0);
+  });
+});

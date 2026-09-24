@@ -5,13 +5,9 @@
  * are written by `gesso-vite-plugin` from `vite.config.ts`: it finds
  * `worker.ts` beside this file for the render worker and `AppWorker.ts`
  * for the application worker, and writes the `new Worker(new URL(...))`
- * construction for each.
- *
- * The one thing said out loud is `workerName`. A worker has no page
- * url, so a flag that only the url carries has to be handed to it as
- * its name, and `?bench` is such a flag: it makes the render worker
- * run the Phase 0 measurement unattended instead of waiting for
- * someone to press a button. The idiom is Gesso's own `?still`.
+ * construction for each. Everything a person sees is built, laid out,
+ * painted and hit-tested in the render worker, and the sheet itself
+ * lives on a third thread, so work on this one cannot delay a frame.
  */
 import { createApp } from 'gesso-framework';
 
@@ -20,8 +16,4 @@ if (host === null) {
   throw new Error('index.html has no #app element to mount into.');
 }
 
-const app = createApp({
-  workerName: new URLSearchParams(location.search).has('bench') ? 'bench' : undefined
-});
-
-app.mount(host);
+createApp().mount(host);

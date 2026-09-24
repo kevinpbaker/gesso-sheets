@@ -16,7 +16,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GESSO="${GESSO_REPO:-$(cd "$HERE/../gesso" 2>/dev/null && pwd || true)}"
-PACKAGES=(core framework components devtools vite-plugin)
+PACKAGES=(core framework components devtools vite-plugin testing)
 
 if [ -z "$GESSO" ] || [ ! -f "$GESSO/pnpm-workspace.yaml" ]; then
   echo "No Gesso checkout found. Set GESSO_REPO to point at one." >&2

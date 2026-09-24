@@ -12,10 +12,11 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phases 0, 1 and 2 done, all three exit criteria met. Phase
-0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
-`src/sheet`, the contract and the application worker in `src/app`, and
-`pnpm test` is its 154 specs. Phase 3 has not started.
+**Status:** Phases 0 to 3 done, all four exit criteria met. Phase 0's
+findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
+`src/sheet`, the contract, the application worker and the grid in
+`src/app`, and `pnpm test` is its 171 specs. `pnpm dev` is a
+spreadsheet. Phase 4 has not started.
 
 ---
 
@@ -134,9 +135,10 @@ changes.
 **Met.** 10,000 × 100 cells, both axes, at 3,000 and 9,000 px/s: a
 16.6–16.7 ms frame gap on 4.2–5.2 ms of work, and no visible cell
 without a value in any frame of any of the four runs. The band is 8
-rows and 2 columns. `pnpm phase0` reproduces the whole table; the
-findings, including the three that change later phases, are in
-[`PHASE0.md`](PHASE0.md).
+rows and 2 columns. The findings, including the three that change later
+phases, are in [`PHASE0.md`](PHASE0.md); the harness that produced them
+retired with the spike in Phase 3, and rebuilding it against the real
+grid is owed to Phase 7.
 
 ### Phase 1 — The sheet model, headless — **done**
 
@@ -215,11 +217,7 @@ task rather than a microtask in the worker; a microtask would never
 let the command in, and the slicing would look like it was working
 while the sheet stayed blank.
 
-### Phase 3 — The grid surface
-
-The contract is waiting: `window`, `geometry`, `selection`, `editor`
-and `status` are published, and the spike's own contract in `src/spike`
-retires when this phase replaces `App.tsx` with the real grid.
+### Phase 3 — The grid surface — **done**
 
 Frozen row and column headers through `position: 'sticky'`, which is
 already conformance-tested against Chrome — though not against a
@@ -236,6 +234,26 @@ memoized by the cell they hold.
 **Exit:** specs querying the semantics tree as `grid` / `row` /
 `columnheader` / `cell`, and `toHaveBox` assertions pinning the frozen
 panes.
+
+**Met, with one correction to the criterion itself.** The semantics
+half is as written: the surface is a `grid`, its columns are
+`columnheader`s named A and B, its rows are `rowheader`s numbered from
+one as a person counts, and its cells carry the value rather than the
+formula — `=1+2` is a cell named `3`.
+
+The box half could not be written as stated. `toHaveBox` reports where
+a node was *laid out*, and a sticky header is laid out at the top of
+its content and stays laid out there however far the container
+scrolls; four specs asserting `toHaveBox({ y: 0 })` after a scroll
+passed against a header that was never sticky at all, and the bug was
+found in a browser, by eye, afterwards. So `getVisibleBox` and
+`toHaveVisibleBox` were added to `gesso-testing` and the frozen panes
+are pinned with those, on each axis and on both at once.
+
+Three pieces of engine work, all in the sibling checkout: columns of
+different widths (a prefix sum, because a drag moves every offset after
+it), the header row and the gutter as content the window accounts for,
+and the testing gap above.
 
 ### Phase 4 — Editing
 
