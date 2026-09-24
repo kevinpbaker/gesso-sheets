@@ -54,6 +54,18 @@ export interface ProofFrame {
   readonly measured: number;
   readonly nodes: number;
   readonly inputLatencyMs: number | null;
+  /**
+   * Which backend drew, and where the frame's time went.
+   *
+   * Kept because `durationMs` alone cannot answer the question that
+   * matters when frames are further apart than their own cost: a
+   * worker drawing for five milliseconds every twenty-four is either
+   * waiting for something or paying for something the total does not
+   * name. The phase breakdown names it.
+   */
+  readonly renderer: string;
+  readonly phases: Record<string, number>;
+  readonly gpu: Record<string, number> | null;
 }
 
 /**
@@ -136,7 +148,10 @@ export function proofPanel(): {
       durationMs: metrics.durationMs,
       measured: metrics.measured,
       nodes: metrics.nodes,
-      inputLatencyMs: metrics.inputLatencyMs
+      inputLatencyMs: metrics.inputLatencyMs,
+      renderer: metrics.renderer,
+      phases: { ...metrics.phases },
+      gpu: metrics.gpu === null ? null : { ...metrics.gpu }
     });
     if (recording.length > RECORDING) {
       recording.shift();
