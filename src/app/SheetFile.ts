@@ -34,8 +34,34 @@ export interface StoredCell {
   readonly input: string;
 }
 
-export function snapshotOf(document: SheetDocument, columnWidths: readonly number[]): SheetSnapshot {
-  return { version: 1, cells: [...document.sheet.entries()], columnWidths: [...columnWidths] };
+/**
+ * The sheet as it would be written down.
+ *
+ * `rowCount` is the sheet's own height, and cells at or below it are
+ * left out. The store is addressed by an integer key and will hold a
+ * cell anywhere in a million rows, but the *sheet* is `rowCount` tall
+ * — nothing outside that can be scrolled to, selected or typed in, so
+ * nothing outside it is somebody's data.
+ *
+ * What lives out there is the proof surface's chain of two hundred
+ * thousand cells. Without this it was saved: pressing the button once
+ * put a quarter of a million formulas into the file behind the sheet
+ * and every load after that parsed and recalculated all of them, for
+ * cells the person could never reach and had not asked for. The chain
+ * is a measuring instrument, and an instrument is not a document.
+ */
+export function snapshotOf(
+  document: SheetDocument,
+  columnWidths: readonly number[],
+  rowCount = Number.POSITIVE_INFINITY
+): SheetSnapshot {
+  const cells: StoredCell[] = [];
+  for (const cell of document.sheet.entries()) {
+    if (cell.row < rowCount) {
+      cells.push(cell);
+    }
+  }
+  return { version: 1, cells, columnWidths: [...columnWidths] };
 }
 
 /**

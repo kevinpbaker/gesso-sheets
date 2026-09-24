@@ -11,6 +11,7 @@ import {
   type SheetWindow
 } from './SheetContract';
 import type { SheetDocument } from './SheetDocument';
+import { columnName } from '../sheet/A1';
 import { snapshotOf, applySnapshot, type SheetSnapshot } from './SheetFile';
 import type { SheetRepository } from './SheetRepository';
 import { clearRect, copyRect, fillRect, fillTarget, pasteBlock, rectOf, type CopyOrigin } from './SheetRanges';
@@ -98,6 +99,9 @@ export class SheetService {
    * document is neither.
    */
   private restored = false;
+  /** How long the stress chain is, so it is built once. */
+  private stressCells = 0;
+  private stressRuns = 0;
 
   constructor(
     private readonly document: SheetDocument,
@@ -224,6 +228,50 @@ export class SheetService {
     this.persist();
   }
 
+  /**
+   * A chain of `cells` cells, each reading the one before it.
+   *
+   * Laid out across the sheet in rows so that a chain longer than the
+   * sheet is tall still fits, and written through the model rather
+   * than the document so that two hundred thousand cells are not two
+   * hundred thousand undo entries. Built once; every call after moves
+   * the head, which is what makes the whole chain out of date.
+   *
+   * It starts one row past the end of the sheet, so every cell in it
+   * is somewhere nobody can scroll to, select, or type in. Two reasons,
+   * and the second was found by reloading the page rather than by
+   * reading the code: the claim is that recalculating cells nobody can
+   * see costs the scroll nothing, so the cells have to be ones nobody
+   * can see — and a cell outside the sheet is not part of the document,
+   * which is what keeps a quarter of a million formulas from being
+   * saved to somebody's file the first time they press the button. See
+   * `snapshotOf`.
+   */
+  stress(cells: number): void {
+    const sheet = this.document.sheet;
+    const { columnCount, rowCount } = this.geometrySubject.value;
+    if (this.stressCells !== cells) {
+      const first = rowCount;
+      sheet.setCell(first, 0, '1');
+      // `cells` formulas, plus the literal head they hang from, so the
+      // number on the button is the number of cells that go out of
+      // date rather than the number of cells written.
+      for (let at = 1; at <= cells; at++) {
+        const row = first + Math.floor(at / columnCount);
+        const column = at % columnCount;
+        const fromRow = first + Math.floor((at - 1) / columnCount);
+        const fromColumn = (at - 1) % columnCount;
+        sheet.setCell(row, column, `=${columnName(fromColumn)}${fromRow + 1}+1`);
+      }
+      this.stressCells = cells;
+    }
+    this.stressRuns++;
+    sheet.setCell(rowCount, 0, String(this.stressRuns));
+    this.publishWindow();
+    this.publishStatus();
+    this.pump();
+  }
+
   // ---------------------------------------------------------------------
   // Keeping it
   // ---------------------------------------------------------------------
@@ -258,7 +306,8 @@ export class SheetService {
 
   /** The snapshot as it stands, for a spec or a worker shutting down. */
   snapshot(): SheetSnapshot {
-    return snapshotOf(this.document, this.geometrySubject.value.columnWidths);
+    const { columnWidths, rowCount } = this.geometrySubject.value;
+    return snapshotOf(this.document, columnWidths, rowCount);
   }
 
   /** Writes anything outstanding now. */
@@ -368,6 +417,7 @@ export class SheetService {
   private statusNow(): SheetStatus {
     return {
       pending: this.document.sheet.pending,
+      evaluated: this.document.sheet.stats.evaluated,
       canUndo: this.document.canUndo,
       canRedo: this.document.canRedo
     };

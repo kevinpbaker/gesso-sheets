@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "proof": "node --experimental-strip-types scripts/frame-budget.ts"
   },
   "dependencies": {
     "gesso-components": "file:vendor/gesso-components-0.2.1-09b194c5.tgz",

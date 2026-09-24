@@ -33,7 +33,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       paste: text => service.paste(text),
       clearRange: () => service.clearRange(),
       fill: (toRow, toColumn) => service.fill(toRow, toColumn),
-      setColumnWidth: (column, width) => service.setColumnWidth(column, width)
+      setColumnWidth: (column, width) => service.setColumnWidth(column, width),
+      stress: cells => service.stress(cells)
     }
   });
 }

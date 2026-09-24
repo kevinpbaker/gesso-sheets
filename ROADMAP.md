@@ -12,12 +12,14 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phases 0 to 5 done, all six exit criteria met. Phase 0's
-findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
+**Status:** all eight phases done, all eight exit criteria met. Phase
+0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid and the
-editor in `src/app`, and `pnpm test` is its 254 specs. `pnpm dev` is a
-spreadsheet you can type into, copy out of and paste into. Phase 6 has
-not started.
+editor in `src/app`, the proof strip in `src/shell`, and `pnpm test` is
+its 279 specs. `pnpm dev` is a spreadsheet you can type into, copy out
+of and paste into, which remembers what you typed. `pnpm proof` is the
+frame budget: it drives the built application in headless Chrome and
+fails the build when scrolling stops being free.
 
 ---
 
@@ -337,7 +339,7 @@ exists, at whichever of *its* elements has focus. Neither had a
 listener. That second half was only findable by pasting into a real
 browser; every spec passed without it.
 
-### Phase 6 — Persistence
+### Phase 6 — Persistence — **done**
 
 A repository writing through `FileSystemSyncAccessHandle` in the app
 worker, mirroring `OpfsNotesRepository` in Gesso's notes example.
@@ -345,7 +347,12 @@ worker, mirroring `OpfsNotesRepository` in Gesso's notes example.
 **Exit:** the notes example's own proof, borrowed — type a marker,
 reload, it is still there.
 
-### Phase 7 — The proof surface
+**Met.** `OpfsSheetRepository`, `SheetFile.ts` and `Persistence.spec.ts`.
+Inputs are written, not values: a formula is not derivable from its
+answer, and reloading recalculates, which is the cheapest check that the
+engine still agrees with itself.
+
+### Phase 7 — The proof surface — **done**
 
 This is what the application is *for*, so it is a phase and not a
 nicety. Recalculate 200,000 dependent cells while scrolling, and show
@@ -356,6 +363,62 @@ re-measure heatmap visible.
 **Exit:** each of those is a thing a stranger can do in a browser in
 under a minute, and a frame budget in CI that fails when one of them
 regresses.
+
+**Met.** The strip along the top of the page is the only DOM in the
+application, and it is on the main thread on purpose: a claim that the
+main thread is idle cannot be made from inside the thread that is not.
+It carries the block button, the heatmap toggle, and the frame readout;
+the recalculate button is in the sheet's own toolbar, because that
+command has to cross to the application worker. Hovering with the
+heatmap on shows `engine.explain` for the cell under the pointer,
+floated over the sheet so that reading it does not move what is being
+read.
+
+`pnpm proof` is the budget. It builds, serves, and drives the result in
+headless Chrome with real wheel events and real clicks, and reads back
+the same frames the strip is showing. Measured on this machine:
+
+| | median frame | worst | most re-measured |
+|---|---|---|---|
+| scrolling an idle sheet | 1.9 ms | 7.4 ms | 604 |
+| scrolling while 200,000 cells recalculate | 2.0 ms | 5.5 ms | 233 |
+
+The two rows being the same row is the phase. The fourth budget is the
+one that survives a different machine: a frame while recalculating may
+not cost more than 4 ms over a frame while idle.
+
+Three things the phase learned by being run rather than by being
+written.
+
+**The heatmap tells the truth and reads as the opposite.** Sweep the
+sheet and every cell washes red, correctly — a virtualised row is
+created and measured once when it comes into view, and a long sweep
+replaces the screen. The claim was never that a scroll measures
+nothing; it is that a scroll measures a screenful and stops, whatever
+the sheet's height and whatever is recalculating behind it. So the
+strip shows the peak next to the last frame, and a short scroll shows
+the picture plainly: the rows that stayed are cold, only the incoming
+band is red.
+
+**The block button demonstrates something narrower and better than the
+slogan.** The page freezes solid for five seconds — measured at 5,006
+ms of a DevTools round trip going unanswered. The application worker
+does not notice, and finishes a second 200,000-cell recalculation
+during the freeze. The render worker does not stop either: it keeps
+laying out and drawing on its own clock, 139 frames through the five
+seconds. What it loses is the display's cadence and only that, because
+`requestAnimationFrame` exists on the main thread alone, so its frames
+spread out to a timer's interval. And no input reaches the sheet at all
+while the shell is gone. "The sheet keeps scrolling at sixty" would
+have been both untrue and weaker than that.
+
+**The demo was saving itself into people's files.** Every spec passed.
+Pressing recalculate once and reloading showed a sheet that had quietly
+written a quarter of a million formulas to disk and recalculated all of
+them on the way back up. The chain now lives one row past the end of
+the sheet, where nothing can be scrolled to, selected or typed in, and
+`snapshotOf` writes only what is inside the sheet. Sixth phase running
+in which a real browser found something the suite could not.
 
 ---
 

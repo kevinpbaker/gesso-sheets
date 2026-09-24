@@ -1,4 +1,4 @@
-import { combineLatest, type Observable } from 'rxjs';
+import { combineLatest, of, type Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
 import { percent, type UiKeyboardEvent, type UiTextChangeEvent } from 'gesso-core';
@@ -9,6 +9,28 @@ import { Grid } from './Grid';
 import { Sheet } from './SheetContract';
 import { editing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
+
+/**
+ * How long a chain the proof button builds.
+ *
+ * Two hundred thousand cells, every one of them depending on the one
+ * before it, so the recalculation cannot be parallelised or skipped —
+ * it is the longest possible critical path through the sheet. None of
+ * them are on screen.
+ */
+const STRESS_CELLS = 200_000;
+
+/**
+ * The status line: what the application thread still owes, and how
+ * much it has ever done.
+ *
+ * The second half is what makes the first half worth reading. "Ready"
+ * on its own is also what a sheet that did nothing would say.
+ */
+function describe(status: { pending: number; evaluated: number }): string {
+  const done = status.evaluated === 0 ? '' : ` \u00b7 ${status.evaluated.toLocaleString()} evaluated`;
+  return `${status.pending === 0 ? 'Ready' : `${status.pending.toLocaleString()} to do`}${done}`;
+}
 
 /**
  * The screen: a formula bar, the grid, and a line saying what the
@@ -106,11 +128,12 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
           onInput={(event: UiTextChangeEvent) => edit.write(event.value)}
           onKeyDown={onFormulaKey}
         />
-        {historyButton('Undo', status.pipe(map(current => current.canUndo)), () => sheet.send.undo())}
-        {historyButton('Redo', status.pipe(map(current => current.canRedo)), () => sheet.send.redo())}
+        {barButton('Undo', status.pipe(map(current => current.canUndo)), () => sheet.send.undo())}
+        {barButton('Redo', status.pipe(map(current => current.canRedo)), () => sheet.send.redo())}
+        {barButton(`Recalculate ${STRESS_CELLS.toLocaleString()}`, of(true), () => sheet.send.stress(STRESS_CELLS))}
         <text
-          text={status.pipe(map(current => (current.pending === 0 ? 'Ready' : `${current.pending} to do`)))}
-          width={90}
+          text={status.pipe(map(describe))}
+          width={190}
           fontSize={11}
           color="textMuted"
           verticalAlign="middle"
@@ -123,7 +146,7 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
   );
 }
 
-function historyButton(label: string, enabled: Observable<boolean>, onClick: () => void) {
+function barButton(label: string, enabled: Observable<boolean>, onClick: () => void) {
   return (
     <button
       onClick={onClick}

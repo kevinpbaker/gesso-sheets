@@ -104,6 +104,8 @@ export interface SheetClipboard {
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
+  /** Cells the application thread has evaluated, ever. */
+  readonly evaluated: number;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
 }
@@ -145,6 +147,16 @@ export interface SheetCommands {
    * the application worker needs is the number to write down.
    */
   setColumnWidth(column: number, width: number): void;
+  /**
+   * Builds a chain of dependent cells and then disturbs its head.
+   *
+   * The proof surface's one command, and the reason it is on the
+   * contract rather than in a script: the claim is about what happens
+   * on *this* thread while somebody scrolls on the other, and a claim
+   * you cannot make happen from the screen is one nobody can check.
+   * Built once and bumped on every call after.
+   */
+  stress(cells: number): void;
 }
 
 export interface SheetView {
@@ -180,6 +192,6 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104, columnWidths: [] },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
-  status: { pending: 0, canUndo: false, canRedo: false },
+  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 }
 });

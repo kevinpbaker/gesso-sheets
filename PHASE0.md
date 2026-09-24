@@ -24,11 +24,18 @@ table; the spike it drove was retired in Phase 3, when the real grid
 replaced it. Everything here reproduces from commit `e4ea6e1`, which
 is the last one where `src/spike` and `scripts/phase0.ts` exist.
 
-That leaves the project without a frame budget in CI, which Phase 7
-asks for by name — and it should be rebuilt against the real grid
-rather than the spike, driving *input* rather than writing scroll
-offsets. Both times hand-scrolling found something the bench could
-not, it was because the bench went in through a side door.
+That left the project without a frame budget in CI, which Phase 7 asks
+for by name — and it had to be rebuilt against the real grid rather
+than the spike, driving *input* rather than writing scroll offsets.
+Both times hand-scrolling found something the bench could not, it was
+because the bench went in through a side door.
+
+**Paid back in Phase 7.** `pnpm proof` builds the application, serves
+it, and drives it in headless Chrome with real wheel events and real
+clicks on the real grid, reading back the same frame numbers the proof
+strip displays on screen. It scrolls an idle sheet, then scrolls the
+same sheet while 200,000 dependent cells recalculate, and fails when
+the second costs more than the first.
 
 So the phases in `ROADMAP.md` stand. What follows is what changes
 inside them.
@@ -257,7 +264,10 @@ no touch input in it. It is the next thing to go wrong on a tablet.
 
 **What this says about the spike:** a harness that drives the thing
 under test through a side door measures the thing and not the product.
-Phase 7's proof surface should drive input, not offsets.
+Phase 7's proof surface should drive input, not offsets. It does, and
+the habit paid again: the browser check found that pressing the
+recalculate button once wrote a quarter of a million formulas into the
+person's saved file, which every one of the 279 specs was happy with.
 
 ## 7. A recalc that blocks the publish blanks the sheet
 
@@ -297,9 +307,9 @@ Worth keeping:
   written as a peer of `UiLazyList` and has no sheet-specific
   vocabulary in it.
 - **`scripts/phase0.ts`**, which was Phase 7's proof surface in
-  miniature. Retired in Phase 3 with the spike it drove; the shape of
-  it is what Phase 7 should rebuild, against the real grid and through
-  the input path.
+  miniature. Retired in Phase 3 with the spike it drove; Phase 7
+  rebuilt the shape of it as `scripts/frame-budget.ts`, against the
+  real grid and through the input path.
 - **The fix to `scripts/vendor-gesso.sh`.** pnpm resolves a `file:`
   tarball by path and version and then trusts its store, so an engine
   change that leaves the version alone — every change during a phase —
