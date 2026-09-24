@@ -138,6 +138,10 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       textOverflow: 'clip',
       verticalAlign: 'middle',
       textAlign: value.pipe(map(text => (isNumeric(text) ? 'right' : 'start'))),
+      // A sweep drags a text selection through anything selectable,
+      // so the numbers and the row labels would highlight as prose
+      // does while a rectangle is being picked out.
+      selectable: false,
       role: 'cell',
       onClick: (event: UiPointerEvent) => selectByPointer(row, column, event.modifiers.shift)
     });
@@ -157,6 +161,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * that no key did anything to.
    */
   const selectByPointer = (row: number, column: number, extend = false): void => {
+    // A click ends any sweep, whatever the gesture recogniser thinks.
+    //
+    // Without this a click after a sweep extended the rectangle
+    // instead of putting it down: the sweep's flag was still set, the
+    // next pointer movement read as more of the same drag, and the
+    // anchor stayed where the sweep had started. The click is the
+    // later and more definite statement of what the person wants, so
+    // it wins.
+    sweeping = false;
     // A click elsewhere commits what is open, as it does everywhere.
     if (edit.openNow()) {
       edit.commit(0, 0);
@@ -289,6 +302,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       fontSize: 11,
       textAlign: 'center',
       verticalAlign: 'middle',
+      selectable: false,
       role: 'rowheader'
     });
 
@@ -339,13 +353,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       cursor: 'crosshair',
       role: 'button',
       label: 'Fill',
-      onPanStart: () => {
+      onPanStart: (event: UiPointerEvent) => {
         filling = true;
+        // The grid listens for pans as well, to sweep a selection.
+        // Without this a drag on the handle would do both.
+        event.stopPropagation();
       },
       onPanMove: (event: UiPointerEvent) => {
         if (!filling) {
           return;
         }
+        event.stopPropagation();
         // Where the pointer is, in cells. The window owns the offsets,
         // so this is arithmetic rather than a hit test — which matters
         // because the cell being dragged towards is usually one that
@@ -353,8 +371,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         const box = viewport.value;
         fillTo = sheetWindow.cellAt(event.x - box.x, event.y - box.y);
       },
-      onPanEnd: () => {
+      onPanEnd: (event: UiPointerEvent) => {
         filling = false;
+        event.stopPropagation();
         if (fillTo !== null) {
           sheet.send.fill(fillTo.row, fillTo.column);
           fillTo = null;
@@ -364,6 +383,23 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
 
   let filling = false;
   let fillTo: { row: number; column: number } | null = null;
+  let sweeping = false;
+
+  /**
+   * The cell under a pointer event, or null before the first layout.
+   *
+   * The frozen strips are content the window already accounts for, so
+   * a sweep that wanders over the row numbers reads as the first
+   * column rather than as nothing — which is what dragging into the
+   * gutter should do.
+   */
+  const cellUnder = (event: UiPointerEvent): { row: number; column: number } | null => {
+    const box = viewport.value;
+    if (box.width === 0) {
+      return null;
+    }
+    return sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+  };
 
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
@@ -440,7 +476,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         color: 'textMuted',
         fontSize: 11,
         fontWeight: 600,
-        verticalAlign: 'middle'
+        verticalAlign: 'middle',
+        selectable: false
       }),
       Box({
         key: 'grip',
@@ -514,6 +551,43 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       ref: node => (gridNode = node),
       modifiers: [viewport.modifier],
       onKeyDown: onKey,
+      // Sweeping a selection out with the pointer.
+      //
+      // On the grid rather than on every cell: three listeners instead
+      // of three per cell, and the cell being swept over is found from
+      // the window's offsets, which works for the ones that are not
+      // mounted as well as the ones that are. A cell would have to be
+      // under the pointer to hear about it, and past the edge of the
+      // viewport none is.
+      onPanStart: (event: UiPointerEvent) => {
+        const at = cellUnder(event);
+        if (at === null) {
+          return;
+        }
+        sweeping = true;
+        if (edit.openNow()) {
+          edit.commit(0, 0);
+        }
+        edit.moveTo(at.row, at.column);
+        if (gridNode !== null) {
+          focus.focus(gridNode);
+        }
+      },
+      onPanMove: (event: UiPointerEvent) => {
+        // The button has to still be down. A recogniser that reported
+        // a move after the release would otherwise go on stretching
+        // the selection under a pointer that is merely passing over.
+        if (!sweeping || event.buttons === 0) {
+          return;
+        }
+        const at = cellUnder(event);
+        if (at !== null) {
+          edit.extendTo(at.row, at.column);
+        }
+      },
+      onPanEnd: () => {
+        sweeping = false;
+      },
       // Text from the clipboard with no caret anywhere. Before the
       // engine offered this the paste was dropped: `paste` had nothing
       // editable to insert into and returned false.

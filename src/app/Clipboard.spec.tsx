@@ -6,7 +6,7 @@ import 'gesso-testing/matchers';
 
 import type { UiKeyModifiers } from 'gesso-core';
 
-import { ROW_HEIGHT } from './dimensions';
+import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, ROW_HEIGHT } from './dimensions';
 import { sheetChannel } from './sheetChannel';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
@@ -115,6 +115,100 @@ describe('clipboard and fill', () => {
       await press('c', { ctrl: true });
 
       expect(h.copied()).toBe('a\tb\nc\td');
+    });
+  });
+
+  /**
+   * Sweeping a selection out with the pointer, which is how most
+   * people make one. Shift+click and shift+arrows were built first and
+   * this was simply missing — the cells had a click and nothing else,
+   * so a drag across them selected the one it started on.
+   */
+  describe('dragging a selection', () => {
+    beforeEach(async () => {
+      h = await mount(document => {
+        document.setCell(1, 1, 'a');
+        document.setCell(3, 3, 'b');
+        document.setCell(6, 6, 'far');
+      });
+    });
+
+    async function sweep(from: { row: number; column: number }, to: { row: number; column: number }): Promise<void> {
+      const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
+      const at = (cell: { row: number; column: number }) => ({
+        x: grid.x + GUTTER_WIDTH + cell.column * COLUMN_WIDTH + 4,
+        y: grid.y + HEADER_HEIGHT + cell.row * ROW_HEIGHT + 4
+      });
+      const start = at(from);
+      const end = at(to);
+      h.ui.fireEvent.pointerDown(start.x, start.y, { buttons: 1 });
+      h.ui.fireEvent.pointerMove(start.x + 8, start.y + 8, { buttons: 1 });
+      h.ui.fireEvent.pointerMove(end.x, end.y, { buttons: 1 });
+      h.ui.fireEvent.pointerUp(end.x, end.y);
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+
+    it('selects the rectangle the pointer swept', async () => {
+      await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
+
+      expect(h.document.selection).toMatchObject({ anchorRow: 1, anchorColumn: 1, row: 3, column: 3 });
+    });
+
+    it('sweeps backwards as well as forwards', async () => {
+      await sweep({ row: 3, column: 3 }, { row: 1, column: 1 });
+
+      expect(h.document.selection).toMatchObject({ anchorRow: 3, anchorColumn: 3, row: 1, column: 1 });
+    });
+
+    it('copies what was swept', async () => {
+      await sweep({ row: 1, column: 1 }, { row: 2, column: 2 });
+      await press('c', { ctrl: true });
+
+      expect(h.copied()).toBe('a\t\n\t');
+    });
+
+    /**
+     * A click after a sweep. The sweep leaves a rectangle behind, and
+     * a click is how a person puts it down again.
+     */
+    it('collapses to one cell when a cell is clicked afterwards', async () => {
+      await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
+      expect(h.document.selection).toMatchObject({ anchorRow: 1, row: 3 });
+
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: 'b' }));
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(h.document.selection).toEqual({ row: 3, column: 3, anchorRow: 3, anchorColumn: 3 });
+    });
+
+    /**
+     * A click well away from the sweep, which is the case the spec
+     * harness was too tidy to catch: in a browser the anchor stayed
+     * where the sweep began, so clicking one cell selected everything
+     * between it and there — and a paste afterwards landed at the
+     * corner of that rectangle rather than where the click was.
+     */
+    it('puts the rectangle down, anchor and all', async () => {
+      await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
+
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: 'far' }));
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(h.document.selection).toEqual({ row: 6, column: 6, anchorRow: 6, anchorColumn: 6 });
+    });
+
+    it('leaves the keyboard on the grid, so the selection can be used', async () => {
+      await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
+      await press('Delete');
+
+      expect(h.document.sheet.input(1, 1)).toBe('');
+      expect(h.document.sheet.input(3, 3)).toBe('');
     });
   });
 
