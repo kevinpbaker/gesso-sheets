@@ -1,7 +1,7 @@
-import { serve, serveChannels } from 'gesso-framework';
+import { serveChannels } from 'gesso-framework';
 
-import { Sheet } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
+import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
 import { SheetService } from './SheetService';
 
@@ -30,23 +30,4 @@ document.sheet.recalculate();
 
 const service = new SheetService(document);
 
-serveChannels([
-  serve(Sheet, {
-    view: {
-      window: service.window,
-      geometry: service.geometry,
-      selection: service.selection,
-      editor: service.editor,
-      status: service.status
-    },
-    commands: {
-      setViewport: (firstRow, lastRow, firstColumn, lastColumn) =>
-        service.setViewport(firstRow, lastRow, firstColumn, lastColumn),
-      setCell: (row, column, input) => service.setCell(row, column, input),
-      setSelection: (row, column, anchorRow, anchorColumn) =>
-        service.setSelection(row, column, anchorRow, anchorColumn),
-      undo: () => service.undo(),
-      redo: () => service.redo()
-    }
-  })
-]);
+serveChannels([sheetChannel(service)]);

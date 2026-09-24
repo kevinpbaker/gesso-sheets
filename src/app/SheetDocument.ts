@@ -9,6 +9,16 @@ interface Edit {
 }
 
 /**
+ * What one press of ctrl-Z takes back.
+ *
+ * A step rather than an edit, because a paste is one action and fifty
+ * cells: undoing it a cell at a time would be fifty presses to
+ * reverse one, which is the kind of thing that makes people stop
+ * trusting undo.
+ */
+type Step = readonly Edit[];
+
+/**
  * The sheet plus the two things a document has that a model does not:
  * where the selection is, and what can be taken back.
  *
@@ -24,8 +34,10 @@ interface Edit {
 export class SheetDocument {
   readonly sheet = new Sheet();
 
-  private readonly undoStack: Edit[] = [];
-  private readonly redoStack: Edit[] = [];
+  private readonly undoStack: Step[] = [];
+  private readonly redoStack: Step[] = [];
+  /** Edits collected by an open `transact`, or null outside one. */
+  private collecting: Edit[] | null = null;
 
   selection = { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 };
 
@@ -50,31 +62,88 @@ export class SheetDocument {
       return;
     }
     this.sheet.setCell(row, column, input);
-    this.undoStack.push({ row, column, before, after: input });
+    this.record({ row, column, before, after: input });
+  }
+
+  /**
+   * Runs several edits as one step.
+   *
+   * A paste, a cut and a fill are each one action to the person doing
+   * them, so they are one entry on the stack however many cells they
+   * touched. Nested calls join the step already open rather than
+   * opening another, so a fill that pastes is still one press of
+   * ctrl-Z.
+   */
+  transact(run: () => void): void {
+    if (this.collecting !== null) {
+      run();
+      return;
+    }
+    const step: Edit[] = [];
+    this.collecting = step;
+    try {
+      run();
+    } finally {
+      this.collecting = null;
+    }
+    if (step.length > 0) {
+      this.undoStack.push(step);
+      this.redoStack.length = 0;
+    }
+  }
+
+  private record(edit: Edit): void {
+    if (this.collecting !== null) {
+      this.collecting.push(edit);
+      return;
+    }
+    this.undoStack.push([edit]);
     // A new edit is a new future; whatever was undone is unreachable.
     this.redoStack.length = 0;
   }
 
   undo(): boolean {
-    const edit = this.undoStack.pop();
-    if (edit === undefined) {
+    const step = this.undoStack.pop();
+    if (step === undefined) {
       return false;
     }
-    this.sheet.setCell(edit.row, edit.column, edit.before);
-    this.redoStack.push(edit);
-    this.selection = { row: edit.row, column: edit.column, anchorRow: edit.row, anchorColumn: edit.column };
+    // Backwards: two edits to one cell in one step have to be undone
+    // in the order they were made or the earlier one wins.
+    for (let at = step.length - 1; at >= 0; at--) {
+      const edit = step[at];
+      this.sheet.setCell(edit.row, edit.column, edit.before);
+    }
+    this.redoStack.push(step);
+    this.selectStep(step);
     return true;
   }
 
   redo(): boolean {
-    const edit = this.redoStack.pop();
-    if (edit === undefined) {
+    const step = this.redoStack.pop();
+    if (step === undefined) {
       return false;
     }
-    this.sheet.setCell(edit.row, edit.column, edit.after);
-    this.undoStack.push(edit);
-    this.selection = { row: edit.row, column: edit.column, anchorRow: edit.row, anchorColumn: edit.column };
+    for (const edit of step) {
+      this.sheet.setCell(edit.row, edit.column, edit.after);
+    }
+    this.undoStack.push(step);
+    this.selectStep(step);
     return true;
+  }
+
+  /** Takes the selection to what a step changed, so it is seen. */
+  private selectStep(step: Step): void {
+    let firstRow = Number.POSITIVE_INFINITY;
+    let lastRow = Number.NEGATIVE_INFINITY;
+    let firstColumn = Number.POSITIVE_INFINITY;
+    let lastColumn = Number.NEGATIVE_INFINITY;
+    for (const edit of step) {
+      firstRow = Math.min(firstRow, edit.row);
+      lastRow = Math.max(lastRow, edit.row);
+      firstColumn = Math.min(firstColumn, edit.column);
+      lastColumn = Math.max(lastColumn, edit.column);
+    }
+    this.selection = { row: firstRow, column: firstColumn, anchorRow: lastRow, anchorColumn: lastColumn };
   }
 
   setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void {

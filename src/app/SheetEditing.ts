@@ -18,6 +18,10 @@ export interface SheetEditing {
   isOpen(row: number, column: number): Observable<boolean>;
   /** Applies what a key meant. Returns false when the key was not ours. */
   apply(action: SheetAction | null): boolean;
+  /** Moves the far corner of the selection, keeping the anchor. */
+  extendTo(row: number, column: number): void;
+  /** Text arrived from the clipboard with the grid holding focus. */
+  pasteText(text: string): void;
   write(text: string): void;
   commit(rows: number, columns: number): void;
   cancel(): void;
@@ -76,17 +80,26 @@ export function editing(
     }
   });
 
-  const moveTo = (row: number, column: number): void => {
+  const place = (row: number, column: number, keepAnchor: boolean): void => {
     const { rowCount, columnCount } = extent();
     const clampedRow = clamp(row, 0, Math.max(0, rowCount - 1));
     const clampedColumn = clamp(column, 0, Math.max(0, columnCount - 1));
-    const next = { row: clampedRow, column: clampedColumn, anchorRow: clampedRow, anchorColumn: clampedColumn };
-    if (same(next, selection.value)) {
+    const held = selection.value;
+    const next = {
+      row: clampedRow,
+      column: clampedColumn,
+      anchorRow: keepAnchor ? held.anchorRow : clampedRow,
+      anchorColumn: keepAnchor ? held.anchorColumn : clampedColumn
+    };
+    if (same(next, held)) {
       return;
     }
     selection.value = next;
-    sheet.send.setSelection(clampedRow, clampedColumn, clampedRow, clampedColumn);
+    sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
   };
+
+  const moveTo = (row: number, column: number): void => place(row, column, false);
+  const extendTo = (row: number, column: number): void => place(row, column, true);
 
   const commit = (rows: number, columns: number): void => {
     const text = draft.value;
@@ -125,21 +138,21 @@ export function editing(
     const at = selection.value;
     switch (action.kind) {
       case 'move':
-        moveTo(at.row + action.rows, at.column + action.columns);
+        place(at.row + action.rows, at.column + action.columns, action.extend);
         return true;
       case 'jump':
         switch (action.to) {
           case 'rowStart':
-            moveTo(at.row, 0);
+            place(at.row, 0, action.extend);
             return true;
           case 'rowEnd':
-            moveTo(at.row, extent().columnCount - 1);
+            place(at.row, extent().columnCount - 1, action.extend);
             return true;
           case 'sheetStart':
-            moveTo(0, 0);
+            place(0, 0, action.extend);
             return true;
           default:
-            moveTo(extent().rowCount - 1, extent().columnCount - 1);
+            place(extent().rowCount - 1, extent().columnCount - 1, action.extend);
             return true;
         }
       case 'edit':
@@ -157,8 +170,18 @@ export function editing(
         draft.value = null;
         return true;
       case 'clear':
-        sheet.send.setCell(at.row, at.column, '');
+        // The whole selection, which for one cell is that cell.
+        sheet.send.clearRange();
         return true;
+      case 'copy':
+        sheet.send.copy(action.cut);
+        return true;
+      case 'selectAll': {
+        const { rowCount, columnCount } = extent();
+        selection.value = { row: 0, column: 0, anchorRow: rowCount - 1, anchorColumn: columnCount - 1 };
+        sheet.send.setSelection(0, 0, rowCount - 1, columnCount - 1);
+        return true;
+      }
       case 'undo':
         sheet.send.undo();
         return true;
@@ -201,6 +224,8 @@ export function editing(
     cancel: () => (draft.value = null),
     openCell: () => openCell('grid'),
     startedIn: () => startedIn,
+    extendTo,
+    pasteText: text => sheet.send.paste(text),
     moveTo
   };
 }

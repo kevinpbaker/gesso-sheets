@@ -72,6 +72,24 @@ export interface SheetEditor {
   readonly input: string;
 }
 
+/**
+ * Text the sheet wants put on the system clipboard.
+ *
+ * A command returns nothing and an effect comes back as a patch, so a
+ * copy is a request one way and an answer the other: the render worker
+ * asks, the application worker builds the block and publishes it here,
+ * and the render worker hands it to the shell — which is the only
+ * thread with a clipboard.
+ *
+ * `serial` is what makes copying the same cells twice a change. Without
+ * it the second copy is structurally equal to the first, the differ
+ * says nothing happened, and the clipboard is never written.
+ */
+export interface SheetClipboard {
+  readonly text: string;
+  readonly serial: number;
+}
+
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
@@ -87,6 +105,26 @@ export interface SheetCommands {
   setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void;
   undo(): void;
   redo(): void;
+  /**
+   * Puts the selection on the clipboard, and empties it when cutting.
+   *
+   * The text comes back on the `clipboard` view key rather than as a
+   * return value, because a command has none.
+   */
+  copy(cut: boolean): void;
+  /**
+   * Writes clipboard text at the selection's top-left corner.
+   *
+   * The text crosses raw and is read here, because reading it is the
+   * sheet's business: which cell a tab means, whether a block is
+   * rectangular, and whether the formulas in it should move are all
+   * questions only this side can answer.
+   */
+  paste(text: string): void;
+  /** Empties every cell in the selection. */
+  clearRange(): void;
+  /** Extends the selection over a cell, repeating it with its formulas moved. */
+  fill(toRow: number, toColumn: number): void;
 }
 
 export interface SheetView {
@@ -95,6 +133,7 @@ export interface SheetView {
   readonly selection: SheetSelection;
   readonly editor: SheetEditor;
   readonly status: SheetStatus;
+  readonly clipboard: SheetClipboard;
 }
 
 export const EMPTY_WINDOW: SheetWindow = {
@@ -121,5 +160,6 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104 },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
-  status: { pending: 0, canUndo: false, canRedo: false }
+  status: { pending: 0, canUndo: false, canRedo: false },
+  clipboard: { text: '', serial: 0 }
 });

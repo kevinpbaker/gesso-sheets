@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createComponent, serve } from 'gesso-framework';
+import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, textProperty, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
 import { Sheet } from './SheetContract';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
+import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
 
 /**
@@ -36,22 +37,7 @@ async function mount(fill?: (document: SheetDocument) => void): Promise<Harness>
   document.sheet.recalculate();
   const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
   const served = serveForTest([
-    serve(Sheet, {
-      view: {
-        window: service.window,
-        geometry: service.geometry,
-        selection: service.selection,
-        editor: service.editor,
-        status: service.status
-      },
-      commands: {
-        setViewport: (a, b, c, d) => service.setViewport(a, b, c, d),
-        setCell: (row, column, input) => service.setCell(row, column, input),
-        setSelection: (a, b, c, d) => service.setSelection(a, b, c, d),
-        undo: () => service.undo(),
-        redo: () => service.redo()
-      }
-    })
+    sheetChannel(service)
   ]);
   const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 700, height: 300 });
   await ui.settle();

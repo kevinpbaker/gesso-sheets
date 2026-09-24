@@ -3,6 +3,7 @@ import { BehaviorSubject, type Observable } from 'rxjs';
 import { ROW_HEIGHT, COLUMN_WIDTH } from './dimensions';
 import {
   EMPTY_WINDOW,
+  type SheetClipboard,
   type SheetEditor,
   type SheetGeometry,
   type SheetSelection,
@@ -10,6 +11,7 @@ import {
   type SheetWindow
 } from './SheetContract';
 import type { SheetDocument } from './SheetDocument';
+import { clearRect, copyRect, fillRect, fillTarget, pasteBlock, rectOf, type CopyOrigin } from './SheetRanges';
 
 /**
  * Runs a continuation later, as a task rather than a microtask.
@@ -57,6 +59,7 @@ export class SheetService {
   readonly selection: Observable<SheetSelection>;
   readonly editor: Observable<SheetEditor>;
   readonly status: Observable<SheetStatus>;
+  readonly clipboard: Observable<SheetClipboard>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -66,6 +69,17 @@ export class SheetService {
   private readonly selectionSubject: BehaviorSubject<SheetSelection>;
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
+  private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
+  /**
+   * What this sheet last copied, and from where.
+   *
+   * Kept so that pasting it back knows how far it moved. Text from
+   * anywhere else has no origin and is written as it arrived: a block
+   * out of Excel means what it says, and moving references that were
+   * never relative to this sheet would be inventing an intent.
+   */
+  private copied: CopyOrigin | null = null;
+  private serial = 0;
 
   private viewport = { firstRow: 0, lastRow: -1, firstColumn: 0, lastColumn: -1 };
   private readonly budget: number;
@@ -97,6 +111,7 @@ export class SheetService {
     this.selection = this.selectionSubject;
     this.editor = this.editorSubject;
     this.status = this.statusSubject;
+    this.clipboard = this.clipboardSubject;
   }
 
   // ---------------------------------------------------------------------
@@ -145,6 +160,48 @@ export class SheetService {
     if (this.document.redo()) {
       this.afterHistory();
     }
+  }
+
+  copy(cut: boolean): void {
+    const rect = rectOf(this.document.selection);
+    const text = copyRect(this.document, rect);
+    this.copied = { text, row: rect.firstRow, column: rect.firstColumn };
+    this.serial++;
+    this.clipboardSubject.next({ text, serial: this.serial });
+    if (cut) {
+      clearRect(this.document, rect);
+      this.afterEdit();
+    }
+  }
+
+  paste(text: string): void {
+    const at = rectOf(this.document.selection);
+    const written = pasteBlock(this.document, text, { row: at.firstRow, column: at.firstColumn }, this.copied);
+    this.document.setSelection(written.firstRow, written.firstColumn, written.lastRow, written.lastColumn);
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
+  }
+
+  clearRange(): void {
+    clearRect(this.document, rectOf(this.document.selection));
+    this.afterEdit();
+  }
+
+  fill(toRow: number, toColumn: number): void {
+    const source = rectOf(this.document.selection);
+    const target = fillTarget(source, toRow, toColumn);
+    fillRect(this.document, source, target);
+    this.document.setSelection(target.firstRow, target.firstColumn, target.lastRow, target.lastColumn);
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
+  }
+
+  /** What every edit that is not a single keystroke has to do afterwards. */
+  private afterEdit(): void {
+    this.publishWindow();
+    this.publishEditor();
+    this.publishStatus();
+    this.pump();
   }
 
   private afterHistory(): void {

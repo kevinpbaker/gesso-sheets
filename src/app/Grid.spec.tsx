@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
-import { createComponent, serve } from 'gesso-framework';
+import { createComponent } from 'gesso-framework';
 
 import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, MIN_COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
 import { Sheet } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
+import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
 
 /**
@@ -45,22 +46,7 @@ async function mount(fill?: (document: SheetDocument) => void): Promise<Harness>
   document.sheet.recalculate();
   const service = new SheetService(document, { rowCount: 500, columnCount: 40 });
   const served = serveForTest([
-    serve(Sheet, {
-      view: {
-        window: service.window,
-        geometry: service.geometry,
-        selection: service.selection,
-        editor: service.editor,
-        status: service.status
-      },
-      commands: {
-        setViewport: (a, b, c, d) => service.setViewport(a, b, c, d),
-        setCell: (row, column, input) => service.setCell(row, column, input),
-        setSelection: (a, b, c, d) => service.setSelection(a, b, c, d),
-        undo: () => service.undo(),
-        redo: () => service.redo()
-      }
-    })
+    sheetChannel(service)
   ]);
   // The grid is given the editing handle the whole screen shares; in
   // the app that is `SheetApp`'s, and here the spec is the screen.

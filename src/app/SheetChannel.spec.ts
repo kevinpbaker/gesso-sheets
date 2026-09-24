@@ -4,6 +4,7 @@ import { applyPatches, provide, type Patch } from 'gesso-framework';
 
 import { cellIn, Sheet, type SheetView, type SheetWindow } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
+import { sheetChannel } from './sheetChannel';
 import { SheetService, type Schedule } from './SheetService';
 
 /**
@@ -117,26 +118,7 @@ function attach(options: { budget?: number } = {}): Harness {
   const clock = new ManualSchedule();
   const service = new SheetService(document, { schedule: clock.schedule, budget: options.budget ?? 2_000 });
   const port = new RecordingPort();
-  provide(
-    Sheet,
-    {
-      view: {
-        window: service.window,
-        geometry: service.geometry,
-        selection: service.selection,
-        editor: service.editor,
-        status: service.status
-      },
-      commands: {
-        setViewport: (a, b, c, d) => service.setViewport(a, b, c, d),
-        setCell: (row, column, input) => service.setCell(row, column, input),
-        setSelection: (a, b, c, d) => service.setSelection(a, b, c, d),
-        undo: () => service.undo(),
-        redo: () => service.redo()
-      }
-    },
-    port
-  );
+  provide(Sheet, sheetChannel(service).source as never, port);
   // The replica asks rather than waiting to be pushed to; this is that.
   port.send({ type: 'channel:sync' });
   return {

@@ -12,11 +12,12 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phases 0 to 4 done, all five exit criteria met. Phase 0's
+**Status:** Phases 0 to 5 done, all six exit criteria met. Phase 0's
 findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid and the
-editor in `src/app`, and `pnpm test` is its 205 specs. `pnpm dev` is a
-spreadsheet you can type into. Phase 5 has not started.
+editor in `src/app`, and `pnpm test` is its 254 specs. `pnpm dev` is a
+spreadsheet you can type into, copy out of and paste into. Phase 6 has
+not started.
 
 ---
 
@@ -106,6 +107,13 @@ into the focused editable. A spreadsheet needs to intercept a paste when
 the grid owns a rectangular selection and no cell is being edited —
 pasting a TSV block out of Excel is table stakes. Copy is fine: the
 write path already exists through `ShellService.copyText`.
+
+*Closed by Phase 5*, in two places rather than one. The engine offers
+a `Paste` event to whatever holds focus when nothing editable does;
+and the shell listens for the browser's paste on the canvas and on the
+accessibility mirror, which is where focus actually is while an app is
+being used. The first without the second changes nothing, and only a
+browser says so.
 
 One thing that is already there, and worth not rebuilding:
 `EditableTextModel` in `core/src/editing/` has the caret, selection, IME
@@ -293,7 +301,7 @@ focused. Driving this from CDP with a separate `char` event produced
 bug — but the doubling is real enough to be worth the comment it now
 carries.
 
-### Phase 5 — Clipboard and fill
+### Phase 5 — Clipboard and fill — **done**
 
 Copy a range to TSV. Paste a range, which needs the second gap closed.
 Then the fill handle, with relative references adjusted as it extends.
@@ -307,6 +315,27 @@ cell is open.
 
 **Exit:** a round trip inside the sheet, and a paste of real TSV copied
 out of Excel or Google Sheets landing correctly.
+
+**Met.** `Clipboard.spec.tsx` drives both halves through the real
+paths: a copy reaches `ShellService`, which is the only thing with a
+clipboard, and every paste arrives as the engine's `Paste` event
+rather than as a command called by hand. The round trip carries
+*formulas*, not the numbers they showed — copying a column of totals
+and pasting it one column over pastes sums that compute from where
+they landed, which is the difference between a spreadsheet's copy and
+a screenshot of one. The Excel half is a block with CRLF endings, a
+quoted cell holding a tab, and the trailing newline Excel adds, which
+must not arrive as a row of blanks that wipes a row of the sheet.
+
+The engine gap this file opened with is closed, and closing it took
+two changes rather than one. `UiEditingController.paste` now offers
+the text to whatever holds focus when nothing editable does — but that
+alone did nothing in a browser, because a real paste never reached the
+engine at all: with no field focused the editing proxy blurs, and the
+browser fires `paste` at the canvas or, once the accessibility mirror
+exists, at whichever of *its* elements has focus. Neither had a
+listener. That second half was only findable by pasting into a real
+browser; every spec passed without it.
 
 ### Phase 6 — Persistence
 

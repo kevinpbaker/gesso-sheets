@@ -22,10 +22,15 @@ export interface KeyModifiers {
 }
 
 export type SheetAction =
-  /** Move the selection by a delta, clamped by the caller. */
-  | { readonly kind: 'move'; readonly rows: number; readonly columns: number }
+  /**
+   * Move the selection by a delta, clamped by the caller.
+   *
+   * `extend` keeps the anchor where it is and moves the other corner,
+   * which is what shift does to every selection everywhere.
+   */
+  | { readonly kind: 'move'; readonly rows: number; readonly columns: number; readonly extend: boolean }
   /** Move to an edge of the sheet. */
-  | { readonly kind: 'jump'; readonly to: 'rowStart' | 'sheetStart' | 'rowEnd' | 'sheetEnd' }
+  | { readonly kind: 'jump'; readonly to: 'rowStart' | 'sheetStart' | 'rowEnd' | 'sheetEnd'; readonly extend: boolean }
   /** Open the cell with what is already in it. */
   | { readonly kind: 'edit' }
   /** Open the cell, replacing its contents with this text. */
@@ -37,7 +42,11 @@ export type SheetAction =
   /** Empty the selected cell without opening it. */
   | { readonly kind: 'clear' }
   | { readonly kind: 'undo' }
-  | { readonly kind: 'redo' };
+  | { readonly kind: 'redo' }
+  /** Put the selection on the clipboard, and empty it when cutting. */
+  | { readonly kind: 'copy'; readonly cut: boolean }
+  /** Select every cell in the sheet. */
+  | { readonly kind: 'selectAll' };
 
 /**
  * A page, in rows. Not the viewport's height: a page that moved by
@@ -79,10 +88,21 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
         return shift ? { kind: 'redo' } : { kind: 'undo' };
       case 'y':
         return { kind: 'redo' };
+      case 'c':
+        return { kind: 'copy', cut: false };
+      case 'x':
+        return { kind: 'copy', cut: true };
+      case 'a':
+        return { kind: 'selectAll' };
+      // Paste is not here. The text arrives from the system a moment
+      // later, as a Paste event, and a key handler has nothing to
+      // paste at the moment the key goes down.
+      case 'v':
+        return null;
       case 'home':
-        return { kind: 'jump', to: 'sheetStart' };
+        return { kind: 'jump', to: 'sheetStart', extend: shift };
       case 'end':
-        return { kind: 'jump', to: 'sheetEnd' };
+        return { kind: 'jump', to: 'sheetEnd', extend: shift };
       default:
         return null;
     }
@@ -90,27 +110,28 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
 
   switch (key) {
     case 'ArrowUp':
-      return { kind: 'move', rows: -1, columns: 0 };
+      return { kind: 'move', rows: -1, columns: 0, extend: shift };
     case 'ArrowDown':
-      return { kind: 'move', rows: 1, columns: 0 };
+      return { kind: 'move', rows: 1, columns: 0, extend: shift };
     case 'ArrowLeft':
-      return { kind: 'move', rows: 0, columns: -1 };
+      return { kind: 'move', rows: 0, columns: -1, extend: shift };
     case 'ArrowRight':
-      return { kind: 'move', rows: 0, columns: 1 };
+      return { kind: 'move', rows: 0, columns: 1, extend: shift };
     case 'PageUp':
-      return { kind: 'move', rows: -PAGE_ROWS, columns: 0 };
+      return { kind: 'move', rows: -PAGE_ROWS, columns: 0, extend: shift };
     case 'PageDown':
-      return { kind: 'move', rows: PAGE_ROWS, columns: 0 };
+      return { kind: 'move', rows: PAGE_ROWS, columns: 0, extend: shift };
     case 'Home':
-      return { kind: 'jump', to: 'rowStart' };
+      return { kind: 'jump', to: 'rowStart', extend: shift };
     case 'End':
-      return { kind: 'jump', to: 'rowEnd' };
+      return { kind: 'jump', to: 'rowEnd', extend: shift };
     // Enter and Tab move without opening anything, which is what they
-    // do on a cell nobody is typing into.
+    // do on a cell nobody is typing into. Shift reverses them rather
+    // than extending: that is what it means on these two keys.
     case 'Enter':
-      return { kind: 'move', rows: shift ? -1 : 1, columns: 0 };
+      return { kind: 'move', rows: shift ? -1 : 1, columns: 0, extend: false };
     case 'Tab':
-      return { kind: 'move', rows: 0, columns: shift ? -1 : 1 };
+      return { kind: 'move', rows: 0, columns: shift ? -1 : 1, extend: false };
     case 'F2':
       return { kind: 'edit' };
     case 'Delete':

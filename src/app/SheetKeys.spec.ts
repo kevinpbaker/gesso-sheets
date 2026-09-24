@@ -12,29 +12,54 @@ function inCell(key: string, modifiers = {}): SheetAction | null {
 
 describe('keys on a selected cell', () => {
   it('moves with the arrows', () => {
-    expect(onGrid('ArrowUp')).toEqual({ kind: 'move', rows: -1, columns: 0 });
-    expect(onGrid('ArrowDown')).toEqual({ kind: 'move', rows: 1, columns: 0 });
-    expect(onGrid('ArrowLeft')).toEqual({ kind: 'move', rows: 0, columns: -1 });
-    expect(onGrid('ArrowRight')).toEqual({ kind: 'move', rows: 0, columns: 1 });
+    expect(onGrid('ArrowUp')).toEqual({ kind: 'move', rows: -1, columns: 0, extend: false });
+    expect(onGrid('ArrowDown')).toEqual({ kind: 'move', rows: 1, columns: 0, extend: false });
+    expect(onGrid('ArrowLeft')).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false });
+    expect(onGrid('ArrowRight')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false });
+  });
+
+  /** Shift keeps the anchor and moves the far corner, as it does everywhere. */
+  it('extends the selection when shift is held', () => {
+    expect(onGrid('ArrowDown', { shift: true })).toEqual({ kind: 'move', rows: 1, columns: 0, extend: true });
+    expect(onGrid('ArrowRight', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: 1, extend: true });
+    expect(onGrid('End', { shift: true })).toEqual({ kind: 'jump', to: 'rowEnd', extend: true });
+    expect(onGrid('PageDown', { shift: true })).toEqual({ kind: 'move', rows: PAGE_ROWS, columns: 0, extend: true });
+  });
+
+  it('copies, cuts and selects everything', () => {
+    expect(onGrid('c', { control: true })).toEqual({ kind: 'copy', cut: false });
+    expect(onGrid('x', { meta: true })).toEqual({ kind: 'copy', cut: true });
+    expect(onGrid('a', { control: true })).toEqual({ kind: 'selectAll' });
+  });
+
+  /**
+   * Paste is not a key here. The text arrives from the system a moment
+   * after the key goes down, as a Paste event, and a handler that
+   * claimed the key would have nothing to put anywhere.
+   */
+  it('leaves paste to the event that carries the text', () => {
+    expect(onGrid('v', { control: true })).toBeNull();
   });
 
   it('moves down on Enter and right on Tab, and back with shift', () => {
-    expect(onGrid('Enter')).toEqual({ kind: 'move', rows: 1, columns: 0 });
-    expect(onGrid('Enter', { shift: true })).toEqual({ kind: 'move', rows: -1, columns: 0 });
-    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1 });
-    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1 });
+    // Shift reverses these two rather than extending, which is what it
+    // means on Enter and Tab.
+    expect(onGrid('Enter')).toEqual({ kind: 'move', rows: 1, columns: 0, extend: false });
+    expect(onGrid('Enter', { shift: true })).toEqual({ kind: 'move', rows: -1, columns: 0, extend: false });
+    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false });
+    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false });
   });
 
   it('pages by less than a screen, so something stays in common', () => {
-    expect(onGrid('PageDown')).toEqual({ kind: 'move', rows: PAGE_ROWS, columns: 0 });
-    expect(onGrid('PageUp')).toEqual({ kind: 'move', rows: -PAGE_ROWS, columns: 0 });
+    expect(onGrid('PageDown')).toEqual({ kind: 'move', rows: PAGE_ROWS, columns: 0, extend: false });
+    expect(onGrid('PageUp')).toEqual({ kind: 'move', rows: -PAGE_ROWS, columns: 0, extend: false });
   });
 
   it('jumps to the edges', () => {
-    expect(onGrid('Home')).toEqual({ kind: 'jump', to: 'rowStart' });
-    expect(onGrid('End')).toEqual({ kind: 'jump', to: 'rowEnd' });
-    expect(onGrid('Home', { control: true })).toEqual({ kind: 'jump', to: 'sheetStart' });
-    expect(onGrid('End', { meta: true })).toEqual({ kind: 'jump', to: 'sheetEnd' });
+    expect(onGrid('Home')).toEqual({ kind: 'jump', to: 'rowStart', extend: false });
+    expect(onGrid('End')).toEqual({ kind: 'jump', to: 'rowEnd', extend: false });
+    expect(onGrid('Home', { control: true })).toEqual({ kind: 'jump', to: 'sheetStart', extend: false });
+    expect(onGrid('End', { meta: true })).toEqual({ kind: 'jump', to: 'sheetEnd', extend: false });
   });
 
   it('opens the cell on F2 with what is already in it', () => {
@@ -68,7 +93,7 @@ describe('keys on a selected cell', () => {
     expect(onGrid('Shift')).toBeNull();
     expect(onGrid('F5')).toBeNull();
     expect(onGrid('Escape')).toBeNull();
-    expect(onGrid('a', { control: true })).toBeNull();
+    expect(onGrid('q', { control: true })).toBeNull();
   });
 });
 

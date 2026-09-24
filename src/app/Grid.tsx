@@ -12,10 +12,12 @@ import {
   type UiElement,
   type UiKeyboardEvent,
   type UiNode,
+  type UiPasteEvent,
+  type UiPointerEvent,
   type UiTextChangeEvent,
   type UiVirtualSheet
 } from 'gesso-core';
-import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
+import { FocusService, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { columnName } from '../sheet/A1';
 
@@ -71,6 +73,7 @@ const GRID_LINE = 'border';
 export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const focus = ctx.inject(FocusService);
+  const shell = ctx.inject(ShellService);
   const window$ = sheet.view.window;
   const edit = _inputs.editing.value;
   const selection$ = edit.selection;
@@ -136,9 +139,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       verticalAlign: 'middle',
       textAlign: value.pipe(map(text => (isNumeric(text) ? 'right' : 'start'))),
       role: 'cell',
-      onClick: () => selectByPointer(row, column)
+      onClick: (event: UiPointerEvent) => selectByPointer(row, column, event.modifiers.shift)
     });
   };
+
+  /** The cell the fill handle hangs off: the selection's far corner. */
+  let cornerAt: { row: number; column: number } | null = null;
 
   /**
    * A click on a cell.
@@ -150,12 +156,16 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * selection and left focus where it was gave you a selected cell
    * that no key did anything to.
    */
-  const selectByPointer = (row: number, column: number): void => {
+  const selectByPointer = (row: number, column: number, extend = false): void => {
     // A click elsewhere commits what is open, as it does everywhere.
     if (edit.openNow()) {
       edit.commit(0, 0);
     }
-    edit.moveTo(row, column);
+    if (extend) {
+      edit.extendTo(row, column);
+    } else {
+      edit.moveTo(row, column);
+    }
     if (gridNode !== null) {
       focus.focus(gridNode);
     }
@@ -299,12 +309,72 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
   };
 
+  /**
+   * The fill handle: the small square on the selection's bottom-right
+   * corner that extends it.
+   *
+   * A child of the row it is on rather than a thing floating over the
+   * grid, so it travels with the selection, survives a scroll and
+   * needs nothing kept in step. The row is `position: 'relative'`
+   * because an absolute child is placed against its nearest positioned
+   * ancestor, and without one it would walk up to the layout root and
+   * be drawn in the corner of the screen.
+   */
+  const fillHandle = (column: number): UiElement =>
+    Box({
+      key: 'fill',
+      width: 8,
+      height: 8,
+      position: 'absolute',
+      // Placed from the window's own offsets rather than by hanging
+      // off the cell: a `Text` takes no children, and giving the one
+      // selected cell a different element type would cost it its place
+      // in the cache and its role in the semantics tree.
+      left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + sheetWindow.widthOf(column) - 5,
+      top: ROW_HEIGHT - 5,
+      zIndex: 3,
+      backgroundColor: 'primary',
+      borderColor: 'background',
+      borderWidth: 1,
+      cursor: 'crosshair',
+      role: 'button',
+      label: 'Fill',
+      onPanStart: () => {
+        filling = true;
+      },
+      onPanMove: (event: UiPointerEvent) => {
+        if (!filling) {
+          return;
+        }
+        // Where the pointer is, in cells. The window owns the offsets,
+        // so this is arithmetic rather than a hit test — which matters
+        // because the cell being dragged towards is usually one that
+        // has not been mounted yet.
+        const box = viewport.value;
+        fillTo = sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+      },
+      onPanEnd: () => {
+        filling = false;
+        if (fillTo !== null) {
+          sheet.send.fill(fillTo.row, fillTo.column);
+          fillTo = null;
+        }
+      }
+    });
+
+  let filling = false;
+  let fillTo: { row: number; column: number } | null = null;
+
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
     for (let column = firstColumn; column <= lastColumn; column++) {
       line.push(cell(row, column));
     }
-    return Row({ role: 'row', posInSet: row + 1 }, ...line);
+    const corner = cornerAt !== null && cornerAt.row === row;
+    if (corner && cornerAt !== null) {
+      line.push(fillHandle(cornerAt.column));
+    }
+    return Row({ role: 'row', posInSet: row + 1, position: corner ? 'relative' : undefined }, ...line);
   };
 
   const renderHeader = (firstColumn: number, lastColumn: number): UiElement => {
@@ -444,6 +514,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       ref: node => (gridNode = node),
       modifiers: [viewport.modifier],
       onKeyDown: onKey,
+      // Text from the clipboard with no caret anywhere. Before the
+      // engine offered this the paste was dropped: `paste` had nothing
+      // editable to insert into and returned false.
+      onPaste: (event: UiPasteEvent) => {
+        edit.pasteText(event.text);
+        event.preventDefault();
+      },
       scrollX,
       scrollY,
       header: renderHeader,
@@ -460,6 +537,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   // it: everything past the column that moved sits somewhere else, and
   // the prefix sum is what says where.
   ctx.effect(widths, all => sheetWindow.setColumnWidths(all));
+
+  // A copy asked for on this thread is answered on the other and comes
+  // back as a patch, because a command has no return value — and the
+  // shell is the only thing with a clipboard to put it on.
+  let copied = 0;
+  ctx.effect(sheet.view.clipboard, clipboard => {
+    if (clipboard.serial > copied) {
+      copied = clipboard.serial;
+      shell.copyText(clipboard.text);
+    }
+  });
 
   // The round trip: the range the window settled on is what the
   // application worker is asked for. `range$` emits only when the
@@ -479,6 +567,29 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * with every cell but these two still cached — and it happens twice
    * per cell edited rather than per frame.
    */
+  /**
+   * The fill handle moves with the selection, and a cell cannot grow
+   * one by having a property written, so the two cells involved are
+   * dropped from the cache and the rows rebuilt from what is left —
+   * the same trick opening a cell uses, at the same cost, and at the
+   * pace a person moves a selection rather than per frame.
+   */
+  let cornerBefore: { row: number; column: number } | null = null;
+  ctx.effect(edit.selection, at => {
+    const next = { row: Math.max(at.row, at.anchorRow), column: Math.max(at.column, at.anchorColumn) };
+    if (sameCell(next, cornerBefore)) {
+      return;
+    }
+    for (const which of [cornerBefore, next]) {
+      if (which !== null) {
+        cells.delete(`${which.row}:${which.column}`);
+      }
+    }
+    cornerBefore = next;
+    cornerAt = next;
+    sheetWindow.invalidate();
+  });
+
   let openBefore: { row: number; column: number } | null = null;
   ctx.effect(combineLatest([edit.selection, edit.open]), ([at, isOpen]) => {
     const next = isOpen ? { row: at.row, column: at.column } : null;
