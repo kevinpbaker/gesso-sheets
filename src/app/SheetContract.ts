@@ -47,7 +47,18 @@ export interface SheetGeometry {
   readonly rowCount: number;
   readonly columnCount: number;
   readonly rowHeight: number;
+  /** The width a column has until somebody drags it. */
   readonly columnWidth: number;
+  /**
+   * Every column's width, in order from A.
+   *
+   * On the contract as of Phase 6, and not before. How wide a column
+   * is drawn is not the application's business — which is why the drag
+   * itself stays on the render thread, where it costs no round trip —
+   * right up until it has to survive a reload, and then it is the
+   * document's.
+   */
+  readonly columnWidths: readonly number[];
 }
 
 /** The active cell, and the rectangle anchored from it. */
@@ -125,6 +136,15 @@ export interface SheetCommands {
   clearRange(): void;
   /** Extends the selection over a cell, repeating it with its formulas moved. */
   fill(toRow: number, toColumn: number): void;
+  /**
+   * A column was dragged to a new width.
+   *
+   * Sent when the drag *ends*, not on every frame of it. The render
+   * thread already knows how wide it is drawing the column and does
+   * not need an answer from another thread to go on drawing it; what
+   * the application worker needs is the number to write down.
+   */
+  setColumnWidth(column: number, width: number): void;
 }
 
 export interface SheetView {
@@ -157,7 +177,7 @@ export function cellIn(window: SheetWindow, row: number, column: number): string
 
 export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   window: EMPTY_WINDOW,
-  geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104 },
+  geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104, columnWidths: [] },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
   status: { pending: 0, canUndo: false, canRedo: false },

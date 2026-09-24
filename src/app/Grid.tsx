@@ -502,6 +502,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
           }
         },
         onPanEnd: () => {
+          if (resizing !== null) {
+            // The end of the drag, and the only moment the other
+            // thread hears about it. Sending each frame would be a
+            // round trip per pixel to agree on something this side has
+            // already drawn; sending the result is what makes the
+            // width survive a reload.
+            sheet.send.setColumnWidth(resizing.column, widths.value[resizing.column] ?? COLUMN_WIDTH);
+          }
           resizing = null;
         }
       })

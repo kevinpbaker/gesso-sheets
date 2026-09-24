@@ -1,6 +1,6 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
-import { ROW_HEIGHT, COLUMN_WIDTH } from './dimensions';
+import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
   EMPTY_WINDOW,
   type SheetClipboard,
@@ -11,6 +11,8 @@ import {
   type SheetWindow
 } from './SheetContract';
 import type { SheetDocument } from './SheetDocument';
+import { snapshotOf, applySnapshot, type SheetSnapshot } from './SheetFile';
+import type { SheetRepository } from './SheetRepository';
 import { clearRect, copyRect, fillRect, fillTarget, pasteBlock, rectOf, type CopyOrigin } from './SheetRanges';
 
 /**
@@ -34,6 +36,8 @@ export interface SheetServiceOptions {
   readonly schedule?: Schedule;
   readonly rowCount?: number;
   readonly columnCount?: number;
+  /** Where the sheet is kept. Without one it is kept nowhere. */
+  readonly repository?: SheetRepository;
 }
 
 /**
@@ -84,7 +88,16 @@ export class SheetService {
   private viewport = { firstRow: 0, lastRow: -1, firstColumn: 0, lastColumn: -1 };
   private readonly budget: number;
   private readonly schedule: Schedule;
+  private readonly repository: SheetRepository | undefined;
   private pumping = false;
+  /**
+   * Whether a load has finished.
+   *
+   * Saving before it has would write an empty sheet over a real one:
+   * the seed runs first, the file arrives second, and between them the
+   * document is neither.
+   */
+  private restored = false;
 
   constructor(
     private readonly document: SheetDocument,
@@ -92,11 +105,14 @@ export class SheetService {
   ) {
     this.budget = options.budget ?? 2_000;
     this.schedule = options.schedule ?? defaultSchedule;
+    const columnCount = options.columnCount ?? 100;
+    this.repository = options.repository;
     this.geometrySubject = new BehaviorSubject<SheetGeometry>({
       rowCount: options.rowCount ?? 10_000,
-      columnCount: options.columnCount ?? 100,
+      columnCount,
       rowHeight: ROW_HEIGHT,
-      columnWidth: COLUMN_WIDTH
+      columnWidth: COLUMN_WIDTH,
+      columnWidths: Array.from({ length: columnCount }, () => COLUMN_WIDTH)
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
     this.editorSubject = new BehaviorSubject<SheetEditor>({
@@ -141,6 +157,7 @@ export class SheetService {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    this.persist();
     this.pump();
   }
 
@@ -196,11 +213,72 @@ export class SheetService {
     this.afterEdit();
   }
 
+  setColumnWidth(column: number, width: number): void {
+    const geometry = this.geometrySubject.value;
+    if (column < 0 || column >= geometry.columnCount) {
+      return;
+    }
+    const columnWidths = [...geometry.columnWidths];
+    columnWidths[column] = Math.max(MIN_COLUMN_WIDTH, Math.round(width));
+    this.geometrySubject.next({ ...geometry, columnWidths });
+    this.persist();
+  }
+
+  // ---------------------------------------------------------------------
+  // Keeping it
+  // ---------------------------------------------------------------------
+
+  /**
+   * Loads what was stored, or seeds a sheet that has never been opened.
+   *
+   * Async, and called after `serveChannels` rather than before it: a
+   * channel served late misses the handshake, and the render worker is
+   * perfectly able to draw an empty grid for the frame it takes to
+   * read a file. The seed is written straight back, so what is on disk
+   * from the second run onwards is a file this build wrote.
+   */
+  async restore(seed?: (document: SheetDocument) => void): Promise<void> {
+    const stored = (await this.repository?.load()) ?? null;
+    if (stored === null) {
+      seed?.(this.document);
+      this.document.sheet.recalculate();
+    } else {
+      applySnapshot(this.document, stored);
+      this.geometrySubject.next({ ...this.geometrySubject.value, columnWidths: [...stored.columnWidths] });
+    }
+    this.restored = true;
+    this.selectionSubject.next(this.document.selection);
+    this.publishWindow();
+    this.publishEditor();
+    this.publishStatus();
+    if (stored === null) {
+      this.persist();
+    }
+  }
+
+  /** The snapshot as it stands, for a spec or a worker shutting down. */
+  snapshot(): SheetSnapshot {
+    return snapshotOf(this.document, this.geometrySubject.value.columnWidths);
+  }
+
+  /** Writes anything outstanding now. */
+  flush(): Promise<void> {
+    return this.repository?.flush() ?? Promise.resolve();
+  }
+
+  private persist(): void {
+    if (!this.restored) {
+      return;
+    }
+    this.repository?.save(this.snapshot());
+  }
+
   /** What every edit that is not a single keystroke has to do afterwards. */
   private afterEdit(): void {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    this.persist();
     this.pump();
   }
 
@@ -209,6 +287,10 @@ export class SheetService {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    // An undo is an edit as far as the file is concerned. Left out,
+    // taking something back and closing the tab would bring it back on
+    // the next open, which is the opposite of what undo promises.
+    this.persist();
     this.pump();
   }
 

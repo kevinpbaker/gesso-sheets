@@ -32,7 +32,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       copy: cut => service.copy(cut),
       paste: text => service.paste(text),
       clearRange: () => service.clearRange(),
-      fill: (toRow, toColumn) => service.fill(toRow, toColumn)
+      fill: (toRow, toColumn) => service.fill(toRow, toColumn),
+      setColumnWidth: (column, width) => service.setColumnWidth(column, width)
     }
   });
 }
