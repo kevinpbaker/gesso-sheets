@@ -12,8 +12,9 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phase 0 done and its exit criterion met — see
-[`PHASE0.md`](PHASE0.md). Phase 1 has not started.
+**Status:** Phases 0 and 1 done, both exit criteria met. Phase 0's
+findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
+`src/sheet`, and `pnpm test` is its 120 specs. Phase 2 has not started.
 
 ---
 
@@ -136,7 +137,7 @@ rows and 2 columns. `pnpm phase0` reproduces the whole table; the
 findings, including the three that change later phases, are in
 [`PHASE0.md`](PHASE0.md).
 
-### Phase 1 — The sheet model, headless
+### Phase 1 — The sheet model, headless — **done**
 
 Pure TypeScript, no framework import, all under vitest in node: a sparse
 cell store keyed by packed row/column, A1 references with `$` absolutes
@@ -151,6 +152,25 @@ deliberately small: `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `IF`,
 evaluates exactly the transitive closure, asserted as a count and not as
 a timing. This is the spec that makes the headline claim checkable.
 
+**Met.** `Sheet.budget.spec.ts`: editing one cell with 50,000
+dependents evaluates 50,000 cells, `toBe` and not `toBeLessThan`, in
+29 ms. Beside it, the counts that say the closure is the *right* one
+rather than merely the right size — a diamond evaluates its shared
+dependent once and not once per path, an edit nothing reads evaluates
+nothing, an edit inside a `SUM` range evaluates the formula once and
+not once per cell, and a rewritten formula stops being woken by the
+reference it dropped.
+
+Two things the phase added to its own description. Recalculation is a
+**resumable queue**, not a call: `recalculate(budget)` does at most
+that many cells and says whether more remain, because Phase 0 measured
+that 30 ms of uninterrupted application thread leaves the sheet blank
+in 89% of frames, and a recalc written as one long call cannot be cut
+into slices afterwards. And the no-dependency rule is a spec rather
+than a promise — `boundaries.spec.ts` fails the build, naming the file
+and the import, if anything under `src/sheet` reaches for the
+framework, RxJS or the browser.
+
 ### Phase 2 — Contract and application worker
 
 `SheetContract.ts` with the windowed view and the commands
@@ -161,6 +181,11 @@ worker serving it.
 One keystroke in a cell with 50,000 dependents should emit patches
 proportional to the visible window, not to the dependents. That single
 assertion is the whole thesis.
+
+Phase 1 leaves `Sheet` ready for it: `display(row, column)` is the
+already-formatted string the window carries, `entries()` is what a
+repository writes out, and `recalculate(budget)` is what lets the
+worker publish a window between slices of a recalc.
 
 Two things Phase 0 adds to this phase. The window is a map keyed by
 absolute row and column, not arrays — the shape decides the patch count
