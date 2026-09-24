@@ -20,8 +20,29 @@ import type { UiNodeReport } from 'gesso-framework';
 /** How long the block button holds the thread, in milliseconds. */
 const BLOCK_MS = 5_000;
 
-/** How many frames the rolling readout averages over. */
-const WINDOW = 90;
+/**
+ * How far back the rolling readout looks, in milliseconds.
+ *
+ * A *time* window and not a count of frames, which is what it was, and
+ * the reason is the thing the readout exists to show: an idle Gesso
+ * app draws nothing at all. Frames are not produced at a steady rate
+ * and then averaged — there simply are none while nothing changes. A
+ * ninety-frame window therefore held frames from however long ago the
+ * last interaction was, and dividing by the span between them reported
+ * a scroll running at sixty as three. Worse, it took ninety fresh
+ * frames to flush, which is a second and a half of continuous drawing,
+ * so a short drag never read above a fraction of the truth.
+ */
+const RECENT_MS = 1_000;
+
+/**
+ * How long after the last frame the rate stops being a rate.
+ *
+ * Past this, the app is not running slowly, it is not running: there
+ * is nothing on screen that wants redrawing. A number there would read
+ * as a stall, so the readout says so instead.
+ */
+const IDLE_AFTER_MS = 400;
 
 /** How many frames the recording keeps for a machine to read back. */
 const RECORDING = 2_000;
@@ -95,19 +116,21 @@ export function proofPanel(): {
    */
   const finishes: number[] = [];
   const recording: ProofFrame[] = [];
-  let worstGap = 0;
   let peakMeasured = 0;
 
   globalThis.gessosheetProof = {
     frames: () => recording,
     reset: () => {
       recording.length = 0;
-      worstGap = 0;
+      finishes.length = 0;
       peakMeasured = 0;
     }
   };
 
   const onFrame = (metrics: FrameMetrics): void => {
+    // Learned from every frame, not just the first: the two clocks
+    // drift, and a tab that was suspended resumes on a different one.
+    workerOffset = performance.now() - metrics.at;
     recording.push({
       at: metrics.at,
       durationMs: metrics.durationMs,
@@ -119,12 +142,8 @@ export function proofPanel(): {
       recording.shift();
     }
     finishes.push(metrics.at);
-    if (finishes.length > WINDOW) {
+    while (finishes.length > 1 && metrics.at - finishes[0] > RECENT_MS) {
       finishes.shift();
-    }
-    const previous = finishes.at(-2);
-    if (previous !== undefined) {
-      worstGap = Math.max(worstGap, metrics.at - previous);
     }
     measuredOut.textContent = String(metrics.measured);
     /**
@@ -151,6 +170,19 @@ export function proofPanel(): {
   let sampledAt = performance.now();
 
   /**
+   * This thread's clock, expressed on the render worker's.
+   *
+   * `metrics.at` is stamped in the worker, whose `performance.now()`
+   * counts from its own creation and so trails the page's by however
+   * old the page was when it was spawned. Comparing a frame's stamp
+   * against this thread's raw clock would make every frame look
+   * hundreds of milliseconds stale and the sheet permanently idle. The
+   * offset is learned from the frames themselves.
+   */
+  let workerOffset: number | null = null;
+  const hostTimeNow = (): number => performance.now() - (workerOffset ?? 0);
+
+  /**
    * The pulse, the main thread's frames, and the readout, all on this
    * thread's animation frame — so all three stop together when it is
    * blocked, and stop in front of a sheet that has not.
@@ -165,12 +197,35 @@ export function proofPanel(): {
       mainFrames = 0;
       sampledAt = now;
 
-      const first = finishes[0];
+      /**
+       * The rate over the last second of frames, and the worst gap
+       * inside it.
+       *
+       * Both are read here rather than accumulated as frames arrive,
+       * because both are statements about a window that is still
+       * moving: a gap that was the worst a minute ago says nothing
+       * about what the sheet is doing now, and the lifetime maximum
+       * the readout used to show was always whichever idle pause had
+       * been longest.
+       *
+       * The clock is `metrics.at`, the render worker's own, so this
+       * stays honest across a blocked main thread — which is the whole
+       * reason the frames carry a stamp.
+       */
       const last = finishes.at(-1);
-      if (first !== undefined && last !== undefined && last > first) {
+      const first = finishes[0];
+      const quiet = last === undefined || hostTimeNow() - last > IDLE_AFTER_MS;
+      if (quiet) {
+        fpsOut.textContent = 'idle';
+        gapOut.textContent = '—';
+      } else if (first !== undefined && last > first) {
         fpsOut.textContent = String(Math.round(((finishes.length - 1) / (last - first)) * 1000));
+        let worst = 0;
+        for (let index = 1; index < finishes.length; index++) {
+          worst = Math.max(worst, finishes[index] - finishes[index - 1]);
+        }
+        gapOut.textContent = `${worst.toFixed(1)}ms`;
       }
-      gapOut.textContent = worstGap === 0 ? '—' : `${worstGap.toFixed(1)}ms`;
     }
     requestAnimationFrame(tick);
   };
@@ -216,7 +271,6 @@ export function proofPanel(): {
       block.disabled = true;
       block.textContent = `Blocking for ${BLOCK_MS / 1000}s…`;
       pulse.classList.add('blocked');
-      worstGap = 0;
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
           const until = performance.now() + BLOCK_MS;
