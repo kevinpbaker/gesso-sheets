@@ -109,6 +109,40 @@ frames blank at 4, 0–2% at 8 and above. The knee is not gradual because
 it is a race — either the band covers a frame's movement plus the round
 trip, or it does not.
 
+**A band covers a scroll, not a jump.** Found by scrolling the spike by
+hand after the matrix was already written, which is the second thing
+hand-scrolling caught that the bench did not. The bench sweeps at a
+constant velocity, so it only ever asks the band to cover one frame's
+movement. Real input is not always like that: a wheel notch, a trackpad
+fling, a scrollbar track click and a thumb drag all deliver a single
+large delta, and a 2,500 px one moves the viewport 104 rows between two
+frames. No lookahead of 16 rows covers that, and none of 104 would be
+worth having.
+
+With the fetch band at 16/4, continuous scrolling is clean well past
+the speed the matrix stresses, and a jump is not:
+
+| input | speed | frames with a blank cell |
+| ----- | ----- | ------------------------ |
+| 100 px per frame | 6,000 px/s | 0% |
+| 200 px per frame | 12,000 px/s | 0% |
+| 2,500 px per event | a fling | 43%, reaching 100% |
+
+So the band is sized for velocity and there is no size that answers a
+teleport. What answers a teleport is the other mitigation this file's
+parent roadmap lists — a pending treatment that does not read as an
+empty sheet — and it is worth saying that the *first* of those two,
+keeping last-known values, is exactly wrong here: after a jump the
+values previously held belong to entirely different rows, so showing
+them is wrong data rather than stale data. A cell with nothing in it
+yet should look like a cell waiting, which makes this a question for
+Phase 3's cell treatment rather than for the contract.
+
+**The spike now defaults to 16/4** rather than to 0/0. Zero was the
+pessimal setting the knee was measured from, and leaving it as the
+default meant the demonstration shipped in the configuration the
+measurement had just ruled out.
+
 ## 4. The wire shape the roadmap assumed costs 80× the bytes
 
 The roadmap says the application worker publishes "plain arrays of

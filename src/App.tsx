@@ -74,10 +74,21 @@ export function App(_inputs: Inputs<{}>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const block = sheet.view.block;
 
+  // The bands Phase 0 settled on. The mount band stays small — it is
+  // the partial rows at the viewport's edges and nothing more, because
+  // widening it costs nodes on every frame and does not buy coverage.
+  // The lookahead is all on the fetch side, where it costs only cells
+  // on the wire. See PHASE0.md section 3.
+  //
+  // These were both zero while the knee was being measured, which is
+  // why the spike used to go blank under a fling: with no fetch band
+  // the application worker sends exactly the range that was mounted a
+  // round trip ago, so a scroll that outruns the round trip reaches
+  // rows whose values have not been asked for yet.
   const mountBandRows = internalState(2);
   const mountBandColumns = internalState(1);
-  const fetchBandRows = internalState(0);
-  const fetchBandColumns = internalState(0);
+  const fetchBandRows = internalState(16);
+  const fetchBandColumns = internalState(4);
   const speed = internalState(SPEEDS[1]);
   const shape = internalState<WireShape>('keyed');
   const busy = internalState(0);
