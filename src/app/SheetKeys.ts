@@ -1,3 +1,5 @@
+import type { UiKeyModifiers } from 'gesso-core';
+
 /**
  * What a key means, as a pure function.
  *
@@ -14,12 +16,17 @@
  * two to disagree.
  */
 
-export interface KeyModifiers {
-  readonly shift?: boolean;
-  readonly control?: boolean;
-  readonly meta?: boolean;
-  readonly alt?: boolean;
-}
+/**
+ * The engine's own modifier names, not a set of our own.
+ *
+ * It was a set of our own, with `control` where the engine says
+ * `ctrl`, and the mistake survived every spec: `fireEvent.press` takes
+ * the engine's shape, the specs passed theirs through a
+ * `Record<string, boolean>`, and an index signature is assignable to
+ * anything — so both sides agreed on a field the browser never sets.
+ * Not one accelerator worked in a real browser: ctrl+C typed a `c`.
+ */
+export type KeyModifiers = Partial<UiKeyModifiers>;
 
 export type SheetAction =
   /**
@@ -65,7 +72,7 @@ export const PAGE_ROWS = 24;
  */
 export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean): SheetAction | null {
   const shift = modifiers.shift === true;
-  const accel = modifiers.control === true || modifiers.meta === true;
+  const accel = modifiers.ctrl === true || modifiers.meta === true;
 
   if (editing) {
     switch (key) {

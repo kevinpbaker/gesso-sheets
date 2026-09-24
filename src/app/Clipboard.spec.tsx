@@ -4,6 +4,8 @@ import { createComponent, ShellService } from 'gesso-framework';
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
+import type { UiKeyModifiers } from 'gesso-core';
+
 import { ROW_HEIGHT } from './dimensions';
 import { sheetChannel } from './sheetChannel';
 import { SheetApp } from './SheetApp';
@@ -75,7 +77,7 @@ describe('clipboard and fill', () => {
     h?.served.dispose();
   });
 
-  async function press(key: string, modifiers: Record<string, boolean> = {}): Promise<void> {
+  async function press(key: string, modifiers: Partial<UiKeyModifiers> = {}): Promise<void> {
     h.ui.fireEvent.press(key, modifiers);
     await h.ui.settle();
     await h.served.settle();
@@ -110,7 +112,7 @@ describe('clipboard and fill', () => {
     it('copies the rectangle as tab-separated rows', async () => {
       await press('ArrowDown', { shift: true });
       await press('ArrowRight', { shift: true });
-      await press('c', { control: true });
+      await press('c', { ctrl: true });
 
       expect(h.copied()).toBe('a\tb\nc\td');
     });
@@ -128,7 +130,7 @@ describe('clipboard and fill', () => {
     it('comes back as it went, values and all', async () => {
       await press('ArrowDown', { shift: true });
       await press('ArrowRight', { shift: true });
-      await press('c', { control: true });
+      await press('c', { ctrl: true });
       const text = h.copied();
 
       // Down to row 4, column A. Home first, because an arrow from a
@@ -156,7 +158,7 @@ describe('clipboard and fill', () => {
      */
     it('moves the formulas with the block', async () => {
       await press('ArrowDown');
-      await press('c', { control: true });
+      await press('c', { ctrl: true });
       const text = h.copied();
       expect(text).toBe('=A1*10');
 
@@ -171,7 +173,7 @@ describe('clipboard and fill', () => {
 
     it('cuts, which copies and then empties', async () => {
       await press('ArrowDown', { shift: true });
-      await press('x', { control: true });
+      await press('x', { ctrl: true });
 
       expect(h.copied()).toBe('2\n=A1*10');
       expect(h.document.sheet.input(0, 0)).toBe('');
@@ -181,7 +183,7 @@ describe('clipboard and fill', () => {
     it('undoes a paste in one press', async () => {
       await press('ArrowDown', { shift: true });
       await press('ArrowRight', { shift: true });
-      await press('c', { control: true });
+      await press('c', { ctrl: true });
       const text = h.copied();
       await press('Home');
       await press('ArrowDown');
@@ -190,7 +192,7 @@ describe('clipboard and fill', () => {
       expect(h.document.sheet.input(3, 0)).toBe('2');
       expect(h.document.sheet.input(3, 1)).toBe('3');
 
-      await press('z', { control: true });
+      await press('z', { ctrl: true });
 
       expect(h.document.sheet.input(3, 0)).toBe('');
       expect(h.document.sheet.input(3, 1)).toBe('');
@@ -325,7 +327,7 @@ describe('clipboard and fill', () => {
       await dragHandleTo(3);
       expect(h.document.sheet.input(3, 3)).not.toBe('');
 
-      await press('z', { control: true });
+      await press('z', { ctrl: true });
 
       expect(h.document.sheet.input(1, 3)).toBe('');
       expect(h.document.sheet.input(3, 3)).toBe('');

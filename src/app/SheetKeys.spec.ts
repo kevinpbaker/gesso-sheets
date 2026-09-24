@@ -27,9 +27,9 @@ describe('keys on a selected cell', () => {
   });
 
   it('copies, cuts and selects everything', () => {
-    expect(onGrid('c', { control: true })).toEqual({ kind: 'copy', cut: false });
+    expect(onGrid('c', { ctrl: true })).toEqual({ kind: 'copy', cut: false });
     expect(onGrid('x', { meta: true })).toEqual({ kind: 'copy', cut: true });
-    expect(onGrid('a', { control: true })).toEqual({ kind: 'selectAll' });
+    expect(onGrid('a', { ctrl: true })).toEqual({ kind: 'selectAll' });
   });
 
   /**
@@ -38,7 +38,7 @@ describe('keys on a selected cell', () => {
    * claimed the key would have nothing to put anywhere.
    */
   it('leaves paste to the event that carries the text', () => {
-    expect(onGrid('v', { control: true })).toBeNull();
+    expect(onGrid('v', { ctrl: true })).toBeNull();
   });
 
   it('moves down on Enter and right on Tab, and back with shift', () => {
@@ -58,7 +58,7 @@ describe('keys on a selected cell', () => {
   it('jumps to the edges', () => {
     expect(onGrid('Home')).toEqual({ kind: 'jump', to: 'rowStart', extend: false });
     expect(onGrid('End')).toEqual({ kind: 'jump', to: 'rowEnd', extend: false });
-    expect(onGrid('Home', { control: true })).toEqual({ kind: 'jump', to: 'sheetStart', extend: false });
+    expect(onGrid('Home', { ctrl: true })).toEqual({ kind: 'jump', to: 'sheetStart', extend: false });
     expect(onGrid('End', { meta: true })).toEqual({ kind: 'jump', to: 'sheetEnd', extend: false });
   });
 
@@ -83,17 +83,17 @@ describe('keys on a selected cell', () => {
   });
 
   it('undoes and redoes', () => {
-    expect(onGrid('z', { control: true })).toEqual({ kind: 'undo' });
+    expect(onGrid('z', { ctrl: true })).toEqual({ kind: 'undo' });
     expect(onGrid('Z', { meta: true })).toEqual({ kind: 'undo' });
-    expect(onGrid('z', { control: true, shift: true })).toEqual({ kind: 'redo' });
-    expect(onGrid('y', { control: true })).toEqual({ kind: 'redo' });
+    expect(onGrid('z', { ctrl: true, shift: true })).toEqual({ kind: 'redo' });
+    expect(onGrid('y', { ctrl: true })).toEqual({ kind: 'redo' });
   });
 
   it('lets a key it has no meaning for through', () => {
     expect(onGrid('Shift')).toBeNull();
     expect(onGrid('F5')).toBeNull();
     expect(onGrid('Escape')).toBeNull();
-    expect(onGrid('q', { control: true })).toBeNull();
+    expect(onGrid('q', { ctrl: true })).toBeNull();
   });
 });
 
@@ -123,7 +123,7 @@ describe('keys inside an open cell', () => {
     for (const key of ['ArrowLeft', 'ArrowUp', 'Home', 'End', 'Delete', 'Backspace', 'a', 'F2', '5']) {
       expect(inCell(key), key).toBeNull();
     }
-    expect(inCell('z', { control: true })).toBeNull();
+    expect(inCell('z', { ctrl: true })).toBeNull();
   });
 });
 

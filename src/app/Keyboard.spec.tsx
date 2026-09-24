@@ -4,6 +4,8 @@ import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, textProperty, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
+import type { UiKeyModifiers } from 'gesso-core';
+
 import { Sheet } from './SheetContract';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
@@ -79,7 +81,7 @@ describe('the sheet from the keyboard', () => {
     return textProperty(h.ui.getByRole('status'));
   }
 
-  async function press(key: string, modifiers: Record<string, boolean> = {}): Promise<void> {
+  async function press(key: string, modifiers: Partial<UiKeyModifiers> = {}): Promise<void> {
     h.ui.fireEvent.press(key, modifiers);
     await h.ui.settle();
     await h.served.settle();
@@ -131,9 +133,9 @@ describe('the sheet from the keyboard', () => {
       expect(address()).toBe('T1');
       await press('Home');
       expect(address()).toBe('A1');
-      await press('End', { control: true });
+      await press('End', { ctrl: true });
       expect(address()).toBe('T200');
-      await press('Home', { control: true });
+      await press('Home', { ctrl: true });
       expect(address()).toBe('A1');
     });
 
@@ -289,10 +291,10 @@ describe('the sheet from the keyboard', () => {
       await press('Enter');
       expect(h.document.sheet.input(0, 0)).toBe('after');
 
-      await press('z', { control: true });
+      await press('z', { ctrl: true });
       expect(h.document.sheet.input(0, 0)).toBe('before');
 
-      await press('z', { control: true, shift: true });
+      await press('z', { ctrl: true, shift: true });
       expect(h.document.sheet.input(0, 0)).toBe('after');
     });
 
@@ -304,7 +306,7 @@ describe('the sheet from the keyboard', () => {
       await press('Enter');
       expect(h.document.sheet.value(0, 1)).toBe('x!');
 
-      await press('z', { control: true });
+      await press('z', { ctrl: true });
       expect(h.document.sheet.value(0, 1)).toBe('before!');
     });
   });
