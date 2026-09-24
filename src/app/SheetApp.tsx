@@ -1,29 +1,52 @@
+import { combineLatest, type Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 
-import { percent } from 'gesso-core';
+import { percent, type UiKeyboardEvent, type UiTextChangeEvent } from 'gesso-core';
 import { type ComponentContext, type Inputs } from 'gesso-framework';
 
-import { Grid } from './Grid';
 import { columnName } from '../sheet/A1';
+import { Grid } from './Grid';
 import { Sheet } from './SheetContract';
+import { editing } from './SheetEditing';
+import { keyAction } from './SheetKeys';
 
 /**
  * The screen: a formula bar, the grid, and a line saying what the
  * application thread is doing.
  *
- * Nothing here holds state. The address, the formula text, and whether
- * there is anything to undo are all view keys off the channel, and the
- * buttons send commands back. The sheet itself — the store, the
- * parser, the dependency graph, the recalc — is on the other thread
- * and shares nothing with this file but the token.
+ * Nothing here holds application state. The address, the cell's text,
+ * and whether there is anything to undo are view keys off the channel
+ * or the shared editing handle, and the buttons send commands back.
+ * The sheet itself — the store, the parser, the dependency graph, the
+ * recalc — is on the other thread and shares nothing with this file
+ * but the token.
  */
 export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
-  const editor = sheet.view.editor;
+  const edit = editing(ctx, sheet);
   const status = sheet.view.status;
 
-  const address = editor.pipe(map(current => `${columnName(current.column)}${current.row + 1}`));
-  const formula = editor.pipe(map(current => (current.input === '' ? '—' : current.input)));
+  const address = edit.selection.pipe(map(at => `${columnName(at.column)}${at.row + 1}`));
+
+  /**
+   * What the formula bar shows: the draft while a cell is open, and
+   * what the application worker says the cell holds otherwise.
+   *
+   * The same buffer as the cell, not a copy of it. Two buffers kept in
+   * step would be two answers to what Escape puts back, and the bar
+   * and the cell would disagree for exactly as long as it took a
+   * keystroke to cross between them.
+   */
+  const formula: Observable<string> = combineLatest([edit.draft, sheet.view.editor]).pipe(
+    map(([draft, current]) => draft ?? current.input)
+  );
+
+  const onFormulaKey = (event: UiKeyboardEvent): void => {
+    if (edit.apply(keyAction(event.key, event.modifiers, edit.openNow()))) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   return (
     <column width={percent(100)} height={percent(100)} backgroundColor="background">
@@ -48,17 +71,16 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
           borderColor="border"
           borderWidth={1}
           padding={4}
-          role="textbox"
+          role="status"
           label="Active cell"
         />
-        <text
-          text={formula}
+        <editabletext
+          value={formula}
           flex={1}
           minWidth={0}
           fontSize={12}
           color="text"
           textWrap="none"
-          textOverflow="clip"
           verticalAlign="middle"
           backgroundColor="background"
           borderColor="border"
@@ -66,6 +88,8 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
           padding={4}
           role="textbox"
           label="Formula"
+          onInput={(event: UiTextChangeEvent) => edit.write(event.value)}
+          onKeyDown={onFormulaKey}
         />
         {historyButton('Undo', status.pipe(map(current => current.canUndo)), () => sheet.send.undo())}
         {historyButton('Redo', status.pipe(map(current => current.canRedo)), () => sheet.send.redo())}
@@ -79,12 +103,12 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
           live="polite"
         />
       </row>
-      <Grid />
+      <Grid editing={edit} />
     </column>
   );
 }
 
-function historyButton(label: string, enabled: import('rxjs').Observable<boolean>, onClick: () => void) {
+function historyButton(label: string, enabled: Observable<boolean>, onClick: () => void) {
   return (
     <button
       onClick={onClick}

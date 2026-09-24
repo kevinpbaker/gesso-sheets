@@ -12,11 +12,11 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phases 0 to 3 done, all four exit criteria met. Phase 0's
+**Status:** Phases 0 to 4 done, all five exit criteria met. Phase 0's
 findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
-`src/sheet`, the contract, the application worker and the grid in
-`src/app`, and `pnpm test` is its 171 specs. `pnpm dev` is a
-spreadsheet. Phase 4 has not started.
+`src/sheet`, the contract, the application worker, the grid and the
+editor in `src/app`, and `pnpm test` is its 205 specs. `pnpm dev` is a
+spreadsheet you can type into. Phase 5 has not started.
 
 ---
 
@@ -255,7 +255,7 @@ different widths (a prefix sum, because a drag moves every offset after
 it), the header row and the gutter as content the window accounts for,
 and the testing gap above.
 
-### Phase 4 — Editing
+### Phase 4 — Editing — **done**
 
 An in-cell editor over `EditableTextModel`, a formula bar bound to the
 same buffer, and the commit semantics people have muscle memory for:
@@ -267,10 +267,43 @@ composition inside a cell.
 `Keyboard.spec.ts` — navigate, type, commit, undo, entirely through the
 semantics tree with no synthetic mouse.
 
+**Met.** `Keyboard.spec.tsx`: twenty specs, no pointer event anywhere
+in the file, every assertion read back from the semantics tree or from
+what the application worker ended up holding. Tab from nothing reaches
+the grid; arrows, Enter, Tab, Home, End and PageDown move the
+selection; typing replaces a cell starting from the first character;
+F2 opens it with the formula rather than the value; Enter commits and
+moves down, Tab commits and moves right, Escape puts back what was
+there; ctrl-Z takes it back and recalculates what it fed.
+
+Two things worth keeping in the notes.
+
+The selection **leads** on the render thread and the channel follows.
+Read back across the barrier it lagged a frame or two, and every arrow
+pressed inside that window moved from the same stale cell — hold an
+arrow down and the selection travels one cell and stops. The draft is
+render-side only and never crosses until it is committed, which is
+what makes Escape possible at all.
+
+The character that opens a cell arrives **once**. The key handler
+seeds the draft and calls `preventDefault`, which is what stops the
+browser delivering the same character again to the editor it has just
+focused. Driving this from CDP with a separate `char` event produced
+`==D3*2` and a `#VALUE!`, which is a harness artefact rather than a
+bug — but the doubling is real enough to be worth the comment it now
+carries.
+
 ### Phase 5 — Clipboard and fill
 
 Copy a range to TSV. Paste a range, which needs the second gap closed.
 Then the fill handle, with relative references adjusted as it extends.
+
+Phase 4 leaves the seam it needs: `SheetEditing` owns the selection on
+the render thread, so a copy knows its rectangle without asking, and
+`EditableTextModel` is already handling the clipboard inside an open
+cell. What is missing is the engine gap this file has carried from the
+start — a paste that the grid takes when it owns a rectangle and no
+cell is open.
 
 **Exit:** a round trip inside the sheet, and a paste of real TSV copied
 out of Excel or Google Sheets landing correctly.

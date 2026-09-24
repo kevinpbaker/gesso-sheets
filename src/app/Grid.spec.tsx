@@ -5,7 +5,7 @@ import 'gesso-testing/matchers';
 import { createComponent, serve } from 'gesso-framework';
 
 import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, MIN_COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
-import { Grid } from './Grid';
+import { SheetApp } from './SheetApp';
 import { Sheet } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
 import { SheetService } from './SheetService';
@@ -62,7 +62,9 @@ async function mount(fill?: (document: SheetDocument) => void): Promise<Harness>
       }
     })
   ]);
-  const ui = renderTest(createComponent(Grid), { channels: served.registry, ...VIEWPORT });
+  // The grid is given the editing handle the whole screen shares; in
+  // the app that is `SheetApp`'s, and here the spec is the screen.
+  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, ...VIEWPORT });
   // Three turns, and each is doing something different. The first
   // frame is what tells the window how big it is, which is what sends
   // `setViewport`; the channel then has to carry that command over and
@@ -129,6 +131,13 @@ describe('the grid surface', () => {
   });
 
   describe('the frozen panes', () => {
+    /**
+     * The grid's own origin. The screen puts a formula bar above it,
+     * so a spec that asserted an absolute `y: 0` would be asserting
+     * the bar's height as much as the header's stickiness.
+     */
+    const origin = () => h.ui.getVisibleBox(h.ui.getByRole('grid'));
+
     beforeEach(async () => {
       // A1 carries its own address, so the cell at the origin can be
       // found by name rather than by being the first of many blanks.
@@ -136,15 +145,16 @@ describe('the grid surface', () => {
     });
 
     it('puts the header across the top and the gutter down the left', () => {
+      const top = origin().y;
       expect(h.ui.getByRole('columnheader', { name: 'A' })).toHaveVisibleBox({
         x: GUTTER_WIDTH,
-        y: 0,
+        y: top,
         width: COLUMN_WIDTH,
         height: HEADER_HEIGHT
       });
       expect(h.ui.getByRole('rowheader', { name: '1' })).toHaveVisibleBox({
         x: 0,
-        y: HEADER_HEIGHT,
+        y: top + HEADER_HEIGHT,
         width: GUTTER_WIDTH,
         height: ROW_HEIGHT
       });
@@ -153,7 +163,7 @@ describe('the grid surface', () => {
     it('starts the cells past both strips', () => {
       expect(h.ui.getByRole('cell', { name: 'A1' })).toHaveVisibleBox({
         x: GUTTER_WIDTH,
-        y: HEADER_HEIGHT,
+        y: origin().y + HEADER_HEIGHT,
         width: COLUMN_WIDTH,
         height: ROW_HEIGHT
       });
@@ -177,7 +187,10 @@ describe('the grid surface', () => {
       h.ui.fireEvent.wheel({ x: 300, y: 200, deltaY: ROW_HEIGHT * 100 });
       await h.ui.settle();
 
-      expect(h.ui.getByRole('columnheader', { name: 'A' })).toHaveVisibleBox({ y: 0, height: HEADER_HEIGHT });
+      expect(h.ui.getByRole('columnheader', { name: 'A' })).toHaveVisibleBox({
+        y: origin().y,
+        height: HEADER_HEIGHT
+      });
       // And it really did scroll: row 1 is long gone.
       expect(h.ui.queryByRole('rowheader', { name: '1' })).toBeNull();
       expect(h.ui.getAllByRole('rowheader')[0]).toHaveVisibleBox({ x: 0 });
@@ -189,7 +202,7 @@ describe('the grid surface', () => {
 
       expect(h.ui.getAllByRole('rowheader')[0]).toHaveVisibleBox({ x: 0, width: GUTTER_WIDTH });
       expect(h.ui.queryByRole('columnheader', { name: 'A' })).toBeNull();
-      expect(h.ui.getAllByRole('columnheader')[0]).toHaveVisibleBox({ y: 0 });
+      expect(h.ui.getAllByRole('columnheader')[0]).toHaveVisibleBox({ y: origin().y });
     });
 
     /**
@@ -202,7 +215,7 @@ describe('the grid surface', () => {
       h.ui.fireEvent.wheel({ x: 300, y: 200, deltaX: COLUMN_WIDTH * 8, deltaY: ROW_HEIGHT * 60 });
       await h.ui.settle();
 
-      expect(h.ui.getAllByRole('columnheader')[0]).toHaveVisibleBox({ y: 0, height: HEADER_HEIGHT });
+      expect(h.ui.getAllByRole('columnheader')[0]).toHaveVisibleBox({ y: origin().y, height: HEADER_HEIGHT });
       expect(h.ui.getAllByRole('rowheader')[0]).toHaveVisibleBox({ x: 0, width: GUTTER_WIDTH });
       // The corner holds both at once: its own `left`, and the header
       // row's `top` inherited by being inside it.

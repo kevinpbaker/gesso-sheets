@@ -7,5 +7,5 @@ overrides:
   gesso-core: file:vendor/gesso-core-0.2.1-f026e427.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.2.1-463f467f.tgz
   gesso-framework: file:vendor/gesso-framework-0.2.1-625f5c79.tgz
-  gesso-testing: file:vendor/gesso-testing-0.2.1-a146cf09.tgz
+  gesso-testing: file:vendor/gesso-testing-0.2.1-38196b17.tgz
   gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz

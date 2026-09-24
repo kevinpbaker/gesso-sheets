@@ -1,8 +1,21 @@
 import { combineLatest, type Observable } from 'rxjs';
 import { distinctUntilChanged, map } from 'rxjs/operators';
 
-import { Box, LazySheet, percent, Row, Text, type UiElement, type UiVirtualSheet } from 'gesso-core';
-import { internalState, type ComponentContext, type Inputs } from 'gesso-framework';
+import {
+  Box,
+  EditableText,
+  editorFor,
+  LazySheet,
+  percent,
+  Row,
+  Text,
+  type UiElement,
+  type UiKeyboardEvent,
+  type UiNode,
+  type UiTextChangeEvent,
+  type UiVirtualSheet
+} from 'gesso-core';
+import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { columnName } from '../sheet/A1';
 
@@ -16,6 +29,8 @@ import {
   ROW_HEIGHT
 } from './dimensions';
 import { cellIn, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
+import { keyAction } from './SheetKeys';
+import type { SheetEditing } from './SheetEditing';
 
 /**
  * The sheet, on screen.
@@ -44,10 +59,21 @@ import { cellIn, Sheet, type SheetSelection, type SheetWindow } from './SheetCon
 const SELECTED_WASH = 'selectionBackground';
 const GRID_LINE = 'border';
 
-export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
+/**
+ * The editing handle for the screen around the grid.
+ *
+ * The formula bar has to write the *same* buffer the cell does — not a
+ * copy that syncs, which is two sources of truth and a race over which
+ * of them Escape puts back. There is one `SheetEditing` per screen and
+ * both views are bound to it, so this is where it is made and
+ * `SheetApp` is where it is shared.
+ */
+export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
+  const focus = ctx.inject(FocusService);
   const window$ = sheet.view.window;
-  const selection$ = sheet.view.selection;
+  const edit = _inputs.editing.value;
+  const selection$ = edit.selection;
 
   /**
    * The cells now mounted, by the cell they hold.
@@ -115,6 +141,9 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
   };
 
   const cell = (row: number, column: number): UiElement => {
+    if (openAt !== null && openAt.row === row && openAt.column === column) {
+      return editorCell(row, column);
+    }
     const key = `${row}:${column}`;
     let built = cells.get(key);
     if (built === undefined) {
@@ -123,6 +152,82 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
     }
     return built;
   };
+
+  /**
+   * The cell being typed into.
+   *
+   * An `EditableText` in the cell's own place rather than a box
+   * floating over it: the caret, the selection, IME composition and
+   * the clipboard are all `EditableText`'s already, and a cell that
+   * *is* the editor cannot drift away from the cell it is editing when
+   * the sheet scrolls or a column is dragged.
+   *
+   * Not memoised. There is one of these at a time and its life is the
+   * edit.
+   */
+  const editorCell = (row: number, column: number): UiElement =>
+    EditableText({
+      key: column,
+      ref: node => {
+        editorNode = node;
+        if (node === null) {
+          // The open cell scrolled out of the window and its node went
+          // with it. The draft survives — it was never in the node —
+          // but focus would be on nothing, and the next key would go
+          // nowhere at all. Handing it to the grid keeps Enter and
+          // Escape working, and the formula bar goes on showing what
+          // is being typed because it is the same buffer.
+          if (edit.openNow() && gridNode !== null) {
+            focus.focus(gridNode);
+          }
+          return;
+        }
+        {
+          // The caret goes to the end: where it is after typing the
+          // character that opened the cell, and where a spreadsheet
+          // leaves it on F2. `replaceText` deliberately keeps the
+          // caret where it still fits — there is a spec for that — so
+          // placing it is the caller's job, and the model hangs on the
+          // node for exactly this.
+          //
+          // Seeded from the draft rather than from the node's `value`,
+          // because a ref fires as the node is created and the
+          // property may not have been written yet: read the other way
+          // round this put the caret at the end of an empty string and
+          // every character typed afterwards landed in front of what
+          // was already there.
+          const model = editorFor(node);
+          const text = edit.draftNow() ?? '';
+          if (model.text !== text) {
+            model.replaceText(text);
+          }
+          model.select(text.length);
+        }
+      },
+      value: edit.draft.pipe(map(text => text ?? '')),
+      width: widths.pipe(map(all => all[column] ?? COLUMN_WIDTH)),
+      height: ROW_HEIGHT,
+      flexShrink: 0,
+      paddingLeft: 6,
+      paddingRight: 6,
+      fontSize: 12,
+      textWrap: 'none',
+      verticalAlign: 'middle',
+      backgroundColor: 'background',
+      color: 'text',
+      borderColor: 'primary',
+      borderWidth: 2,
+      zIndex: 1,
+      role: 'textbox',
+      label: 'Cell',
+      onInput: (event: UiTextChangeEvent) => edit.write(event.value),
+      onKeyDown: onKey
+    });
+
+  /** The node holding the open cell's editor, so focus can be put in it. */
+  let editorNode: UiNode | null = null;
+  /** The cell the renderer should build as an editor, read while building. */
+  let openAt: { row: number; column: number } | null = null;
 
   /** The frozen strip at the start of a row: the row's number. */
   const rowHeader = (row: number): UiElement =>
@@ -147,6 +252,23 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
       verticalAlign: 'middle',
       role: 'rowheader'
     });
+
+  /**
+   * Every key, whether it arrived at the grid or at the open cell.
+   *
+   * One handler for both because the table in `SheetKeys` is one
+   * table: Enter means something different inside a cell and the
+   * difference is a parameter, not a second code path. A key the table
+   * has no meaning for is left alone — that is what lets an arrow key
+   * move the caret rather than the selection while a cell is open.
+   */
+  const onKey = (event: UiKeyboardEvent): void => {
+    const action = keyAction(event.key, event.modifiers, edit.openNow());
+    if (edit.apply(action)) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  };
 
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
@@ -258,6 +380,16 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
     widths.value = next;
   };
 
+  /** Written only when the selection needs bringing into view. */
+  const scrollX = internalState(0);
+  const scrollY = internalState(0);
+  let gridNode: UiNode | null = null;
+  // How big the viewport is, which is what "already visible" is
+  // measured against. Taken from the node rather than tracked here:
+  // the window is a flex child and nothing on this side knows its
+  // height until the frame that laid it out.
+  const viewport = ctx.bounds('sheet');
+
   let window: UiVirtualSheet | undefined;
   const grid = LazySheet(
     {
@@ -265,8 +397,10 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
       minHeight: 0,
       width: percent(100),
       backgroundColor: 'background',
-      rowCount: ROW_COUNT,
-      columnCount: COLUMN_COUNT,
+      // The extent is the application worker's, published on
+      // `geometry`; the window follows it rather than agreeing with it.
+      rowCount: sheet.view.geometry.pipe(map(g => g.rowCount)),
+      columnCount: sheet.view.geometry.pipe(map(g => g.columnCount)),
       rowHeight: ROW_HEIGHT,
       columnWidth: widths.value,
       gutterWidth: GUTTER_WIDTH,
@@ -278,6 +412,11 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
       role: 'grid',
       label: 'Sheet',
       focusable: true,
+      ref: node => (gridNode = node),
+      modifiers: [viewport.modifier],
+      onKeyDown: onKey,
+      scrollX,
+      scrollY,
       header: renderHeader,
       sheetRef: found => (window = found)
     },
@@ -300,6 +439,64 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
     sheet.send.setViewport(range.firstRow, range.lastRow, range.firstColumn, range.lastColumn)
   );
 
+  /**
+   * Opening and closing a cell, which is the one thing that changes
+   * what a cell *is* rather than what it says.
+   *
+   * A `Text` cannot become an `EditableText` by having a property
+   * written, so the two cells involved are dropped from the cache and
+   * the window is asked to rebuild its rows from what is left. That
+   * costs a rebuild of the row elements — a few hundred plain objects,
+   * with every cell but these two still cached — and it happens twice
+   * per cell edited rather than per frame.
+   */
+  let openBefore: { row: number; column: number } | null = null;
+  ctx.effect(combineLatest([edit.selection, edit.open]), ([at, isOpen]) => {
+    const next = isOpen ? { row: at.row, column: at.column } : null;
+    if (sameCell(next, openBefore)) {
+      return;
+    }
+    for (const which of [openBefore, next]) {
+      if (which !== null) {
+        cells.delete(`${which.row}:${which.column}`);
+      }
+    }
+    openBefore = next;
+    openAt = next;
+    sheetWindow.invalidate();
+  });
+
+  // Focus follows the edit: into the cell when one opens, back to the
+  // grid when it closes, or the next keystroke goes nowhere.
+  ctx.effect(edit.open, isOpen => {
+    const target = isOpen ? editorNode : gridNode;
+    if (target !== null) {
+      focus.focus(target);
+    }
+  });
+
+  /**
+   * Brings the selection into view.
+   *
+   * The window knows where every row and column is — that is what the
+   * offsets are for — so this is arithmetic rather than a search for a
+   * node, which matters because the cell being scrolled to is usually
+   * one that is not mounted yet.
+   */
+  ctx.effect(edit.selection, at => {
+    const view = viewport.value;
+    if (view.width === 0 || view.height === 0) {
+      return;
+    }
+    const top = HEADER_HEIGHT + at.row * ROW_HEIGHT;
+    const left = GUTTER_WIDTH + sheetWindow.offsetOf(at.column);
+    const width = sheetWindow.widthOf(at.column);
+    // The frozen strips cover the near edges, so a cell is only really
+    // visible once it is past them.
+    scrollY.value = bring(scrollY.value, top, ROW_HEIGHT, view.height, HEADER_HEIGHT);
+    scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
+  });
+
   // Cells that scrolled away, so their bindings go with them.
   ctx.effect(sheetWindow.range$, range => {
     for (const key of cells.keys()) {
@@ -313,6 +510,31 @@ export function Grid(_inputs: Inputs<{}>, ctx: ComponentContext) {
   });
 
   return grid;
+}
+
+function sameCell(a: { row: number; column: number } | null, b: { row: number; column: number } | null): boolean {
+  if (a === null || b === null) {
+    return a === b;
+  }
+  return a.row === b.row && a.column === b.column;
+}
+
+/**
+ * A scroll offset that brings `[start, start + extent)` into view,
+ * without moving when it already is.
+ *
+ * `lead` is the frozen strip covering the near edge: a row under the
+ * header is on screen and not visible, which is a distinction only
+ * this function has to make.
+ */
+function bring(offset: number, start: number, extent: number, viewport: number, lead: number): number {
+  if (start < offset + lead) {
+    return Math.max(0, start - lead);
+  }
+  if (start + extent > offset + viewport) {
+    return start + extent - viewport;
+  }
+  return offset;
 }
 
 /** Whether the selection rectangle covers a cell. */

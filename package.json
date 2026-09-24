@@ -24,7 +24,7 @@
     "typescript": "~7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.11",
-    "gesso-testing": "file:vendor/gesso-testing-0.2.1-a146cf09.tgz"
+    "gesso-testing": "file:vendor/gesso-testing-0.2.1-38196b17.tgz"
   },
   "overrides": {
     "gesso-core": "file:vendor/gesso-core-0.2.1-f026e427.tgz",
