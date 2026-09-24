@@ -41,8 +41,23 @@ export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
     map(([draft, current]) => draft ?? current.input)
   );
 
+  /**
+   * Keys in the formula bar.
+   *
+   * Always read as "a cell is open", whatever the draft says, because
+   * the caret is in a text field and the keys belong to the text.
+   * Read the other way — as "a cell is selected and nothing is open" —
+   * Backspace meant *empty this cell* and a digit meant *replace this
+   * cell*, so deleting one character wiped the lot, and the next
+   * character arrived twice: once from the key table seeding a draft
+   * and once from the field inserting it.
+   *
+   * Enter and Escape are still the sheet's, which is what makes this a
+   * formula bar rather than a text box that happens to sit above a
+   * grid.
+   */
   const onFormulaKey = (event: UiKeyboardEvent): void => {
-    if (edit.apply(keyAction(event.key, event.modifiers, edit.openNow()))) {
+    if (edit.apply(keyAction(event.key, event.modifiers, true))) {
       event.preventDefault();
       event.stopPropagation();
     }

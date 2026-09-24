@@ -23,6 +23,8 @@ export interface SheetEditing {
   cancel(): void;
   /** Opens the cell at the selection with what is already in it. */
   openCell(): void;
+  /** Where the open edit was started, for deciding what takes focus. */
+  readonly startedIn: () => 'grid' | 'bar' | null;
   moveTo(row: number, column: number): void;
 }
 
@@ -55,6 +57,15 @@ export function editing(
   // side would be the same number written twice, and `End` would walk
   // to wherever the render thread happened to believe the edge was.
   const extent = () => sheet.view.geometry.value;
+  /**
+   * Which of the two views the open edit was started from.
+   *
+   * Only focus cares. An edit begun in the grid puts the caret in the
+   * cell; one begun by clicking the formula bar must leave the caret
+   * where the person put it, or the click would bounce them into the
+   * cell they were trying to avoid.
+   */
+  let startedIn: 'grid' | 'bar' | null = null;
 
   // The application worker's selection, when it is not one we caused.
   // Sending `setSelection` echoes the value straight back, which
@@ -80,6 +91,7 @@ export function editing(
   const commit = (rows: number, columns: number): void => {
     const text = draft.value;
     const at = selection.value;
+    startedIn = null;
     draft.value = null;
     if (text !== null) {
       sheet.send.setCell(at.row, at.column, text);
@@ -99,9 +111,10 @@ export function editing(
    * with yet starts from empty rather than from a neighbour's formula,
    * which is the safe direction of the two.
    */
-  const openCell = (): void => {
+  const openCell = (where: 'grid' | 'bar' = 'grid'): void => {
     const at = selection.value;
     const current = sheet.view.editor.value;
+    startedIn = where;
     draft.value = current.row === at.row && current.column === at.column ? current.input : '';
   };
 
@@ -133,12 +146,14 @@ export function editing(
         openCell();
         return true;
       case 'replace':
+        startedIn = 'grid';
         draft.value = action.text;
         return true;
       case 'commit':
         commit(action.rows, action.columns);
         return true;
       case 'cancel':
+        startedIn = null;
         draft.value = null;
         return true;
       case 'clear':
@@ -169,10 +184,23 @@ export function editing(
         distinctUntilChanged()
       ),
     apply,
-    write: text => (draft.value = text),
+    /**
+     * Text reported by one of the two fields.
+     *
+     * This is also how an edit begins in the formula bar: nothing
+     * happens when the caret arrives there, and the first character
+     * typed or deleted opens the cell. An edit that opens this way is
+     * a bar edit, so the cell that appears underneath does not steal
+     * the caret back.
+     */
+    write: text => {
+      startedIn ??= 'bar';
+      draft.value = text;
+    },
     commit,
     cancel: () => (draft.value = null),
-    openCell,
+    openCell: () => openCell('grid'),
+    startedIn: () => startedIn,
     moveTo
   };
 }

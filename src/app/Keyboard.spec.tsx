@@ -57,10 +57,26 @@ async function mount(fill?: (document: SheetDocument) => void): Promise<Harness>
   await ui.settle();
   await served.settle();
   await ui.settle();
-  // Tab from nothing, as somebody arriving at the page does. The grid
-  // is the first stop after the formula bar.
-  ui.fireEvent.tab();
-  await ui.settle();
+
+  // Tab from nothing, as somebody arriving at the page does, until the
+  // sheet itself has the keyboard.
+  //
+  // This used to be a single Tab, which lands on the formula bar, and
+  // the specs below passed anyway — because every key was going to the
+  // bar and the bar was driving the grid. That was the bug a person
+  // hit as soon as they tried to edit *in* the bar: Backspace emptied
+  // the whole cell and the next character arrived twice. Asserting
+  // which control the keyboard reached is what stops a spec proving
+  // the sheet works through a path nobody uses.
+  const grid = ui.getByRole('grid');
+  let stops = 0;
+  while (ui.runtime.input.focus.focusedNode !== grid) {
+    if (stops++ > 8) {
+      throw new Error(`Tab never reached the grid; it stopped on ${ui.debug()}`);
+    }
+    ui.fireEvent.tab();
+    await ui.settle();
+  }
   return { ui, served, document };
 }
 
@@ -92,9 +108,6 @@ describe('the sheet from the keyboard', () => {
   describe('navigating', () => {
     beforeEach(async () => {
       h = await mount();
-      // Focus reaches the grid, not something behind it.
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     it('starts on A1', () => {
@@ -156,8 +169,6 @@ describe('the sheet from the keyboard', () => {
   describe('typing into a cell', () => {
     beforeEach(async () => {
       h = await mount();
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     /**
@@ -211,8 +222,6 @@ describe('the sheet from the keyboard', () => {
   describe('opening a cell that already has something in it', () => {
     beforeEach(async () => {
       h = await mount(document => document.setCell(0, 0, '=1+2'));
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     it('shows the formula rather than the value while it is open', async () => {
@@ -254,8 +263,6 @@ describe('the sheet from the keyboard', () => {
   describe('the formula bar', () => {
     beforeEach(async () => {
       h = await mount(document => document.setCell(0, 0, '=2*21'));
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     it('shows what the selected cell was typed as', () => {
@@ -288,8 +295,6 @@ describe('the sheet from the keyboard', () => {
   describe('undo', () => {
     beforeEach(async () => {
       h = await mount(document => document.setCell(0, 0, 'before'));
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     it('takes back a committed edit and puts it forward again', async () => {
@@ -329,8 +334,6 @@ describe('the sheet from the keyboard', () => {
   describe('an open cell that scrolls away', () => {
     beforeEach(async () => {
       h = await mount();
-      await press('ArrowDown');
-      await press('ArrowUp');
     });
 
     it('keeps the draft, and commits it when it comes back', async () => {

@@ -223,6 +223,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
             model.replaceText(text);
           }
           model.select(text.length);
+          // Focus follows the edit into the cell — unless the person
+          // put the caret in the formula bar, in which case taking it
+          // away would bounce them into the cell they chose not to
+          // type in. Done here rather than from the draft, because the
+          // node exists at exactly this moment and not before it.
+          if (edit.startedIn() === 'grid') {
+            focus.focus(node);
+          }
         }
       },
       value: edit.draft.pipe(map(text => text ?? '')),
@@ -487,12 +495,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     sheetWindow.invalidate();
   });
 
-  // Focus follows the edit: into the cell when one opens, back to the
-  // grid when it closes, or the next keystroke goes nowhere.
+  // Closing an edit hands the keyboard back to the grid, wherever the
+  // edit was being typed; opening one is the editor's own ref, which
+  // is the only moment its node is known to exist.
   ctx.effect(edit.open, isOpen => {
-    const target = isOpen ? editorNode : gridNode;
-    if (target !== null) {
-      focus.focus(target);
+    if (!isOpen && gridNode !== null) {
+      focus.focus(gridNode);
     }
   });
 

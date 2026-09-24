@@ -366,6 +366,91 @@ describe('the grid surface', () => {
     });
   });
 
+  /**
+   * Editing in the formula bar rather than in the cell.
+   *
+   * The bar is a real text field and putting a caret in it means the
+   * same thing as opening the cell: the keys belong to the text from
+   * that moment. Treated as "a cell is selected and nothing is open",
+   * Backspace means *empty this cell* and a digit means *replace this
+   * cell* — so deleting one character wiped the lot, and the next
+   * character arrived twice, once from the key handler seeding a
+   * draft and once from the field inserting it.
+   */
+  describe('typing in the formula bar', () => {
+    beforeEach(async () => {
+      h = await mount(document => {
+        document.setCell(1, 1, '120');
+        document.setCell(1, 3, '=B2*2');
+      });
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '120' }));
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    });
+
+    const bar = () => h.ui.getByRole('textbox', { name: 'Formula' });
+
+    async function press(key: string): Promise<void> {
+      h.ui.fireEvent.press(key);
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+
+    /**
+     * Put the caret at the end of the bar, as clicking after the last
+     * character does. `End` rather than reaching into the model:
+     * once the bar has opened the cell, End belongs to the text, and
+     * a spec that set the caret by hand would not be testing that.
+     */
+    async function focusBar(): Promise<void> {
+      h.ui.fireEvent.focus(bar());
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+      await press('End');
+    }
+
+    it('deletes one character rather than emptying the cell', async () => {
+      await focusBar();
+      await press('Backspace');
+
+      expect(bar()).toHaveText('12');
+      // Nothing is committed until Enter, so the cell still holds 120.
+      expect(h.document.sheet.input(1, 1)).toBe('120');
+    });
+
+    it('takes a typed character once, not twice', async () => {
+      await focusBar();
+      await press('Backspace');
+      h.ui.fireEvent.type('3');
+      await h.ui.settle();
+
+      expect(bar()).toHaveText('123');
+    });
+
+    it('commits what the bar holds on Enter', async () => {
+      await focusBar();
+      await press('Backspace');
+      h.ui.fireEvent.type('3');
+      await h.ui.settle();
+      await press('Enter');
+
+      expect(h.document.sheet.input(1, 1)).toBe('123');
+      expect(h.document.sheet.value(1, 3)).toBe(246);
+    });
+
+    it('puts back what was there on Escape', async () => {
+      await focusBar();
+      await press('Backspace');
+      await press('Escape');
+
+      expect(h.document.sheet.input(1, 1)).toBe('120');
+      expect(bar()).toHaveText('120');
+    });
+  });
+
   describe('selection', () => {
     beforeEach(async () => {
       h = await mount(document => {
