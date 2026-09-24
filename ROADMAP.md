@@ -12,9 +12,10 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Phases 0 and 1 done, both exit criteria met. Phase 0's
-findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
-`src/sheet`, and `pnpm test` is its 120 specs. Phase 2 has not started.
+**Status:** Phases 0, 1 and 2 done, all three exit criteria met. Phase
+0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
+`src/sheet`, the contract and the application worker in `src/app`, and
+`pnpm test` is its 154 specs. Phase 3 has not started.
 
 ---
 
@@ -171,7 +172,7 @@ than a promise — `boundaries.spec.ts` fails the build, naming the file
 and the import, if anything under `src/sheet` reaches for the
 framework, RxJS or the browser.
 
-### Phase 2 — Contract and application worker
+### Phase 2 — Contract and application worker — **done**
 
 `SheetContract.ts` with the windowed view and the commands
 (`setViewport`, `setCell`, `setSelection`, `undo`, `redo`), and the
@@ -194,7 +195,31 @@ patch-count one: editing a large graph *while the viewport moves*, so
 that a recalc which blocks the publish is caught here rather than felt
 as a blank sheet.
 
+**Met, and by the real machinery.** `SheetChannel.spec.ts` drives
+`provide` over a recording port with the framework's own differ in
+between, so the numbers it asserts are the ones that would cross a
+`postMessage`. A column of 50,000 formulas, thirty rows of it in view,
+one keystroke at the top: **50,000 cells evaluated, 30 patches sent** —
+one per visible cell, `toHaveLength` and not a ceiling. The same edit
+with the dependents scrolled off screen sends **nothing at all**, which
+is the claim stated the other way round. A scroll of one row costs
+four patches: the row that entered, the row that left, and the two
+bounds.
+
+The second spec is there too. The recalc is a pump: `recalculate` is
+called a slice at a time and the thread handed back between slices, so
+a `setViewport` arriving mid-recalc is answered on the spot, ahead of
+the arithmetic — asserted with 20,000 cells still pending. The
+scheduler is injected, so the slices are deterministic in a spec and a
+task rather than a microtask in the worker; a microtask would never
+let the command in, and the slicing would look like it was working
+while the sheet stayed blank.
+
 ### Phase 3 — The grid surface
+
+The contract is waiting: `window`, `geometry`, `selection`, `editor`
+and `status` are published, and the spike's own contract in `src/spike`
+retires when this phase replaces `App.tsx` with the real grid.
 
 Frozen row and column headers through `position: 'sticky'`, which is
 already conformance-tested against Chrome — though not against a
