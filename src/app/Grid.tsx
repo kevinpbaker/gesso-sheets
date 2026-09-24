@@ -136,8 +136,29 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       verticalAlign: 'middle',
       textAlign: value.pipe(map(text => (isNumeric(text) ? 'right' : 'start'))),
       role: 'cell',
-      onClick: () => sheet.send.setSelection(row, column, row, column)
+      onClick: () => selectByPointer(row, column)
     });
+  };
+
+  /**
+   * A click on a cell.
+   *
+   * Three things, and the third is the one that was missing: the
+   * keyboard has to end up somewhere. The grid is what holds focus —
+   * a spreadsheet does not put focus on a cell, it puts focus on the
+   * sheet and moves a selection inside it — so a click that moved the
+   * selection and left focus where it was gave you a selected cell
+   * that no key did anything to.
+   */
+  const selectByPointer = (row: number, column: number): void => {
+    // A click elsewhere commits what is open, as it does everywhere.
+    if (edit.openNow()) {
+      edit.commit(0, 0);
+    }
+    edit.moveTo(row, column);
+    if (gridNode !== null) {
+      focus.focus(gridNode);
+    }
   };
 
   const cell = (row: number, column: number): UiElement => {

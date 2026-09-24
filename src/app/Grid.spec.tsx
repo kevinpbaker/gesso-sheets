@@ -288,6 +288,84 @@ describe('the grid surface', () => {
     });
   });
 
+  /**
+   * Clicking and then typing.
+   *
+   * This is the seam the two other specs left open, and a bug lived in
+   * it: `Keyboard.spec.tsx` reaches the grid with Tab and never
+   * touches the mouse, and the rest of this file clicks and never
+   * presses a key. Clicking a cell moved the selection and left focus
+   * wherever it was, so every key after a click went somewhere else —
+   * Delete did nothing, typing did nothing, and what the person saw
+   * was their keystrokes landing in the formula bar's own editor
+   * instead of in the sheet.
+   */
+  describe('clicking and then typing', () => {
+    beforeEach(async () => {
+      h = await mount(document => {
+        document.setCell(1, 1, '120');
+        document.setCell(1, 3, '=B2*2');
+      });
+    });
+
+    async function press(key: string): Promise<void> {
+      h.ui.fireEvent.press(key);
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+
+    it('empties a clicked cell on Delete', async () => {
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '120' }));
+      await h.ui.settle();
+
+      await press('Delete');
+
+      expect(h.document.sheet.input(1, 1)).toBe('');
+      expect(h.document.sheet.value(1, 3)).toBe(0);
+    });
+
+    it('opens a clicked cell and replaces it with what is typed', async () => {
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '120' }));
+      await h.ui.settle();
+
+      await press('7');
+      await press('Enter');
+
+      expect(h.document.sheet.input(1, 1)).toBe('7');
+      expect(h.document.sheet.value(1, 3)).toBe(14);
+    });
+
+    it('moves the selection with the arrows after a click', async () => {
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '120' }));
+      await h.ui.settle();
+
+      await press('ArrowRight');
+      await press('9');
+      await press('Enter');
+
+      // B2 is untouched and C2 took the value.
+      expect(h.document.sheet.input(1, 1)).toBe('120');
+      expect(h.document.sheet.input(1, 2)).toBe('9');
+    });
+
+    it('commits an open cell when another is clicked', async () => {
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '120' }));
+      await h.ui.settle();
+      await press('5');
+
+      // D2 holds `=B2*2`, so it is a cell with a name to click on.
+      h.ui.fireEvent.click(h.ui.getByRole('cell', { name: '240' }));
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(h.document.sheet.input(1, 1)).toBe('5');
+      // And the click landed where it was aimed.
+      expect(h.document.selection).toMatchObject({ row: 1, column: 3 });
+    });
+  });
+
   describe('selection', () => {
     beforeEach(async () => {
       h = await mount(document => {
