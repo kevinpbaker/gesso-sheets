@@ -14,6 +14,7 @@ import {
   type SheetSelection,
   type BorderPattern,
   type SheetActiveFormat,
+  type SheetAutofit,
   type SheetEdge,
   type SheetFormatChange,
   type SheetFormatWindow,
@@ -97,6 +98,7 @@ export class SheetService {
   readonly formats: Observable<SheetFormatWindow>;
   readonly palette: Observable<SheetPalette>;
   readonly activeFormat: Observable<SheetActiveFormat>;
+  readonly autofit: Observable<SheetAutofit>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -115,6 +117,8 @@ export class SheetService {
     paint: PLAIN_PAINT,
     number: { kind: 'general' }
   });
+  private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
+  private autofitSerial = 0;
   /**
    * The cells the current search matched, as keys, in reading order.
    *
@@ -195,6 +199,7 @@ export class SheetService {
     this.formats = this.formatsSubject;
     this.palette = this.paletteSubject;
     this.activeFormat = this.activeFormatSubject;
+    this.autofit = this.autofitSubject;
     this.publishStats();
     this.publishActiveFormat();
   }
@@ -306,7 +311,7 @@ export class SheetService {
     this.geometrySubject.next({
       ...this.geometrySubject.value,
       columnWidths: this.document.columnWidths,
-      hiddenRows: [...this.document.hiddenRows].sort((a, b) => a - b),
+      hiddenRows: [...new Set([...this.document.hiddenRows, ...this.document.filteredRows])].sort((a, b) => a - b),
       frozenRows: this.document.frozenRows,
       frozenColumns: this.document.frozenColumns,
       merges: this.document.merges.all.map(rect => ({ ...rect }))
@@ -811,12 +816,104 @@ export class SheetService {
     this.afterEdit();
   }
 
+  /**
+   * The longest strings in each column, for the thread that can
+   * measure them.
+   *
+   * Character count picks the shortlist and not the winner: in a
+   * proportional font `WWW` is wider than `lllllll`, so the longest
+   * string is often not the widest one. Sending several and letting
+   * the render worker measure all of them is what makes the answer
+   * right without this side ever learning what a font is.
+   *
+   * Bounded by the store, not the sheet: a column of eight values in
+   * a ten-thousand-row sheet costs eight.
+   */
+  measureColumns(first: number, last: number): void {
+    const { rowCount } = this.geometrySubject.value;
+    const wanted = new Set<number>();
+    for (let column = first; column <= last; column++) {
+      wanted.add(column);
+    }
+    const best = new Map<number, { text: string; bold: boolean }[]>();
+    for (const cell of this.document.sheet.entries()) {
+      if (cell.row >= rowCount || !wanted.has(cell.column)) {
+        continue;
+      }
+      const text = this.document.display(cell.row, cell.column);
+      if (text === '') {
+        continue;
+      }
+      const list = best.get(cell.column) ?? [];
+      list.push({ text, bold: this.document.formatAt(cell.row, cell.column).paint.bold });
+      best.set(cell.column, list);
+    }
+
+    this.autofitSerial++;
+    this.autofitSubject.next({
+      serial: this.autofitSerial,
+      columns: [...wanted].sort((a, b) => a - b).map(column => {
+        const list = (best.get(column) ?? [])
+          .sort((a, b) => [...b.text].length - [...a.text].length)
+          .slice(0, AUTOFIT_SAMPLES);
+        return { column, samples: list.map(entry => entry.text), bold: list.map(entry => entry.bold) };
+      })
+    });
+  }
+
   unmergeCells(): void {
     if (!this.document.merges.remove(rectOf(this.document.selection))) {
       return;
     }
     this.publishGeometry();
     this.publishWindow();
+  }
+
+  /**
+   * Hides every row in the block whose cell in this column is not the
+   * one the selection is on.
+   *
+   * Filtering by the value under the cursor, which is the filter
+   * people actually use and the one that needs no dialog: stand on
+   * `North` and ask for it, and the sheet is the North rows. The
+   * block is the current region, on the same reasoning as a sort —
+   * where the table stops is a question only this side can answer.
+   *
+   * It is a *snapshot*, not a rule. Editing a cell afterwards does
+   * not re-run it, which is what every spreadsheet does and what
+   * keeps an edit from making rows vanish under somebody's hands.
+   */
+  filterToSelection(): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const at = this.document.selection;
+    const rect = currentRegion(this.document, at.row, at.column, rowCount, columnCount);
+    const wanted = this.document.display(at.row, at.column);
+    const header = looksLikeHeader(this.document, rect) ? rect.firstRow : -1;
+
+    this.document.filteredRows.clear();
+    for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+      if (row === header || row === at.row) {
+        continue;
+      }
+      if (this.document.display(row, at.column) !== wanted) {
+        this.document.filteredRows.add(row);
+      }
+    }
+    this.publishGeometry();
+    this.publishWindow();
+    this.publishFormats();
+    this.persist();
+  }
+
+  clearFilter(): void {
+    if (this.document.filteredRows.size === 0) {
+      return;
+    }
+    this.document.filteredRows.clear();
+    this.publishGeometry();
+    this.publishWindow();
+    this.publishFormats();
+    this.persist();
   }
 
   showColumns(first: number, last: number): void {
@@ -1201,3 +1298,13 @@ function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat 
     }
   };
 }
+
+/**
+ * How many candidates a column sends.
+ *
+ * Enough that the widest is among them whichever way a proportional
+ * font falls, few enough that measuring them is nothing. Twelve is
+ * the number at which a column of mixed text stops changing its
+ * answer when you add more.
+ */
+const AUTOFIT_SAMPLES = 12;

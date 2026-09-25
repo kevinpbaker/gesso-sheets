@@ -211,6 +211,35 @@ export interface SheetPalette {
   readonly entries: readonly CellPaint[];
 }
 
+/**
+ * The strings a column would have to be wide enough for.
+ *
+ * Autofit is the one thing neither thread can do alone. The
+ * application worker knows every string in a column and nothing about
+ * fonts; the render worker knows the font and holds thirty rows. So
+ * this side narrows a million cells to a handful of candidates — by
+ * character count, which is the right *shortlist* even though it is
+ * the wrong *answer* in a proportional font — and the render worker
+ * measures those exactly.
+ *
+ * `serial` is what makes asking twice a change, for the reason
+ * `SheetClipboard` has one: the same answer twice is structurally
+ * equal, the differ says nothing happened, and the second autofit
+ * does nothing.
+ */
+export interface SheetAutofit {
+  readonly serial: number;
+  readonly columns: readonly SheetAutofitColumn[];
+}
+
+export interface SheetAutofitColumn {
+  readonly column: number;
+  /** The longest strings in it, longest first. */
+  readonly samples: readonly string[];
+  /** Whether any of them is a heading, which is drawn bold. */
+  readonly bold: readonly boolean[];
+}
+
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
@@ -369,6 +398,24 @@ export interface SheetCommands {
    */
   mergeCells(): void;
   unmergeCells(): void;
+  /**
+   * Asks what the columns would have to be wide enough for.
+   *
+   * A request one way and an answer the other, on the `autofit` view
+   * key — the shape `copy` already uses, because a command has no
+   * return value and only the render worker can finish the job.
+   */
+  measureColumns(first: number, last: number): void;
+  /**
+   * Keeps the rows whose cell in this column matches the one the
+   * selection is on, and hides the rest.
+   *
+   * A snapshot rather than a rule: an edit afterwards does not re-run
+   * it, which is what every spreadsheet does and what keeps an edit
+   * from making rows vanish under somebody's hands.
+   */
+  filterToSelection(): void;
+  clearFilter(): void;
 }
 
 /** What a border command draws. */
@@ -452,6 +499,7 @@ export interface SheetView {
    * this from the active cell and this one does too.
    */
   readonly activeFormat: SheetActiveFormat;
+  readonly autofit: SheetAutofit;
 }
 
 /** What the controls read to draw themselves. */
@@ -529,5 +577,6 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   find: NO_FIND,
   formats: EMPTY_FORMATS,
   palette: { entries: [PLAIN_PAINT] },
-  activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } }
+  activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
+  autofit: { serial: 0, columns: [] }
 });

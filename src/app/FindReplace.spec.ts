@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import type { SheetFindView, SheetSelection } from './SheetContract';
+import type { SheetAutofit, SheetFindView, SheetSelection } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
 import { SheetService, type Schedule } from './SheetService';
 import type { SheetStats } from './Statistics';
-import { PLAIN } from '../sheet/Format';
+import { GENERAL, PLAIN } from '../sheet/Format';
 
 /**
  * Fill, find and replace, driven as commands through the service.
@@ -435,5 +435,174 @@ describe('inserting and deleting columns', () => {
 
     const geometry = latest<{ columnWidths: readonly number[] }>(service.geometry);
     expect(geometry.columnWidths[2]).toBe(240);
+  });
+});
+
+/**
+ * Autofit, which is the one thing neither thread can do alone.
+ *
+ * This side knows every string in a column and nothing about fonts;
+ * the render worker knows the font and holds thirty rows. So this
+ * side narrows a million cells to a shortlist and the other measures
+ * it. These assert the shortlist.
+ */
+describe('the candidates a column sends to be measured', () => {
+  const latestFit = (service: SheetService) => latest<SheetAutofit>(service.autofit);
+
+  it('sends the longest strings in the column, longest first', () => {
+    const { service } = harness(d => {
+      d.setCell(0, 0, 'short');
+      d.setCell(1, 0, 'a much longer string');
+      d.setCell(2, 0, 'medium one');
+    });
+    service.measureColumns(0, 0);
+
+    const column = latestFit(service).columns[0];
+    expect(column.column).toBe(0);
+    expect(column.samples[0]).toBe('a much longer string');
+    expect(column.samples).toContain('short');
+  });
+
+  /** What the screen shows, not what was typed. */
+  it('sends the displayed string and not the formula', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 0, '1');
+      d.setCell(1, 0, '=A1+1');
+    });
+    drain();
+    document.setFormat(1, 0, { number: { kind: 'currency', places: 2, symbol: '$' }, paint: PLAIN });
+    service.measureColumns(0, 0);
+
+    expect(latestFit(service).columns[0].samples).toContain('$2.00');
+  });
+
+  /** A bold heading is wider than the same string plain. */
+  it('says which of them are bold', () => {
+    const { service, document } = harness(d => d.setCell(0, 0, 'Heading'));
+    document.setFormat(0, 0, { number: GENERAL, paint: { ...PLAIN, bold: true } });
+    service.measureColumns(0, 0);
+
+    expect(latestFit(service).columns[0].bold[0]).toBe(true);
+  });
+
+  it('sends nothing for a column with nothing in it', () => {
+    const { service } = harness();
+    service.measureColumns(3, 3);
+    expect(latestFit(service).columns[0].samples).toEqual([]);
+  });
+
+  it('sends a column at a time for a range', () => {
+    const { service } = harness(d => {
+      d.setCell(0, 0, 'a');
+      d.setCell(0, 1, 'b');
+    });
+    service.measureColumns(0, 1);
+    expect(latestFit(service).columns.map(entry => entry.column)).toEqual([0, 1]);
+  });
+
+  /** Asking twice is a change, or the second autofit does nothing. */
+  it('moves the serial every time it is asked', () => {
+    const { service } = harness(d => d.setCell(0, 0, 'a'));
+    service.measureColumns(0, 0);
+    const first = latestFit(service).serial;
+    service.measureColumns(0, 0);
+    expect(latestFit(service).serial).toBeGreaterThan(first);
+  });
+
+  /** A shortlist, not the whole column. */
+  it('does not send a thousand strings', () => {
+    const { service } = harness(d => {
+      for (let row = 0; row < 1_000; row++) {
+        d.setCell(row, 0, `row ${row}`);
+      }
+    });
+    service.measureColumns(0, 0);
+    expect(latestFit(service).columns[0].samples.length).toBeLessThan(20);
+  });
+});
+
+describe('filtering to what the cursor is on', () => {
+  const book = (d: SheetDocument) => {
+    d.setCell(0, 0, 'Region');
+    d.setCell(0, 1, 'Units');
+    d.setCell(1, 0, 'North');
+    d.setCell(1, 1, '10');
+    d.setCell(2, 0, 'South');
+    d.setCell(2, 1, '20');
+    d.setCell(3, 0, 'North');
+    d.setCell(3, 1, '30');
+  };
+
+  const hidden = (service: SheetService) =>
+    latest<{ hiddenRows: readonly number[] }>(service.geometry).hiddenRows;
+
+  it('hides the rows that do not match, and keeps the heading', () => {
+    const { service } = harness(book);
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+
+    expect(hidden(service)).toEqual([2]);
+  });
+
+  it('shows every row again', () => {
+    const { service } = harness(book);
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+    service.clearFilter();
+
+    expect(hidden(service)).toEqual([]);
+  });
+
+  /**
+   * Two sets, because they are undone by different things: clearing a
+   * filter must not reveal a row somebody hid on purpose.
+   */
+  it('leaves a row that was hidden on purpose hidden', () => {
+    const { service } = harness(book);
+    service.hideRows(3, 3);
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+    expect(hidden(service)).toEqual([2, 3]);
+
+    service.clearFilter();
+    expect(hidden(service)).toEqual([3]);
+  });
+
+  it('stops at the blank row, like a sort does', () => {
+    const { service } = harness(d => {
+      book(d);
+      // A second table, which has nothing to do with the first.
+      d.setCell(5, 0, 'Largest');
+      d.setCell(6, 0, 'Smallest');
+    });
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+
+    expect(hidden(service)).toEqual([2]);
+  });
+
+  /**
+   * A snapshot and not a rule: an edit that changes a cell does not
+   * make rows vanish under somebody's hands.
+   */
+  it('does not re-run itself when a cell changes', () => {
+    const { service, drain } = harness(book);
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+    expect(hidden(service)).toEqual([2]);
+
+    service.setCell(3, 0, 'South');
+    drain();
+    expect(hidden(service)).toEqual([2]);
+  });
+
+  it('moves the filtered rows when a row is inserted above them', () => {
+    const { service, drain } = harness(book);
+    service.setSelection(1, 0, 1, 0);
+    service.filterToSelection();
+    service.insertRows(0, 1);
+    drain();
+
+    expect(hidden(service)).toEqual([3]);
   });
 });

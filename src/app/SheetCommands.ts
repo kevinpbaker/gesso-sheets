@@ -73,6 +73,9 @@ export type CommandId =
   | 'showColumns'
   | 'hideRows'
   | 'showRows'
+  | 'autofitColumns'
+  | 'filterToSelection'
+  | 'clearFilter'
   | 'freezeHere'
   | 'freezeTopRow'
   | 'freezeFirstColumn'
@@ -239,6 +242,13 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   freezeTopRow: { id: 'freezeTopRow', label: 'Freeze the top row' },
   freezeFirstColumn: { id: 'freezeFirstColumn', label: 'Freeze the first column' },
   unfreeze: { id: 'unfreeze', label: 'Unfreeze' },
+  autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
+  filterToSelection: {
+    id: 'filterToSelection',
+    label: 'Keep only rows like this one',
+    accelerator: { key: 'k', ctrl: true, alt: true }
+  },
+  clearFilter: { id: 'clearFilter', label: 'Show every row', accelerator: { key: 'k', ctrl: true, alt: true, shift: true } },
   hideRows: { id: 'hideRows', label: 'Hide rows', accelerator: { key: '9', ctrl: true, alt: true } },
   showRows: {
     id: 'showRows',
@@ -432,8 +442,13 @@ export const MENUS: readonly MenuDefinition[] = [
       'sortAscending',
       'sortDescending',
       SEPARATOR,
+      'filterToSelection',
+      'clearFilter',
+      SEPARATOR,
       'fillDown',
       'fillRight',
+      SEPARATOR,
+      'autofitColumns',
       SEPARATOR,
       'hideRows',
       'showRows',

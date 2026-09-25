@@ -13,6 +13,17 @@ export const GUTTER_WIDTH = 52;
 export const HEADER_HEIGHT = 24;
 /** A column may be dragged narrow, but not to nothing. */
 export const MIN_COLUMN_WIDTH = 32;
+/**
+ * And autofit will not make one wider than this.
+ *
+ * A column holding one four-hundred-character note would otherwise
+ * become a column nothing else fits beside, which is not what "fit
+ * the contents" means to the person who asked for it.
+ */
+export const MAX_COLUMN_WIDTH = 480;
+/** What a cell draws with, which autofit has to leave room for. */
+export const CELL_PADDING = 6;
+export const CELL_FONT_SIZE = 12;
 
 /** The sheet's extent. A million cells, as the roadmap's headline says. */
 export const ROW_COUNT = 10_000;

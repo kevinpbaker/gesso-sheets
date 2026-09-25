@@ -131,6 +131,15 @@ export class SheetDocument {
    * thousand rows tall and all but a handful are the same.
    */
   readonly hiddenRows = new Set<number>();
+  /**
+   * Rows a filter is hiding, kept apart from the ones somebody hid.
+   *
+   * Two sets rather than one because they are undone by different
+   * things: clearing a filter must not reveal a row that was hidden
+   * on purpose, and showing a hidden row must not fight the filter
+   * that is hiding it. What the screen sees is the union.
+   */
+  readonly filteredRows = new Set<number>();
   /** How many rows and columns stay put while the rest scrolls. */
   frozenRows = 0;
   frozenColumns = 0;
@@ -466,6 +475,7 @@ export class SheetDocument {
 
     const widths = [...this.columnWidths];
     const hidden = [...this.hiddenRows];
+    const filtered = [...this.filteredRows];
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.merges.shift(shift);
@@ -474,13 +484,8 @@ export class SheetDocument {
     // was among — an insert above a hidden row must not reveal it and
     // hide its neighbour instead.
     if (shift.axis === 'row') {
-      this.hiddenRows.clear();
-      for (const row of hidden) {
-        const moved = shiftIndex(row, shift);
-        if (moved !== -1) {
-          this.hiddenRows.add(moved);
-        }
-      }
+      shiftRows(this.hiddenRows, hidden, shift);
+      shiftRows(this.filteredRows, filtered, shift);
     }
 
     this.record({
@@ -533,4 +538,20 @@ function shiftWidths(widths: readonly number[], shift: Shift): number[] {
     }
   }
   return next;
+}
+
+/**
+ * A set of row indices, moved by a shift.
+ *
+ * Hiding is by index, so an insert above a hidden row must not reveal
+ * it and hide its neighbour instead.
+ */
+function shiftRows(rows: Set<number>, held: readonly number[], shift: Shift): void {
+  rows.clear();
+  for (const row of held) {
+    const moved = shiftIndex(row, shift);
+    if (moved !== -1) {
+      rows.add(moved);
+    }
+  }
 }

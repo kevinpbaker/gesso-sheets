@@ -415,6 +415,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'showRows':
         sheet.send.showRows(rows().first, rows().last);
         break;
+      case 'autofitColumns':
+        sheet.send.measureColumns(columns().first, columns().last);
+        break;
+      case 'filterToSelection':
+        sheet.send.filterToSelection();
+        break;
+      case 'clearFilter':
+        sheet.send.clearFilter();
+        break;
       /**
        * "Up to here" means everything above and to the left of the
        * active cell, which is what the phrase means to a person and

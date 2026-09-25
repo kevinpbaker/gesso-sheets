@@ -24,7 +24,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       find: service.findView,
       formats: service.formats,
       palette: service.palette,
-      activeFormat: service.activeFormat
+      activeFormat: service.activeFormat,
+      autofit: service.autofit
     },
     commands: {
       setViewport: (firstRow, lastRow, firstColumn, lastColumn) =>
@@ -61,7 +62,10 @@ export function sheetChannel(service: SheetService): ServedChannel {
       showRows: (first, last) => service.showRows(first, last),
       freeze: (rows, columns) => service.freeze(rows, columns),
       mergeCells: () => service.mergeCells(),
-      unmergeCells: () => service.unmergeCells()
+      unmergeCells: () => service.unmergeCells(),
+      measureColumns: (first, last) => service.measureColumns(first, last),
+      filterToSelection: () => service.filterToSelection(),
+      clearFilter: () => service.clearFilter()
     }
   });
 }

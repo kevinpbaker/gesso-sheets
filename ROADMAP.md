@@ -17,17 +17,17 @@ and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
 in, is two and a half phases into nine: the top bar and the format
 axis are done, and Phase 10 has landed insert, delete, borders, sort, hidden
-rows and columns, frozen panes and merged cells, with autofit and
-filtering left. `pnpm test` is 607 specs and `pnpm proof` is six
-budgets. Phase
+rows and columns, frozen panes, merged cells, autofit and filtering.
+`pnpm test` is 625 specs and `pnpm proof` is six budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
 `src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
 of and paste into, find and replace across, fill down, format, rule
 with borders, sort, insert and delete rows and columns, freeze a
-pane, merge cells, and navigate by typing an address — and which
-remembers what you typed.
+pane, merge cells, fit a column to its contents, filter to what the
+cursor is on, and navigate by typing an address — and which remembers
+what you typed.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -642,13 +642,11 @@ And **a custom number-format pattern language**, Excel's
 `#,##0.00;[Red](#,##0.00)`, which is a parser, a spec and a class of
 bugs; the eight named formats cover what people pick.
 
-### Phase 10 — Rows, columns, and borders — **partly done**
+### Phase 10 — Rows, columns, and borders — **done**
 
 Insert and delete rows and columns with reference rewriting, per-edge
 cell borders, sorting a range, hiding rows and columns, freezing a
-pane, and merged cells. **Autofit and filtering are not done** — both
-want text measurement or a predicate over rows, and neither is
-blocked by anything.
+pane, merged cells, autofit, and filtering.
 
 **Exit:** a rewrite-count spec in Phase 1's style — inserting a row
 above a column of 50,000 formulas rewrites exactly the formulas that
@@ -738,6 +736,36 @@ the first specs asserted the frozen cell's `left` *property*, and
 passed. Phase 3 added `toHaveVisibleBox` because a header asserted by
 property passed while it scrolled off the screen; the frozen pane is
 asserted by box now, and that is what caught every one of them.
+
+**Autofit is the one thing neither thread can do alone**, and saying
+so is the clearest statement of the split this project is about. The
+application worker knows every string in a column and nothing about
+fonts; the render worker knows the font and holds thirty rows. So the
+application worker narrows a million cells to a shortlist — by
+character count, which picks the right *candidates* even though in a
+proportional font it picks the wrong *winner* — and the render worker
+measures those exactly and sets the width.
+
+Measuring needed an engine change, and a general one: layout measures
+text constantly and an application could not ask, so anything wanting
+a width before there is a node to read it from had no answer.
+`TextService` hands out the runtime's *own* measurer, so the width a
+column is given is the width its cells are laid out at — the same
+warm cache, and the same invalidation when a font finishes loading.
+The alternative every application reaches for is mounting the text
+invisibly and reading its box a frame later, which is a frame of
+latency, a node in the tree and a race with the layout it is trying
+to inform.
+
+**A filter is a snapshot, not a rule.** It hides the rows in the
+current region whose cell in the active column is not the one the
+cursor is on — the filter people actually use, and the one that needs
+no dialog. Editing a cell afterwards does not re-run it, which is
+what every spreadsheet does and what keeps an edit from making rows
+vanish under somebody's hands. The filtered rows are a *second* set
+beside the hidden ones, because the two are undone by different
+things: clearing a filter must not reveal a row somebody hid on
+purpose.
 
 **A merged cell is drawn by its anchor and by nothing else.** The
 anchor is as wide as the columns it covers and as tall as the rows,

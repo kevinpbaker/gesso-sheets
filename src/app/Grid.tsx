@@ -20,13 +20,23 @@ import {
   type SheetRange,
   type UiVirtualSheet
 } from 'gesso-core';
-import { FocusService, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
+import {
+  FocusService,
+  internalState,
+  ShellService,
+  TextService,
+  type ComponentContext,
+  type Inputs
+} from 'gesso-framework';
 
 import { columnName } from '../sheet/A1';
 
 import {
+  CELL_FONT_SIZE,
+  CELL_PADDING,
   COLUMN_COUNT,
   COLUMN_WIDTH,
+  MAX_COLUMN_WIDTH,
   GUTTER_WIDTH,
   HEADER_HEIGHT,
   MIN_COLUMN_WIDTH,
@@ -118,6 +128,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const sheet = ctx.channel(Sheet);
   const focus = ctx.inject(FocusService);
   const shell = ctx.inject(ShellService);
+  const measure = ctx.inject(TextService);
   const window$ = sheet.view.window;
   const edit = _inputs.editing.value;
   const selection$ = edit.selection;
@@ -485,9 +496,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       flexShrink: 0,
       // A covered cell has no room for padding either, or a row of
       // them adds twelve pixels each to the width of the row.
-      paddingLeft: covered ? 0 : 6,
-      paddingRight: covered ? 0 : 6,
-      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? 12 : how.fontSize))),
+      paddingLeft: covered ? 0 : CELL_PADDING,
+      paddingRight: covered ? 0 : CELL_PADDING,
+      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize))),
       /**
        * Wired, and not yet visible.
        *
@@ -1204,6 +1215,53 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // is decided when a cell is built.
       cells.clear();
       sheetWindow.invalidate();
+    }
+  });
+
+  /**
+   * Autofit: the answer to a question this thread asked.
+   *
+   * The application worker sent the longest strings in each column
+   * and knows nothing about fonts; this thread knows the font and
+   * holds thirty rows. Measuring the candidates here is the only
+   * place both halves exist, and `TextService` measures through the
+   * *same* measurer the layout engine uses — so the width is the
+   * width the cells will actually be laid out at rather than a second
+   * opinion about it.
+   */
+  let fitted = 0;
+  ctx.effect(sheet.view.autofit, autofit => {
+    if (autofit.serial <= fitted || !measure.ready) {
+      return;
+    }
+    fitted = autofit.serial;
+    const next = widths.value.slice();
+    let moved = false;
+    for (const entry of autofit.columns) {
+      let widest = 0;
+      entry.samples.forEach((text, index) => {
+        widest = Math.max(
+          widest,
+          measure.widthOf(text, { fontSize: CELL_FONT_SIZE, fontWeight: entry.bold[index] ? 'bold' : 'normal' })
+        );
+      });
+      // The padding a cell draws with, plus a hair so the widest
+      // string is not flush against the gridline.
+      const wanted = widest === 0 ? COLUMN_WIDTH : Math.ceil(widest) + CELL_PADDING * 2 + 2;
+      const clamped = Math.min(Math.max(wanted, MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH);
+      if (next[entry.column] !== clamped) {
+        next[entry.column] = clamped;
+        moved = true;
+      }
+    }
+    if (!moved) {
+      return;
+    }
+    widths.value = next;
+    // The document is what keeps a width, so it has to hear about
+    // this one the same way a drag tells it.
+    for (const entry of autofit.columns) {
+      sheet.send.setColumnWidth(entry.column, next[entry.column] ?? COLUMN_WIDTH);
     }
   });
 

@@ -5,7 +5,7 @@ import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'ges
 import 'gesso-testing/matchers';
 
 import { GENERAL, NO_BORDERS, PLAIN, type CellFormat } from '../sheet/Format';
-import { GUTTER_WIDTH, HEADER_HEIGHT, ROW_HEIGHT } from './dimensions';
+import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, MAX_COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
@@ -32,6 +32,7 @@ interface Harness {
   ui: Rendered;
   served: ServedForTest;
   service: SheetService;
+  document: SheetDocument;
 }
 
 const bold: CellFormat = { number: GENERAL, paint: { ...PLAIN, bold: true, fill: '#eef2f7' } };
@@ -50,7 +51,7 @@ async function mount(fill: (document: SheetDocument) => void): Promise<Harness> 
   await ui.settle();
   await served.settle();
   await ui.settle();
-  return { ui, served, service };
+  return { ui, served, service, document };
 }
 
 describe('what the grid draws a formatted cell with', () => {
@@ -488,5 +489,74 @@ describe('a frozen pane', () => {
     await h.ui.settle();
 
     expect(h.ui.queryByRole('grid')).not.toBeNull();
+  });
+});
+
+/**
+ * Autofit's other half: the measuring.
+ *
+ * The application worker sends candidates and knows nothing about
+ * fonts; this is the thread that does. `TextService` measures through
+ * the *same* measurer the layout engine uses, so the width a column
+ * is given is the width its cells are actually laid out at.
+ */
+describe('fitting a column to its contents', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const widthOf = (text: string): number => h.ui.getLayout(h.ui.getByRole('cell', { name: text })).width;
+
+  async function autofit(first: number, last: number): Promise<void> {
+    h.service.measureColumns(first, last);
+    await h.served.settle();
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  it('widens a column to hold its longest string', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'x');
+      d.setCell(1, 0, 'a very considerably longer piece of text');
+    });
+    const before = widthOf('x');
+
+    await autofit(0, 0);
+
+    expect(widthOf('x')).toBeGreaterThan(before);
+  });
+
+  it('narrows a column whose contents are short', async () => {
+    h = await mount(d => d.setCell(0, 0, 'x'));
+    await autofit(0, 0);
+    expect(widthOf('x')).toBeLessThan(COLUMN_WIDTH);
+  });
+
+  /**
+   * A column holding one four-hundred-character note would otherwise
+   * become a column nothing else fits beside.
+   */
+  it('will not make a column absurdly wide', async () => {
+    h = await mount(d => d.setCell(0, 0, 'x'.repeat(4_000)));
+    await autofit(0, 0);
+    expect(widthOf('x'.repeat(4_000))).toBeLessThanOrEqual(MAX_COLUMN_WIDTH);
+  });
+
+  it('leaves an empty column at the default width', async () => {
+    h = await mount(d => d.setCell(0, 0, 'kept'));
+    await autofit(3, 3);
+    expect(widthOf('kept')).toBe(COLUMN_WIDTH);
+  });
+
+  /** The width is the document's, so it survives being written down. */
+  it('tells the application worker what it settled on', async () => {
+    h = await mount(d => d.setCell(0, 0, 'a good deal of text here'));
+    await autofit(0, 0);
+
+    expect(h.document.columnWidths[0]).toBe(widthOf('a good deal of text here'));
   });
 });
