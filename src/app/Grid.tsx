@@ -21,11 +21,13 @@ import {
   type UiVirtualSheet
 } from 'gesso-core';
 import {
+  fanOut,
   FocusService,
   internalState,
   ShellService,
   TextService,
   type ComponentContext,
+  type FanCell,
   type Inputs
 } from 'gesso-framework';
 
@@ -87,8 +89,8 @@ interface MountedCell {
   readonly row: number;
   readonly column: number;
   readonly element: UiElement;
-  readonly value: BehaviorSubject<string | null>;
-  readonly standing: BehaviorSubject<Standing>;
+  readonly value: FanCell<string | null, { row: number; column: number }>;
+  readonly standing: FanCell<Standing, { row: number; column: number }>;
   /**
    * How the cell is painted, pushed in like the other two.
    *
@@ -162,34 +164,51 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * minimum, so one pixel of thumb travel is fourteen rows and a drag
    * replaces the whole window every frame. Measured on this machine,
    * that spent 38ms a frame inside `arrRemove` — 42% of the render
-   * worker — and drew at 22fps.
+   * worker — and drew at 22fps. The same drag draws at over a hundred
+   * once each cell subscribes only to subjects of its own.
    *
-   * So the subjects a cell subscribes to are its own, with two or three
-   * observers each, and one subscriber per source fills them. Removing
-   * a cell now scans a list of three. The same drag draws at over a
-   * hundred.
+   * **That shape is `fanOut` now, and the lesson lives in the framework
+   * rather than in this comment.** One subscription per source however
+   * many cells are live, a stable cell per key, and a release that is a
+   * map delete. What is kept here is why it matters, because the
+   * profile that bought it is this application's and the primitive
+   * carries only the rule.
+   *
+   * The row and column travel beside the key rather than inside it.
+   * `fanOut` keys are strings because a `Map` wants one, and a reader
+   * that took `${row}:${column}` apart would do it for every live cell
+   * on every emission — which is exactly what the first draft of this
+   * migration did, and the reason `fanOut` grew a datum. Measured three
+   * times against the hand-rolled version it replaced: the same
+   * numbers, to the tenth of a millisecond.
    */
   let latestWindow: SheetWindow | null = null;
   let latestSelection: SheetSelection | null = null;
 
+  /** Where a cell is, carried beside its key so no read parses one. */
+  interface At {
+    readonly row: number;
+    readonly column: number;
+  }
+
+  const values = fanOut<SheetWindow, string | null, At>(
+    window$,
+    (current, _key, at) => cellIn(current, at.row, at.column),
+    { initial: null, equal: 'reference' }
+  );
+
+  const standings = fanOut<SheetSelection, Standing, At>(
+    selection$,
+    (selection, _key, at) => standingOf(selection, at.row, at.column),
+    { initial: 0, equal: 'reference' }
+  );
+
   ctx.effect(window$, current => {
     latestWindow = current;
-    for (const mounted of cells.values()) {
-      const next = cellIn(current, mounted.row, mounted.column);
-      if (next !== mounted.value.value) {
-        mounted.value.next(next);
-      }
-    }
   });
 
   ctx.effect(selection$, selection => {
     latestSelection = selection;
-    for (const mounted of cells.values()) {
-      const next = standingOf(selection, mounted.row, mounted.column);
-      if (next !== mounted.standing.value) {
-        mounted.standing.next(next);
-      }
-    }
   });
 
   /**
@@ -622,12 +641,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     // Seeded from what the window and the selection say *now*, because
     // a cell is built during the frame that reveals it and the feeds
     // above have already run for this one.
-    const value = new BehaviorSubject<string | null>(
-      latestWindow === null ? null : cellIn(latestWindow, row, column)
-    );
-    const standing = new BehaviorSubject<Standing>(
-      latestSelection === null ? 0 : standingOf(latestSelection, row, column)
-    );
+    const value = values.for(key, { row, column });
+    const standing = standings.for(key, { row, column });
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(
       bordersOf(paint.value, columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH)
@@ -1227,6 +1242,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   ctx.effect(frozen, pane => {
     cells.clear();
+    values.releaseAll();
+    standings.releaseAll();
     sheetWindow.setFrozen(pane.rows, pane.columns);
   });
 
@@ -1256,6 +1273,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // A merge changes which cells are drawn and how wide, and that
       // is decided when a cell is built.
       cells.clear();
+    values.releaseAll();
+    standings.releaseAll();
       sheetWindow.invalidate();
     }
   });
@@ -1352,6 +1371,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     for (const which of [cornerBefore, next]) {
       if (which !== null) {
         cells.delete(`${which.row}:${which.column}`);
+        values.release(`${which.row}:${which.column}`);
+        standings.release(`${which.row}:${which.column}`);
       }
     }
     cornerBefore = next;
@@ -1368,6 +1389,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     for (const which of [openBefore, next]) {
       if (which !== null) {
         cells.delete(`${which.row}:${which.column}`);
+        values.release(`${which.row}:${which.column}`);
+        standings.release(`${which.row}:${which.column}`);
       }
     }
     openBefore = next;
@@ -1416,6 +1439,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         mounted.column > range.lastColumn
       ) {
         cells.delete(key);
+        values.release(key);
+        standings.release(key);
       }
     }
   });
