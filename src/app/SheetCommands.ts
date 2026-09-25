@@ -481,6 +481,64 @@ export const MENUS: readonly MenuDefinition[] = [
 ];
 
 /**
+ * The commands that belong to the proof route and to no other.
+ *
+ * `/` is a spreadsheet. `/proof` is the same spreadsheet with the
+ * evidence attached — the strip along the top, and the one command
+ * whose entire purpose is to give the strip something to measure.
+ * Nobody opening a spreadsheet wants to recalculate two hundred
+ * thousand cells, and an item that exists to be photographed belongs
+ * on the page that photographs it.
+ *
+ * A list here rather than a flag on the row, because the tables above
+ * say what a command *is* and this says where it is offered. The
+ * command itself is unchanged on both routes: `COMMANDS` still holds
+ * it, `commandFor` still answers F9 with it, and the specs that keep
+ * the two tables honest still see every row.
+ */
+export const PROOF_ONLY: readonly CommandId[] = ['recalculate'];
+
+/** Whether a route offers a command at all. */
+export function offers(id: CommandId, proof: boolean): boolean {
+  return proof || !PROOF_ONLY.includes(id);
+}
+
+/**
+ * The menus as a route shows them.
+ *
+ * Dropping an entry is the easy half; the rules it leaves behind are
+ * the half that shows. Data ends `…, SEPARATOR, 'recalculate'`, so a
+ * plain filter gives a menu that ends in a line drawn under nothing —
+ * which is exactly what `SheetCommands.spec` refuses to allow in the
+ * table itself, and there is no reason to allow it in the table's
+ * output either. So the rules are collapsed: none at the start, none
+ * at the end, never two together.
+ */
+export function menusFor(proof: boolean): readonly MenuDefinition[] {
+  if (proof) {
+    return MENUS;
+  }
+  return MENUS.map(menu => ({
+    ...menu,
+    entries: withoutStrayRules(menu.entries.filter(entry => entry === SEPARATOR || offers(entry, proof)))
+  })).filter(menu => menu.entries.length > 0);
+}
+
+function withoutStrayRules(entries: readonly MenuEntry[]): readonly MenuEntry[] {
+  const kept: MenuEntry[] = [];
+  for (const entry of entries) {
+    if (entry === SEPARATOR && (kept.length === 0 || kept[kept.length - 1] === SEPARATOR)) {
+      continue;
+    }
+    kept.push(entry);
+  }
+  while (kept.length > 0 && kept[kept.length - 1] === SEPARATOR) {
+    kept.pop();
+  }
+  return kept;
+}
+
+/**
  * The accelerator as a person reads it: `Ctrl+Z`, `Delete`, `F9`.
  *
  * One-character keys are upper-cased because that is how every

@@ -14,7 +14,7 @@ import { FindBar } from './FindBar';
 import { MenuBar } from './MenuBar';
 import { NameBox } from './NameBox';
 import { Sheet } from './SheetContract';
-import { acceleratorLabel, COMMANDS, STRESS_CELLS, type CommandId } from './SheetCommands';
+import { acceleratorLabel, COMMANDS, menusFor, offers, STRESS_CELLS, type CommandId } from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
 import type { CellPaint } from '../sheet/Format';
 import { ICONS } from './icons';
@@ -40,6 +40,17 @@ import { PasteHint, Shortcuts } from './Shortcuts';
  */
 export interface TopBarProps {
   readonly editing: SheetEditing;
+  /**
+   * Whether this is the proof route, which is the only thing above
+   * the grid that differs between the two.
+   *
+   * It reaches here as a prop rather than being read from a url,
+   * because this thread has no url to read: the render worker's
+   * `location` is the worker script's. The route is resolved by the
+   * router a few files up and arrives as a boolean, which is all the
+   * chrome ever needed to know.
+   */
+  readonly proof?: boolean;
 }
 
 /** Which half of the find bar is showing, or neither. */
@@ -50,6 +61,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const focus = ctx.inject(FocusService);
   const edit = inputs.editing.value;
   const status = sheet.view.status;
+  const proof = inputs.proof.value === true;
 
   /** A property of the active cell's paint, as something to bind. */
   const on = (read: (paint: CellPaint) => boolean): Observable<boolean> =>
@@ -103,7 +115,13 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
     { id: 'fewerDecimals', text: '.0\u2190', ...runs('fewerDecimals') },
     { id: 'moreDecimals', text: '.00\u2192', ...runs('moreDecimals') },
-    { id: 'recalculate', icon: ICONS.recalculate, ...runs('recalculate'), startsGroup: true }
+    // The proof route's one extra button. A toolbar id is not a
+    // command id — `currency` is `formatCurrency` here — so the
+    // question is asked of the command rather than filtered out of
+    // the row afterwards.
+    ...(offers('recalculate', proof)
+      ? [{ id: 'recalculate', icon: ICONS.recalculate, ...runs('recalculate'), startsGroup: true }]
+      : [])
   ];
 
   const finding = internalState<Finding>('closed');
@@ -284,8 +302,17 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'gotoCell':
         askFor('name');
         return;
+      /**
+       * Guarded rather than trusted, because a command has three ways
+       * in and only two of them are drawn. The button and the menu
+       * item are both gone on `/`, and F9 is not — the key table is
+       * one table for the whole application — so without this the
+       * route would hide the command and answer it anyway.
+       */
       case 'recalculate':
-        sheet.send.stress(STRESS_CELLS);
+        if (proof) {
+          sheet.send.stress(STRESS_CELLS);
+        }
         break;
       case 'shortcuts':
         shortcutsOpen.value = true;
@@ -536,6 +563,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     <column width={percent(100)} flexShrink={0} backgroundColor="surface">
       <row width={percent(100)} y="center" paddingTop={3} paddingBottom={3}>
         <MenuBar
+          menus={menusFor(proof)}
           enabled={enabled}
           onChoose={run}
           onDismiss={() => edit.focusSheet()}
@@ -567,7 +595,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         />
       </row>
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
-      <Shortcuts open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
+      <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
       <PasteHint open={pasteHint} onClose={() => (pasteHint.value = false)} />
     </column>
   );

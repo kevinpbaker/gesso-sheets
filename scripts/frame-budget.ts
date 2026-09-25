@@ -26,6 +26,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
+import { PROOF_PATH } from '../src/route.ts';
 import { DevTools, findChrome, openPage, waitFor } from './lib/devtools.ts';
 
 /** The number on the button, and the number in the claim. */
@@ -112,7 +113,18 @@ async function main(): Promise<void> {
       stdio: 'ignore',
       detached: true
     });
-    const url = `http://localhost:${PORT}/`;
+    /**
+     * The proof route, and not `/`.
+     *
+     * `/` is the spreadsheet on its own: no strip, and no recalculate
+     * button to press, because neither belongs in front of somebody
+     * who came for a spreadsheet. Everything this script reads — the
+     * frame recording on `globalThis.gessosheetProof`, the block
+     * button, the heatmap, the button with two hundred thousand cells
+     * behind it — lives on `/proof`, which is the page that exists to
+     * be measured.
+     */
+    const url = `http://localhost:${PORT}${PROOF_PATH}`;
     await waitFor('the preview server', async () => ((await fetch(url)).ok ? true : undefined), 30_000);
 
     ({ browser, devtools } = await openPage(findChrome(), {

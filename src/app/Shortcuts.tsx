@@ -3,7 +3,7 @@ import { Dialog } from 'gesso-components';
 
 import { type ComponentContext, type Inputs } from 'gesso-framework';
 
-import { acceleratorLabel, COMMANDS } from './SheetCommands';
+import { acceleratorLabel, COMMANDS, offers } from './SheetCommands';
 import { NAVIGATION } from './SheetKeys';
 
 /**
@@ -37,6 +37,15 @@ import { NAVIGATION } from './SheetKeys';
 export interface ShortcutsProps {
   readonly open: boolean;
   readonly onClose: () => void;
+  /**
+   * Whether this is the proof route.
+   *
+   * The sheet is generated from the command table, so a route that
+   * does not offer a command must say so here too — otherwise the
+   * help advertises F9 on a page where F9 does nothing, which is the
+   * exact failure this file was written to avoid.
+   */
+  readonly proof?: boolean;
 }
 
 export function Shortcuts(inputs: Inputs<ShortcutsProps>, _ctx: ComponentContext) {
@@ -78,7 +87,7 @@ export function Shortcuts(inputs: Inputs<ShortcutsProps>, _ctx: ComponentContext
   // bar — is still advertised. A key that works and is documented
   // nowhere is a key nobody presses.
   const commandLines = Object.values(COMMANDS)
-    .filter(command => command.accelerator !== undefined)
+    .filter(command => command.accelerator !== undefined && offers(command.id, inputs.proof.value === true))
     .map(command => line(command.label, acceleratorLabel(command.accelerator!)));
 
   return (

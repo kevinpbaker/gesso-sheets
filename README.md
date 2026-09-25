@@ -12,6 +12,41 @@ pnpm dev
 Then `pnpm build` for a production bundle, `pnpm preview` to serve it,
 and `pnpm typecheck` to check the types without building.
 
+## The two pages
+
+`/` is the spreadsheet. That is the whole of it: a grid, a menu bar, a
+toolbar and a formula bar, and nothing on the screen that is about the
+screen.
+
+`/proof` is the same spreadsheet with the instruments attached — the
+black strip along the top, and the one command the strip exists to
+measure:
+
+- a pulse driven by the main thread's own `requestAnimationFrame`, so
+  it is alive exactly when that thread is;
+- a button that holds the main thread in a busy loop for five seconds,
+  which freezes the page and not the sheet;
+- the layout heatmap, which washes every node the engine measured this
+  frame and explains whatever is under the pointer;
+- the render worker's frame rate, its worst gap, and how many nodes
+  were re-measured;
+- **Recalculate 200,000 cells** — on the toolbar, in the Data menu and
+  on F9, and on this page only.
+
+That list is why there are two urls. Nobody opening a spreadsheet
+wants a black bar of instrumentation across the top of it, and a menu
+item that exists to be photographed belongs on the page that
+photographs it. `pnpm proof` drives `/proof`, because everything it
+reads is there.
+
+The routes are declared in `src/app/Routes.tsx`, in the render worker,
+because a route names a component and a component cannot cross a
+`postMessage`; the shell's half is `history: { mode: 'path' }` in
+`createApp` and nothing else. The strip is the one part that cannot
+work that way — it is DOM on the main thread, which is the entire
+reason it is believable — so the shell reads the url for itself too,
+through `src/route.ts`, the one module both threads share.
+
 ## The three files
 
 | File            | What it is                                               |

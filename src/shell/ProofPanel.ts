@@ -12,6 +12,14 @@
  * because the application is not here.
  *
  * Three things are wired: the block, the heatmap, and the readout.
+ *
+ * It belongs to `/proof` and to no other url. `/` is a spreadsheet,
+ * and a spreadsheet does not open with a black bar of instrumentation
+ * across the top of it any more than a car arrives with the
+ * dynamometer still bolted on. So the markup and the styles are here
+ * rather than in `index.html`: a page that is not the proof route
+ * does not carry them at all, instead of shipping them, drawing them
+ * unstyled for a frame and then taking them away again.
  */
 import type { WorkerApp } from 'gesso-framework';
 import type { FrameMetrics } from 'gesso-framework';
@@ -97,10 +105,12 @@ declare global {
  * running app can be handed later — so the shell builds the panel
  * first and passes them in.
  */
-export function proofPanel(): {
+export function proofPanel(host: HTMLElement): {
   readonly options: { onFrame: (metrics: FrameMetrics) => void; onInspect: (report: UiNodeReport | null) => void };
   readonly attach: (app: WorkerApp) => void;
 } {
+  build(host);
+
   const pulse = element('pulse');
   const block = element<HTMLButtonElement>('block');
   const heatmap = element<HTMLInputElement>('heatmap');
@@ -343,10 +353,145 @@ export function proofPanel(): {
   return { options: { onFrame, onInspect }, attach };
 }
 
+/**
+ * The strip's own styles, which used to be most of `index.html`.
+ *
+ * A `<style>` rather than anything cleverer because this is the one
+ * part of the project that is a web page, and a web page's styles are
+ * a stylesheet. It is appended on the proof route and nowhere else.
+ */
+const STYLES = `
+  #proof {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    padding: 6px 10px;
+    background: #22242a;
+    color: #d7d9e0;
+    border-bottom: 1px solid #000;
+  }
+  #proof button {
+    font: inherit;
+    padding: 4px 9px;
+    border-radius: 5px;
+    border: 1px solid #4a4d57;
+    background: #32353e;
+    color: #e8eaf0;
+    cursor: pointer;
+  }
+  #proof button:hover {
+    background: #3d414c;
+  }
+  #proof label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+  }
+  #proof .stat {
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  #proof .stat b {
+    color: #fff;
+    font-weight: 600;
+  }
+  #proof .sep {
+    width: 1px;
+    align-self: stretch;
+    background: #4a4d57;
+  }
+  /*
+    The one animation on the page, and the only honest way to show a
+    thread is alive: it is driven by the main thread's own
+    requestAnimationFrame, so it stops dead the moment that thread is
+    busy — while the sheet, which is not on it, keeps scrolling.
+  */
+  #pulse {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #5ec26a;
+  }
+  #pulse.blocked {
+    background: #d4564f;
+  }
+  /*
+    Floated over the sheet rather than placed above it. In the flow it
+    was a block whose height changed with whatever was being explained,
+    so the grid slid up and down under the pointer while somebody read
+    about it — and every slide resized the canvas, which re-laid out
+    the scene and made the heatmap a picture of the explanation rather
+    than of the sheet. It also ignores the pointer, so the cell
+    underneath stays hoverable.
+  */
+  #explain {
+    position: fixed;
+    right: 12px;
+    bottom: 12px;
+    z-index: 1;
+    margin: 0;
+    padding: 9px 11px;
+    max-width: min(680px, calc(100vw - 24px));
+    max-height: 42vh;
+    overflow: auto;
+    pointer-events: none;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    background: #16171bf2;
+    color: #b9bdc7;
+    border: 1px solid #3a3d46;
+    border-radius: 6px;
+    box-shadow: 0 6px 24px #0006;
+  }
+  #explain[hidden] {
+    display: none;
+  }
+`;
+
+/** The strip itself, in the order a person reads it. */
+const MARKUP = `
+  <span id="pulse" title="The main thread’s own animation frame"></span>
+  <button id="block" type="button">Block the main thread for 5s</button>
+  <label><input id="heatmap" type="checkbox" />Layout heatmap</label>
+  <span class="sep"></span>
+  <span class="stat">render worker <b id="fps">—</b> fps</span>
+  <span class="stat">worst frame gap <b id="gap">—</b></span>
+  <span class="stat">re-measured <b id="measured">—</b> last frame, at most <b id="peak">—</b></span>
+  <span class="stat">main thread <b id="mainfps">—</b> fps</span>
+`;
+
+/**
+ * Puts the strip on the page, above the canvas it is a claim about.
+ *
+ * Before the host rather than at the end of the body, because the
+ * body is a column and the strip goes at the top of it — and because
+ * the canvas is sized to its host, so a strip inserted after mounting
+ * would resize the sheet a frame later. It is inserted before
+ * `createApp`, and the host still has its full height when the canvas
+ * measures it.
+ */
+function build(host: HTMLElement): void {
+  const styles = document.createElement('style');
+  styles.textContent = STYLES;
+  document.head.append(styles);
+
+  const strip = document.createElement('div');
+  strip.id = 'proof';
+  strip.innerHTML = MARKUP;
+  host.before(strip);
+
+  const explain = document.createElement('pre');
+  explain.id = 'explain';
+  explain.hidden = true;
+  host.before(explain);
+}
+
 function element<T extends HTMLElement = HTMLElement>(id: string): T {
   const found = document.getElementById(id);
   if (found === null) {
-    throw new Error(`index.html has no #${id} element.`);
+    throw new Error(`The proof strip has no #${id} element.`);
   }
   return found as T;
 }

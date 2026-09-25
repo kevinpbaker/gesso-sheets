@@ -21,14 +21,26 @@ import { TopBar } from './TopBar';
  * owns the keyboard: `TopBar` owns the menus, the fields and command
  * dispatch, `Grid` owns the sheet, and `StatusBar` owns nothing at
  * all and is the only one of the three that cannot be focused.
+ *
+ * The same screen on both routes, and deliberately the same one: the
+ * proof route is not a different application with a spreadsheet in
+ * it, it is this spreadsheet with a strip of instruments bolted to
+ * the page around it. All `proof` changes down here is whether the
+ * chrome offers the one command that exists to feed those
+ * instruments — see `Routes.tsx` for where the boolean comes from and
+ * `PROOF_ONLY` for what it covers.
  */
-export function SheetApp(_inputs: Inputs<{}>, ctx: ComponentContext) {
+export interface SheetAppProps {
+  readonly proof?: boolean;
+}
+
+export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const edit = editing(ctx, sheet);
 
   return (
     <column width={percent(100)} height={percent(100)} backgroundColor="background">
-      <TopBar editing={edit} />
+      <TopBar editing={edit} proof={inputs.proof.value === true} />
       <Grid editing={edit} />
       <StatusBar />
     </column>
