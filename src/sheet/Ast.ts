@@ -88,3 +88,34 @@ export function callNamesOf(node: Ast, into: Set<string>): void {
       return;
   }
 }
+
+/**
+ * The bare words a formula uses that are not calls: candidate names.
+ *
+ * A named range parses as a call with no arguments, because the
+ * parser cannot know a name from a misspelt function and deliberately
+ * does not try. Which of these is a name is the *sheet's* question,
+ * answered against its own table — this only says which words were
+ * there.
+ */
+export function bareWordsOf(node: Ast, into: Set<string>): void {
+  switch (node.kind) {
+    case 'call':
+      if (node.args.length === 0) {
+        into.add(node.name);
+      }
+      for (const arg of node.args) {
+        bareWordsOf(arg, into);
+      }
+      return;
+    case 'unary':
+      bareWordsOf(node.operand, into);
+      return;
+    case 'binary':
+      bareWordsOf(node.left, into);
+      bareWordsOf(node.right, into);
+      return;
+    default:
+      return;
+  }
+}

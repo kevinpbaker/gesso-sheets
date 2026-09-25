@@ -157,7 +157,7 @@ function shiftRef(ref: CellRef, shift: Shift): CellRef {
  *     when *every* row it covered is gone does it become `#REF!`,
  *     which is the one case where there is nothing left to name.
  */
-function shiftRange(range: RangeRef, shift: Shift): RangeRef {
+export function shiftRange(range: RangeRef, shift: Shift): RangeRef {
   const first = Math.min(indexOf(range.start, shift.axis), indexOf(range.end, shift.axis));
   const last = Math.max(indexOf(range.start, shift.axis), indexOf(range.end, shift.axis));
 

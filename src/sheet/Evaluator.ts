@@ -36,6 +36,14 @@ export interface EvaluationContext {
    * a few blank reads — erring low would silently drop data.
    */
   usedRows?: number;
+  /**
+   * The range a name stands for, for named ranges.
+   *
+   * Optional, so a spec can evaluate against a bare `Map` without a
+   * name table — which is what most of them want, and what the
+   * evaluator's own specs have always done.
+   */
+  rangeForName?(name: string): RangeRef | null;
 }
 
 /**
@@ -146,6 +154,24 @@ function call(name: string, args: readonly Ast[], context: EvaluationContext): C
   }
 
   if (!isSheetFunction(name)) {
+    /**
+     * A bare word the sheet has no function for may be a named range.
+     *
+     * Checked *after* the functions, because a function name is not
+     * available to be a name — `Names.nameProblem` refuses anything
+     * that already means something — and checking this way round
+     * means a sheet can never shadow its own library.
+     *
+     * Only a word with no brackets: `Sales()` is somebody calling a
+     * function that does not exist, and saying `#NAME?` to it is the
+     * true answer.
+     */
+    if (args.length === 0) {
+      const named = context.rangeForName?.(name) ?? null;
+      if (named !== null) {
+        return readRange(named, context).values[0] ?? null;
+      }
+    }
     return NAME;
   }
   const evaluated: Argument[] = args.map(arg => argumentOf(arg, context));
@@ -353,6 +379,17 @@ function wholeColumns(halves: readonly string[]): RangeRef | null {
 function argumentOf(node: Ast, context: EvaluationContext): Argument {
   if (node.kind === 'range') {
     return readRange(node.range, context);
+  }
+  /**
+   * A named range is a range argument, which is the whole point of
+   * naming one: `=SUM(Sales)` has to sum the range, not take its
+   * first cell.
+   */
+  if (node.kind === 'call' && node.args.length === 0 && !isSheetFunction(node.name)) {
+    const named = context.rangeForName?.(node.name) ?? null;
+    if (named !== null) {
+      return readRange(named, context);
+    }
   }
   if (node.kind === 'call' && node.name === 'OFFSET') {
     const range = offsetRange(node.args, context);

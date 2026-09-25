@@ -1,7 +1,8 @@
 import { cellKey, columnOf, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
-import { callNamesOf, referencesOf, type Ast } from './Ast';
+import { bareWordsOf, callNamesOf, referencesOf, type Ast } from './Ast';
 import { parseTypedDate } from './Dates';
 import { DependencyGraph } from './DependencyGraph';
+import { Names } from './Names';
 import { evaluate } from './Evaluator';
 import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
@@ -45,6 +46,16 @@ export interface RecalcResult {
 export class Sheet {
   /** Cumulative counts, in the manner of Gesso's `LayoutEngine.stats`. */
   readonly stats = { evaluated: 0, planned: 0, plans: 0 };
+
+  /**
+   * The names this sheet knows, and the reason they live here.
+   *
+   * A name is a reference by another spelling, so everything that
+   * reads references has to be able to read names: evaluation, the
+   * dependency graph, and the shift that moves both. Holding them
+   * anywhere else would mean handing them to all three.
+   */
+  readonly names = new Names();
 
   private readonly cells = new Map<number, Cell>();
   private readonly graph = new DependencyGraph();
@@ -179,6 +190,9 @@ export class Sheet {
    * nobody else.
    */
   shift(shift: Shift): number {
+    // A name is a reference by another spelling, so it moves like
+    // one. Before the cells, because the rewiring below reads it.
+    this.names.shift(shift);
     const carried = new Map<number, Cell>();
     let rewrites = 0;
 
@@ -282,6 +296,31 @@ export class Sheet {
   /** Puts a formula's edges into the graph, both kinds. */
   private wire(key: number, formula: Ast): void {
     const { keys, columns } = precedentsOf(formula);
+    /**
+     * A named range is read, so it is a precedent.
+     *
+     * Without this a formula saying `=SUM(Sales)` has no edge to the
+     * cells it sums, and editing one of them leaves the total stale —
+     * the silent kind of wrong, because the formula looks right and
+     * the number is old.
+     */
+    const words = new Set<string>();
+    bareWordsOf(formula, words);
+    for (const word of words) {
+      const range = this.names.rangeOf(word);
+      if (range === null) {
+        continue;
+      }
+      if (range.wholeColumn === true) {
+        for (let column = range.start.column; column <= range.end.column; column++) {
+          columns.push(column);
+        }
+        continue;
+      }
+      for (const cell of rangeKeys(range)) {
+        keys.push(cell);
+      }
+    }
     this.graph.setPrecedents(key, keys);
     this.graph.setWatchedColumns(key, columns);
   }
@@ -477,6 +516,31 @@ export class Sheet {
   // ---------------------------------------------------------------------
   // Reading
   // ---------------------------------------------------------------------
+
+  /** The `EvaluationContext`'s name half. */
+  rangeForName(name: string): RangeRef | null {
+    return this.names.rangeOf(name);
+  }
+
+  /**
+   * Re-reads every formula, because a name changed underneath them.
+   *
+   * Defining or removing a name changes what formulas *read*, not
+   * just what they answer, so the graph's edges are wrong until they
+   * are rebuilt — and the formulas that mention the name are not
+   * findable without parsing all of them anyway. Names change when
+   * somebody defines one, which is rare, so the blunt answer is the
+   * right one.
+   */
+  namesChanged(): void {
+    for (const [key, cell] of this.cells) {
+      if (cell.formula !== null) {
+        this.wire(key, cell.formula);
+        this.dirty.add(key);
+      }
+    }
+    this.plan = null;
+  }
 
   /** The `EvaluationContext` the evaluator reads through. */
   valueAt(key: number): CellValue {
