@@ -194,13 +194,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const values = fanOut<SheetWindow, string | null, At>(
     window$,
     (current, _key, at) => cellIn(current, at.row, at.column),
-    { initial: null, equal: 'reference' }
+    { initial: null }
   );
 
   const standings = fanOut<SheetSelection, Standing, At>(
     selection$,
     (selection, _key, at) => standingOf(selection, at.row, at.column),
-    { initial: 0, equal: 'reference' }
+    { initial: 0 }
   );
 
   ctx.effect(window$, current => {
