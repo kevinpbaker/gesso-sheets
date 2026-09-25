@@ -1132,3 +1132,90 @@ describe('picking a reference by clicking', () => {
     expect((row?.decorations ?? []).length).toBe(4);
   });
 });
+
+/**
+ * F4 on the reference the caret is in.
+ *
+ * The cycle itself has a table in `FormulaEditing.spec.ts`. What is
+ * asserted here is the part that only a mounted grid has: that the
+ * key reaches the open cell, that the caret ends up somewhere
+ * sensible, and that a caret nowhere near a reference is left alone.
+ */
+describe('cycling a reference with F4', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount();
+  });
+
+  async function typing(text: string): Promise<void> {
+    h.service.setSelection(5, 0, 5, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function f4(): Promise<void> {
+    h.ui.fireEvent.press('F4');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  const editorText = () => h.ui.queryByRole('textbox', { name: 'Cell' })?.properties.get('value');
+
+  it('pins the reference the caret is sitting after', async () => {
+    await typing('=B2');
+    await f4();
+    expect(editorText()).toBe('=$B$2');
+  });
+
+  it('goes round the whole cycle', async () => {
+    await typing('=B2');
+    await f4();
+    expect(editorText()).toBe('=$B$2');
+    await f4();
+    expect(editorText()).toBe('=B$2');
+    await f4();
+    expect(editorText()).toBe('=$B2');
+    await f4();
+    expect(editorText()).toBe('=B2');
+  });
+
+  it('leaves the rest of the formula alone', async () => {
+    await typing('=SUM(A1,B2)');
+    // The caret is after the closing bracket, which is not a reference.
+    await f4();
+    expect(editorText()).toBe('=SUM(A1,B2)');
+  });
+
+  it('keeps the colours in step with what it rewrote', async () => {
+    await typing('=B2');
+    await f4();
+    const runs = h.ui.getByRole('textbox', { name: 'Cell' }).properties.get('spans') as
+      | readonly { text: string }[]
+      | undefined;
+    expect(runs?.map(run => run.text)).toEqual(['=', '$B$2']);
+  });
+});

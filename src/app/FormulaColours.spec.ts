@@ -110,3 +110,71 @@ describe('the references a formula points at', () => {
     ]);
   });
 });
+
+/**
+ * The bracket beside the caret and the one that closes it.
+ *
+ * Washed rather than coloured: the five hues already mean "this is
+ * the reference that box belongs to", and a sixth meaning "these two
+ * are a pair" would be one too many to read at a glance.
+ */
+describe('marking a pair of brackets', () => {
+  /** The offsets of the washed runs, which says *which* brackets. */
+  function markedAt(text: string, caret?: number): number[] {
+    const runs = formulaSpans(text, caret) ?? [];
+    const found: number[] = [];
+    let at = 0;
+    for (const run of runs) {
+      if (run.backgroundColor !== undefined) {
+        found.push(at);
+      }
+      at += run.text.length;
+    }
+    return found;
+  }
+
+  //  =SUM(ROUND(A1,2))
+  //  0    4     10   16
+  const NESTED = '=SUM(ROUND(A1,2))';
+
+  it('marks both when the caret is after the closing one', () => {
+    expect(markedAt('=SUM(A1)', 8)).toEqual([4, 7]);
+  });
+
+  it('marks both when the caret is before the opening one', () => {
+    expect(markedAt('=SUM(A1)', 4)).toEqual([4, 7]);
+  });
+
+  it('marks the outer pair from outside it', () => {
+    expect(markedAt(NESTED, 17)).toEqual([4, 16]);
+  });
+
+  it('marks the inner pair from inside it', () => {
+    expect(markedAt(NESTED, 16)).toEqual([10, 15]);
+  });
+
+  it('marks nothing when the caret is not on a bracket', () => {
+    expect(markedAt('=SUM(A1)', 6)).toEqual([]);
+  });
+
+  it('marks nothing when the bracket was never closed', () => {
+    expect(markedAt('=SUM(A1', 4)).toEqual([]);
+  });
+
+  it('marks nothing when no caret was offered', () => {
+    expect(markedAt('=SUM(A1)')).toEqual([]);
+  });
+
+  it('still tiles the whole string when it marks', () => {
+    for (const caret of [4, 10, 15, 16, 17]) {
+      const runs = formulaSpans(NESTED, caret);
+      expect((runs ?? []).map(run => run.text).join('')).toBe(NESTED);
+    }
+  });
+
+  it('keeps the references coloured alongside', () => {
+    const runs = formulaSpans('=SUM(A1)', 8)!;
+    expect(runs.find(run => run.text === 'A1')?.color).toBeDefined();
+    expect(runs.map(run => run.text).join('')).toBe('=SUM(A1)');
+  });
+});

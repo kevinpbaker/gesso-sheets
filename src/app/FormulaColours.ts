@@ -1,7 +1,7 @@
 import type { UiTextSpan } from 'gesso-core';
 
 import type { RangeRef } from '../sheet/A1';
-import { scanFormula } from '../sheet/FormulaScan';
+import { matchingBracket, scanFormula } from '../sheet/FormulaScan';
 import type { Span } from '../sheet/Tokenizer';
 
 /**
@@ -80,22 +80,62 @@ export function colouredReferences(text: string): readonly ColouredReference[] {
  * Undefined rather than a single plain run when there is nothing to
  * colour, so an ordinary cell being edited costs nothing at all.
  */
-export function formulaSpans(text: string): readonly UiTextSpan[] | undefined {
-  const references = colouredReferences(text);
-  if (references.length === 0) {
+export function formulaSpans(text: string, caret?: number): readonly UiTextSpan[] | undefined {
+  /** A stretch of the text and how it is drawn. */
+  interface Mark {
+    readonly span: Span;
+    readonly run: Omit<UiTextSpan, 'text'>;
+  }
+
+  const marks: Mark[] = colouredReferences(text).map(reference => ({
+    span: reference.span,
+    run: { color: reference.color }
+  }));
+
+  /**
+   * The bracket under the caret and the one that closes it.
+   *
+   * Marked with a background rather than a colour, because the
+   * colours are spoken for: five hues already mean "this is the
+   * reference that box belongs to", and a sixth meaning "these two
+   * brackets are a pair" would be one hue too many to read.
+   */
+  if (caret !== undefined) {
+    const pair = matchingBracket(scanFormula(text), caret);
+    if (pair !== null) {
+      marks.push({ span: pair.here, run: { backgroundColor: BRACKET } });
+      marks.push({ span: pair.there, run: { backgroundColor: BRACKET } });
+    }
+  }
+  if (marks.length === 0) {
     return undefined;
   }
+
+  // Sorted, because the brackets are found after the references and
+  // may sit anywhere among them; runs have to tile in order.
+  marks.sort((a, b) => a.span.start - b.span.start);
+
   const runs: UiTextSpan[] = [];
   let at = 0;
-  for (const reference of references) {
-    if (reference.span.start > at) {
-      runs.push({ text: text.slice(at, reference.span.start) });
+  for (const mark of marks) {
+    if (mark.span.start < at) {
+      // A bracket inside a reference cannot happen, but a mark that
+      // overlapped one would break the tiling, and a field whose runs
+      // do not spell its value is drawn unstyled. Dropping it is the
+      // safe half of that.
+      continue;
     }
-    runs.push({ text: text.slice(reference.span.start, reference.span.end), color: reference.color });
-    at = reference.span.end;
+    if (mark.span.start > at) {
+      runs.push({ text: text.slice(at, mark.span.start) });
+    }
+    runs.push({ text: text.slice(mark.span.start, mark.span.end), ...mark.run });
+    at = mark.span.end;
   }
   if (at < text.length) {
     runs.push({ text: text.slice(at) });
   }
   return runs;
 }
+
+/** The wash behind a matched pair of brackets. */
+const BRACKET = '#c7c7c7';

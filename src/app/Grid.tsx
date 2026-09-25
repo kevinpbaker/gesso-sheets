@@ -17,6 +17,7 @@ import {
   type UiPasteEvent,
   type UiModifier,
   type UiPointerEvent,
+  type UiTextSpan,
   type UiTextChangeEvent,
   type SheetRange,
   type UiVirtualSheet
@@ -50,7 +51,7 @@ import {
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import { cellIn, PLAIN_PAINT, Sheet, type SheetMerge, type SheetSelection, type SheetWindow } from './SheetContract';
 import { colouredReferences, formulaSpans } from './FormulaColours';
-import { pick, repick } from './FormulaEditing';
+import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
@@ -753,11 +754,40 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   /** The corner a range is being dragged from, while one is. */
   let pickingFrom: { row: number; column: number } | null = null;
 
+  /**
+   * The runs the open cell draws itself in.
+   *
+   * A subject rather than a pipe off the draft, because the runs
+   * depend on the *caret* as well as the text — the bracket beside it
+   * and the one that closes it are washed — and the caret lives in
+   * the editor's model, which has no stream to follow.
+   *
+   * **The limit that follows, stated rather than hidden:** the runs
+   * are recomputed when the text changes and when a pick or an F4
+   * moves the caret deliberately. Arrowing onto a bracket without
+   * typing does not light it up until the next keystroke. The case
+   * that matters — typing a `)` and seeing which `(` it closed — is
+   * a text change, so it works; the rest waits on the engine growing
+   * a signal for a selection that moved.
+   */
+  const editorSpans = new BehaviorSubject<readonly UiTextSpan[] | undefined>(undefined);
+
+  const refreshSpans = (): void => {
+    const draft = edit.draftNow();
+    if (draft === null) {
+      editorSpans.next(undefined);
+      return;
+    }
+    const caret = editorNode === null ? undefined : editorFor(editorNode).focus;
+    editorSpans.next(formulaSpans(draft, caret));
+  };
+
   ctx.effect(edit.draft, draft => {
     if (draft !== pickedText) {
       picking = null;
       pickedText = null;
     }
+    refreshSpans();
   });
 
   /**
@@ -804,6 +834,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     model.replaceText(picked.text);
     model.select(picked.caret);
     focus.focus(editorNode);
+    refreshSpans();
     return true;
   };
 
@@ -937,7 +968,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
        * anything that is not a formula gets `undefined` and costs
        * nothing.
        */
-      spans: edit.draft.pipe(map(text => formulaSpans(text ?? ''))),
+      spans: editorSpans,
       /**
        * The editor is the merged cell, not the cell under its corner.
        *
@@ -1042,11 +1073,54 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         return;
       }
     }
+    /**
+     * F4, which belongs to the cell rather than to the sheet.
+     *
+     * Handled here and not in the command table because it is only
+     * ever meaningful with a cell open and a caret on a reference,
+     * and a command is a thing the whole application can do. It also
+     * does nothing rather than beeping when the caret is elsewhere,
+     * which a command with an accelerator could not express.
+     */
+    if (event.key === 'F4' && edit.openNow() && cycleAtCaret()) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const action = keyAction(event.key, event.modifiers, edit.openNow());
     if (edit.apply(action)) {
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  /**
+   * `A1 → $A$1 → A$1 → $A1`, on the reference the caret is in.
+   *
+   * The cycle is `FormulaEditing.cycleAbsolute`, with a table beside
+   * it; this is the part that knows where the caret is and puts it
+   * back. Returns false when the caret is not on a reference, so the
+   * key falls through to whatever else wanted it.
+   */
+  const cycleAtCaret = (): boolean => {
+    if (editorNode === null) {
+      return false;
+    }
+    const draft = edit.draftNow();
+    if (draft === null) {
+      return false;
+    }
+    const model = editorFor(editorNode);
+    const cycled = cycleAbsolute(draft, model.focus);
+    if (cycled === null) {
+      return false;
+    }
+    pickedText = cycled.text;
+    edit.write(cycled.text);
+    model.replaceText(cycled.text);
+    model.select(cycled.caret);
+    refreshSpans();
+    return true;
   };
 
   /**
