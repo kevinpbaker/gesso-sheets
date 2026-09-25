@@ -59,7 +59,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       showColumns: (first, last) => service.showColumns(first, last),
       hideRows: (first, last) => service.hideRows(first, last),
       showRows: (first, last) => service.showRows(first, last),
-      freeze: (rows, columns) => service.freeze(rows, columns)
+      freeze: (rows, columns) => service.freeze(rows, columns),
+      mergeCells: () => service.mergeCells(),
+      unmergeCells: () => service.unmergeCells()
     }
   });
 }

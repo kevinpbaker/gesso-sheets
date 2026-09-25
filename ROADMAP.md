@@ -17,17 +17,17 @@ and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
 in, is two and a half phases into nine: the top bar and the format
 axis are done, and Phase 10 has landed insert, delete, borders, sort, hidden
-rows and columns and frozen panes, with merging left to build on the
-engine gaps it closed. `pnpm test` is 578 specs and `pnpm proof` is
-six budgets. Phase
+rows and columns, frozen panes and merged cells, with autofit and
+filtering left. `pnpm test` is 607 specs and `pnpm proof` is six
+budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
 `src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
 of and paste into, find and replace across, fill down, format, rule
 with borders, sort, insert and delete rows and columns, freeze a
-pane, and navigate by typing an address — and which remembers what
-you typed.
+pane, merge cells, and navigate by typing an address — and which
+remembers what you typed.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -645,8 +645,10 @@ bugs; the eight named formats cover what people pick.
 ### Phase 10 — Rows, columns, and borders — **partly done**
 
 Insert and delete rows and columns with reference rewriting, per-edge
-cell borders, sorting a range, hiding rows and columns, and freezing
-a pane. **Merged cells, autofit and filtering are not done.**
+cell borders, sorting a range, hiding rows and columns, freezing a
+pane, and merged cells. **Autofit and filtering are not done** — both
+want text measurement or a predicate over rows, and neither is
+blocked by anything.
 
 **Exit:** a rewrite-count spec in Phase 1's style — inserting a row
 above a column of 50,000 formulas rewrites exactly the formulas that
@@ -736,6 +738,27 @@ the first specs asserted the frozen cell's `left` *property*, and
 passed. Phase 3 added `toHaveVisibleBox` because a header asserted by
 property passed while it scrolled off the screen; the frozen pane is
 asserted by box now, and that is what caught every one of them.
+
+**A merged cell is drawn by its anchor and by nothing else.** The
+anchor is as wide as the columns it covers and as tall as the rows,
+and it overflows its own row downwards to reach them — rows are not
+merged, only cells are, so there is nothing else a vertical merge can
+be. The cells it covers are given no width and no height at all,
+which keeps every other cell in the row at the offset the window put
+it and is the only version that does not need the window to know
+about merges.
+
+What the window *does* need to know is where the anchors are, and
+that is `extendRange`: a merge spanning C3:E3 is drawn by C3, so a
+window starting at D has nothing to draw and the merge disappears at
+the edge of the screen. This is the consumer that engine hook was
+added for, which is the same discipline the row heights got — an
+engine change with no consumer is one nobody has run.
+
+Merging is destructive and knowingly so: the cells it covers have
+nowhere to show what they held, so they are emptied. Every
+spreadsheet warns about that; this one makes it one step of ctrl-Z
+instead, which is the same promise kept differently.
 
 **The two engine changes, and the first thing built on them.**
 Merged cells and freeze panes needed the mounted set to be able to

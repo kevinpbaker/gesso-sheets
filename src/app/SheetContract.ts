@@ -95,6 +95,24 @@ export interface SheetGeometry {
    */
   readonly frozenRows: number;
   readonly frozenColumns: number;
+  /**
+   * The merged rectangles, all of them.
+   *
+   * On the geometry because that is what they are — a merge changes
+   * where things are drawn and nothing about what a cell holds — and
+   * because there are tens of them at most. The render worker needs
+   * every one of them rather than the ones in view: a merge anchored
+   * above the window still has to paint into it, which is the whole
+   * reason `extendRange` exists.
+   */
+  readonly merges: readonly SheetMerge[];
+}
+
+export interface SheetMerge {
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly firstColumn: number;
+  readonly lastColumn: number;
 }
 
 /** The active cell, and the rectangle anchored from it. */
@@ -341,6 +359,16 @@ export interface SheetCommands {
    * coordinate to describe a quantity.
    */
   freeze(rows: number, columns: number): void;
+  /**
+   * Merges the selection into one cell, or takes a merge apart.
+   *
+   * Destructive, and knowingly: everything but the top-left cell
+   * loses what it held, because a merged cell has nowhere to show it.
+   * Every spreadsheet warns about this and this one does it as one
+   * step of undo instead, which is the same promise kept differently.
+   */
+  mergeCells(): void;
+  unmergeCells(): void;
 }
 
 /** What a border command draws. */
@@ -490,7 +518,8 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     columnWidths: [],
     hiddenRows: [],
     frozenRows: 0,
-    frozenColumns: 0
+    frozenColumns: 0,
+    merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },

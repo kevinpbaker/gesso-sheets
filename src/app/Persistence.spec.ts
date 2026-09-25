@@ -68,6 +68,10 @@ describe('what is written down', () => {
       palette: [],
       formats: [],
       regions: { sheet: 0, rows: [], columns: [] },
+      merges: [],
+      frozenRows: 0,
+      frozenColumns: 0,
+      hiddenRows: [],
       columnWidths: []
     });
     expect(document.canUndo).toBe(false);
@@ -82,6 +86,10 @@ describe('reading a file that is not what this build writes', () => {
       palette: [],
       formats: [],
       regions: { sheet: 0, rows: [], columns: [] },
+      merges: [],
+      frozenRows: 0,
+      frozenColumns: 0,
+      hiddenRows: [],
       columnWidths: [80, 90]
     };
     const read = parseSnapshot(JSON.stringify(snapshot), 4);
@@ -176,6 +184,10 @@ describe('a sheet that is opened again', () => {
       palette: [],
       formats: [],
       regions: { sheet: 0, rows: [], columns: [] },
+      merges: [],
+      frozenRows: 0,
+      frozenColumns: 0,
+      hiddenRows: [],
       columnWidths: []
     });
     const { service, document } = harness(repository);
@@ -336,5 +348,72 @@ describe('formats in the file', () => {
       4
     );
     expect(read?.formats).toEqual([]);
+  });
+});
+
+/**
+ * The shape of a sheet — its merges, its frozen pane, its hidden
+ * rows — is as much somebody's work as its cells are, and a sheet
+ * reopened without them has lost something they set up.
+ *
+ * No version bump: an older file has none of these fields, and their
+ * absence already means the right thing. A version is for a change
+ * that would be read *wrongly*, not one that would be read as
+ * nothing.
+ */
+describe('the shape of the sheet in the file', () => {
+  it('brings back the merges', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, 'Title');
+    document.merges.add({ firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 3 });
+
+    const loaded = new SheetDocument();
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+
+    expect(loaded.merges.at(0, 2)).toEqual({ firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 3 });
+  });
+
+  it('brings back the frozen pane and the hidden rows', () => {
+    const document = new SheetDocument();
+    document.frozenRows = 2;
+    document.frozenColumns = 1;
+    document.hiddenRows.add(4);
+
+    const loaded = new SheetDocument();
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+
+    expect(loaded.frozenRows).toBe(2);
+    expect(loaded.frozenColumns).toBe(1);
+    expect([...loaded.hiddenRows]).toEqual([4]);
+  });
+
+  it('reads a file written before any of them existed', () => {
+    const read = parseSnapshot(
+      JSON.stringify({ version: 2, cells: [{ row: 0, column: 0, input: '5' }], columnWidths: [] }),
+      4
+    );
+    expect(read?.merges).toEqual([]);
+    expect(read?.frozenRows).toBe(0);
+    expect(read?.hiddenRows).toEqual([]);
+  });
+
+  it('drops a merge a file got wrong', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        merges: [{ firstRow: 5, lastRow: 1, firstColumn: 0, lastColumn: 1 }, null, { firstRow: 0 }],
+        columnWidths: []
+      }),
+      4
+    );
+    expect(read?.merges).toEqual([]);
+  });
+
+  /** What lives past the end of the sheet is not somebody's data. */
+  it('does not write a merge past the end of the sheet', () => {
+    const document = new SheetDocument();
+    document.merges.add({ firstRow: 500, lastRow: 501, firstColumn: 0, lastColumn: 1 });
+    expect(snapshotOf(document, [], 100).merges).toEqual([]);
   });
 });

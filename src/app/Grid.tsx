@@ -17,6 +17,7 @@ import {
   type UiPasteEvent,
   type UiPointerEvent,
   type UiTextChangeEvent,
+  type SheetRange,
   type UiVirtualSheet
 } from 'gesso-core';
 import { FocusService, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
@@ -33,7 +34,7 @@ import {
   ROW_HEIGHT
 } from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
-import { cellIn, PLAIN_PAINT, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
+import { cellIn, PLAIN_PAINT, Sheet, type SheetMerge, type SheetSelection, type SheetWindow } from './SheetContract';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
@@ -268,6 +269,23 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   const frozen = internalState<{ rows: number; columns: number }>({ rows: 0, columns: 0 });
 
+  /**
+   * The merged rectangles, all of them.
+   *
+   * Held whole rather than windowed, because a merge anchored above
+   * or to the left of the window still has to paint into it — which
+   * is what `extendRange` below reaches back for.
+   */
+  const merges = internalState<readonly SheetMerge[]>([]);
+  const mergeAt = (row: number, column: number): SheetMerge | null => {
+    for (const rect of merges.value) {
+      if (row >= rect.firstRow && row <= rect.lastRow && column >= rect.firstColumn && column <= rect.lastColumn) {
+        return rect;
+      }
+    }
+    return null;
+  };
+
   const hidden = internalState<ReadonlySet<number>>(new Set<number>());
   const heightsOf = (rows: ReadonlySet<number>): Map<number, number> =>
     new Map([...rows].map(row => [row, 0] as const));
@@ -408,11 +426,28 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
      * empties `cells` on a freeze.
      */
     const stuck = column < frozen.value.columns;
+    /**
+     * A merged cell is drawn by its anchor and by nothing else.
+     *
+     * The anchor is as wide as the columns it covers and as tall as
+     * the rows, and it overflows its own row downwards to reach them
+     * — rows are not merged, only cells are, so there is nothing else
+     * for a vertical merge to be. The cells it covers are given no
+     * width and no height at all, which keeps every other cell in the
+     * row at the offset the window put it and is the only version
+     * that does not need the window to know about merges.
+     */
+    const merge = mergeAt(row, column);
+    const anchors = merge !== null && merge.firstRow === row && merge.firstColumn === column;
+    const covered = merge !== null && !anchors;
+    const spanWidth = merge === null ? null : columnLeft(merge.lastColumn + 1) - columnLeft(merge.firstColumn);
+    const spanRows = merge === null ? 1 : merge.lastRow - merge.firstRow + 1;
+
     return Text({
       key: column,
       position: stuck ? 'sticky' : undefined,
       left: stuck ? GUTTER_WIDTH + columnLeft(column) : undefined,
-      zIndex: stuck ? 1 : undefined,
+      zIndex: stuck ? 1 : anchors && spanRows > 1 ? 1 : undefined,
       /**
        * Borders follow the paint *and* the column's width, because a
        * right edge is drawn at the far side of a cell and a drag
@@ -441,11 +476,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       ),
       borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
       borderWidth: state.pipe(map(where => (where === 2 ? 2 : 1))),
-      width: widthOf(column),
-      height: heightOf(row),
+      width: covered ? 0 : anchors && spanWidth !== null ? spanWidth : widthOf(column),
+      height: covered
+        ? 0
+        : anchors && spanRows > 1
+          ? heightOf(row).pipe(map(height => (height === 0 ? 0 : height * spanRows)))
+          : heightOf(row),
       flexShrink: 0,
-      paddingLeft: 6,
-      paddingRight: 6,
+      // A covered cell has no room for padding either, or a row of
+      // them adds twelve pixels each to the width of the row.
+      paddingLeft: covered ? 0 : 6,
+      paddingRight: covered ? 0 : 6,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? 12 : how.fontSize))),
       /**
        * Wired, and not yet visible.
@@ -497,6 +538,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * selection and left focus where it was gave you a selected cell
    * that no key did anything to.
    */
+  /**
+   * A cell as the selection should name it.
+   *
+   * A merge is its anchor: the covered cells hold nothing and are not
+   * drawn, so a selection sitting on one would be a ring around
+   * nothing and a formula bar showing a cell nobody can see. Clicks
+   * land on the anchor already, because the anchor is the node that
+   * spans those pixels — it is the *arithmetic* paths that need this,
+   * `cellAt` being a division over the offsets that has never heard
+   * of a merge.
+   */
+  const anchorOf = (row: number, column: number): { row: number; column: number } => {
+    const merge = mergeAt(row, column);
+    return merge === null ? { row, column } : { row: merge.firstRow, column: merge.firstColumn };
+  };
+
   const selectByPointer = (row: number, column: number, extend = false): void => {
     // A click ends any sweep, whatever the gesture recogniser thinks.
     //
@@ -511,10 +568,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (edit.openNow()) {
       edit.commit(0, 0);
     }
+    const at = anchorOf(row, column);
     if (extend) {
-      edit.extendTo(row, column);
+      edit.extendTo(at.row, at.column);
     } else {
-      edit.moveTo(row, column);
+      edit.moveTo(at.row, at.column);
     }
     if (gridNode !== null) {
       focus.focus(gridNode);
@@ -779,7 +837,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (box.width === 0) {
       return null;
     }
-    return sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+    const at = sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+    // `cellAt` is arithmetic on the offsets and knows nothing about
+    // merges, so a sweep across one reports the cells underneath it —
+    // which are not drawn and hold nothing. The merge is what is
+    // there, and the merge is its anchor.
+    return anchorOf(at.row, at.column);
   };
 
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
@@ -822,13 +885,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
      * under the header that covers it.
      */
     const stuck = row < frozen.value.rows;
+    /**
+     * A row holding the anchor of a vertical merge is lifted.
+     *
+     * The anchor is taller than its row and reaches down over the
+     * rows below, which are painted after it — so without this the
+     * merge is drawn and then covered up by the very cells it is
+     * supposed to be hiding.
+     */
+    const spans = merges.value.some(rect => rect.firstRow === row && rect.lastRow > row);
     return Row(
       {
         role: 'row',
         posInSet: row + 1,
-        position: stuck ? 'sticky' : corner ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner || spans ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
-        zIndex: stuck ? 1 : undefined,
+        zIndex: stuck || spans ? 1 : undefined,
         backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
       },
@@ -991,6 +1063,29 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       columnWidth: widths.value,
       frozenRows: frozen.value.rows,
       frozenColumns: frozen.value.columns,
+      /**
+       * The window, reaching back to the anchors it is cutting
+       * through.
+       *
+       * A merge is drawn by its top-left cell, so a window that
+       * starts past that cell has nothing to draw and the merge
+       * disappears at the edge of the screen. This is the one place a
+       * sheet's geometry depends on its contents, and the engine
+       * takes it as a hook for exactly this reason.
+       */
+      extendRange: (range: SheetRange) => {
+        let firstRow = range.firstRow;
+        let firstColumn = range.firstColumn;
+        for (const rect of merges.value) {
+          const inRows = rect.lastRow >= range.firstRow && rect.firstRow <= range.lastRow;
+          const inColumns = rect.lastColumn >= range.firstColumn && rect.firstColumn <= range.lastColumn;
+          if (inRows && inColumns) {
+            firstRow = Math.min(firstRow, rect.firstRow);
+            firstColumn = Math.min(firstColumn, rect.firstColumn);
+          }
+        }
+        return { ...range, firstRow, firstColumn };
+      },
       gutterWidth: GUTTER_WIDTH,
       headerHeight: HEADER_HEIGHT,
       // Two rows and one column: the partial cells at the edges. The
@@ -1102,6 +1197,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
     if (geometry.frozenRows !== frozen.value.rows || geometry.frozenColumns !== frozen.value.columns) {
       frozen.value = { rows: geometry.frozenRows, columns: geometry.frozenColumns };
+    }
+    if (geometry.merges !== merges.value) {
+      merges.value = geometry.merges;
+      // A merge changes which cells are drawn and how wide, and that
+      // is decided when a cell is built.
+      cells.clear();
+      sheetWindow.invalidate();
     }
   });
 

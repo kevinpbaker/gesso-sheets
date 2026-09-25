@@ -173,7 +173,8 @@ export class SheetService {
       columnWidths: document.columnWidths,
       hiddenRows: [],
       frozenRows: 0,
-      frozenColumns: 0
+      frozenColumns: 0,
+      merges: []
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
     this.editorSubject = new BehaviorSubject<SheetEditor>({
@@ -307,7 +308,8 @@ export class SheetService {
       columnWidths: this.document.columnWidths,
       hiddenRows: [...this.document.hiddenRows].sort((a, b) => a - b),
       frozenRows: this.document.frozenRows,
-      frozenColumns: this.document.frozenColumns
+      frozenColumns: this.document.frozenColumns,
+      merges: this.document.merges.all.map(rect => ({ ...rect }))
     });
   }
 
@@ -773,6 +775,48 @@ export class SheetService {
     this.publishWindow();
     this.publishFormats();
     this.persist();
+  }
+
+  /**
+   * Merges the selection, emptying everything but its top-left cell.
+   *
+   * Destructive on purpose and in one step of undo, which is the
+   * promise a warning dialog makes and this keeps: the cells a merge
+   * covers have nowhere to show what they held, so they are cleared
+   * — and ctrl-Z puts every one of them back.
+   */
+  mergeCells(): void {
+    const rect = rectOf(this.document.selection);
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const merged = {
+      firstRow: rect.firstRow,
+      lastRow: Math.min(rect.lastRow, rowCount - 1),
+      firstColumn: rect.firstColumn,
+      lastColumn: Math.min(rect.lastColumn, columnCount - 1)
+    };
+    if (merged.lastRow === merged.firstRow && merged.lastColumn === merged.firstColumn) {
+      return;
+    }
+    this.document.transact(() => {
+      for (let row = merged.firstRow; row <= merged.lastRow; row++) {
+        for (let column = merged.firstColumn; column <= merged.lastColumn; column++) {
+          if (row !== merged.firstRow || column !== merged.firstColumn) {
+            this.document.setCell(row, column, '');
+          }
+        }
+      }
+    });
+    this.document.merges.add(merged);
+    this.publishGeometry();
+    this.afterEdit();
+  }
+
+  unmergeCells(): void {
+    if (!this.document.merges.remove(rectOf(this.document.selection))) {
+      return;
+    }
+    this.publishGeometry();
+    this.publishWindow();
   }
 
   showColumns(first: number, last: number): void {

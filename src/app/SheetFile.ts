@@ -1,3 +1,4 @@
+import type { MergeRect } from '../sheet/Merges';
 import {
   DEFAULT_FORMAT,
   GENERAL,
@@ -52,6 +53,18 @@ export interface SheetSnapshot {
    * rather than thirty megabytes of per-cell entries.
    */
   readonly regions: StoredRegions;
+  /**
+   * The merged rectangles, and the frozen pane.
+   *
+   * Absent in a file written before they existed, which reads as none
+   * and no pane — so no version bump: the field's absence already
+   * means the right thing, and a version is for a change that would
+   * be read *wrongly* rather than not at all.
+   */
+  readonly merges: readonly MergeRect[];
+  readonly frozenRows: number;
+  readonly frozenColumns: number;
+  readonly hiddenRows: readonly number[];
   /**
    * Column widths, in order from A.
    *
@@ -119,6 +132,10 @@ export function snapshotOf(
       rows: formats.regions.rows.filter(([row]) => row < rowCount),
       columns: formats.regions.columns
     },
+    merges: document.merges.all.filter(rect => rect.lastRow < rowCount),
+    frozenRows: document.frozenRows,
+    frozenColumns: document.frozenColumns,
+    hiddenRows: [...document.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
     columnWidths: [...columnWidths]
   };
 }
@@ -136,6 +153,13 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   // as the number seven and then formatted as text, and the leading
   // zeros somebody saved would be gone by the time the format said
   // to keep them.
+  document.merges.restore(snapshot.merges);
+  document.frozenRows = snapshot.frozenRows;
+  document.frozenColumns = snapshot.frozenColumns;
+  document.hiddenRows.clear();
+  for (const row of snapshot.hiddenRows) {
+    document.hiddenRows.add(row);
+  }
   document.formats.restore(snapshot.palette, snapshot.formats, {
     sheet: snapshot.regions.sheet,
     rows: snapshot.regions.rows,
@@ -197,6 +221,12 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
     palette,
     formats: formatsFrom(source.formats, palette.length),
     regions: regionsFrom(source.regions, palette.length),
+    merges: mergesFrom(source.merges),
+    frozenRows: countFrom(source.frozenRows),
+    frozenColumns: countFrom(source.frozenColumns),
+    hiddenRows: Array.isArray(source.hiddenRows)
+      ? source.hiddenRows.filter((row): row is number => Number.isInteger(row) && row >= 0)
+      : [],
     columnWidths: widthsFrom(source.columnWidths, columnCount)
   };
 }
@@ -299,6 +329,30 @@ function edgeFrom(stored: unknown): CellEdge {
     width: typeof width === 'number' && Number.isFinite(width) && width > 0 ? Math.min(width, 8) : 0,
     color: typeof edge.color === 'string' ? edge.color : ''
   };
+}
+
+/** Merged rectangles, with anything malformed dropped rather than trusted. */
+function mergesFrom(stored: unknown): MergeRect[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  return stored.filter((rect): rect is MergeRect => {
+    const candidate = rect as Partial<MergeRect>;
+    return (
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      Number.isInteger(candidate.firstRow) &&
+      Number.isInteger(candidate.lastRow) &&
+      Number.isInteger(candidate.firstColumn) &&
+      Number.isInteger(candidate.lastColumn) &&
+      (candidate.lastRow as number) >= (candidate.firstRow as number) &&
+      (candidate.lastColumn as number) >= (candidate.firstColumn as number)
+    );
+  });
+}
+
+function countFrom(stored: unknown): number {
+  return typeof stored === 'number' && Number.isInteger(stored) && stored >= 0 ? stored : 0;
 }
 
 /** Rows, columns and the sheet, with anything pointing off the palette dropped. */

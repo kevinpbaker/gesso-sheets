@@ -65,6 +65,8 @@ export type CommandId =
   | 'borderBottom'
   | 'borderThickBottom'
   | 'borderNone'
+  | 'mergeCells'
+  | 'unmergeCells'
   | 'sortAscending'
   | 'sortDescending'
   | 'hideColumns'
@@ -222,6 +224,8 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   borderBottom: { id: 'borderBottom', label: 'Bottom border' },
   borderThickBottom: { id: 'borderThickBottom', label: 'Thick bottom border' },
   borderNone: { id: 'borderNone', label: 'No borders' },
+  mergeCells: { id: 'mergeCells', label: 'Merge cells', accelerator: { key: 'm', ctrl: true, alt: true } },
+  unmergeCells: { id: 'unmergeCells', label: 'Unmerge', accelerator: { key: 'm', ctrl: true, alt: true, shift: true } },
 
   sortAscending: { id: 'sortAscending', label: 'Sort A to Z' },
   sortDescending: { id: 'sortDescending', label: 'Sort Z to A' },
@@ -407,6 +411,9 @@ export const MENUS: readonly MenuDefinition[] = [
       'borderBottom',
       'borderThickBottom',
       'borderNone',
+      SEPARATOR,
+      'mergeCells',
+      'unmergeCells',
       SEPARATOR,
       'clearFormat'
     ]

@@ -1,5 +1,6 @@
 import { formatWith, type CellFormat } from '../sheet/Format';
 import { Formats } from '../sheet/Formats';
+import { Merges } from '../sheet/Merges';
 import { Sheet } from '../sheet/Sheet';
 import { shiftIndex, type Shift } from '../sheet/Shift';
 
@@ -133,6 +134,7 @@ export class SheetDocument {
   /** How many rows and columns stay put while the rest scrolls. */
   frozenRows = 0;
   frozenColumns = 0;
+  readonly merges = new Merges();
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
@@ -466,6 +468,7 @@ export class SheetDocument {
     const hidden = [...this.hiddenRows];
     this.sheet.shift(shift);
     this.formats.shift(shift);
+    this.merges.shift(shift);
     this.columnWidths = shiftWidths(this.columnWidths, shift);
     // A hidden row is hidden by index, so it moves with the rows it
     // was among — an insert above a hidden row must not reveal it and

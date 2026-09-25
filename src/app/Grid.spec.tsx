@@ -551,3 +551,142 @@ describe('a frozen pane', () => {
     expect(a.width).toBe(cell.width);
   });
 });
+
+/**
+ * Merged cells, asserted as boxes.
+ *
+ * A merge is drawn by its anchor and by nothing else: the anchor is
+ * as wide as the columns it covers and as tall as the rows, and the
+ * cells underneath have no size at all. Boxes rather than properties,
+ * for the reason the frozen pane learned it.
+ */
+describe('merged cells', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount(document => {
+      for (let row = 0; row < 40; row++) {
+        for (let column = 0; column < 10; column++) {
+          document.setCell(row, column, `r${row}c${column}`);
+        }
+      }
+    });
+  });
+
+  async function merge(firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): Promise<void> {
+    h.service.setSelection(firstRow, firstColumn, lastRow, lastColumn);
+    h.service.mergeCells();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  it('makes the anchor as wide as the columns it covers', async () => {
+    await merge(1, 1, 1, 3);
+    expect(h.ui.getByRole('cell', { name: 'r1c1' })).toHaveVisibleBox({
+      x: GUTTER_WIDTH + COLUMN_WIDTH,
+      width: COLUMN_WIDTH * 3,
+      height: ROW_HEIGHT
+    });
+  });
+
+  it('makes the anchor as tall as the rows it covers', async () => {
+    await merge(1, 3, 1, 1);
+    expect(h.ui.getByRole('cell', { name: 'r1c1' })).toHaveVisibleBox({
+      width: COLUMN_WIDTH,
+      height: ROW_HEIGHT * 3
+    });
+  });
+
+  /** The covered cells lose what they held, so there is nothing to draw. */
+  it('empties the cells it covered', async () => {
+    await merge(1, 1, 1, 3);
+    expect(h.ui.queryByRole('cell', { name: 'r1c2' })).toBeNull();
+    expect(h.document.sheet.input(1, 2)).toBe('');
+    // And the one outside it is untouched.
+    expect(h.document.sheet.input(1, 4)).toBe('r1c4');
+  });
+
+  /** Destructive, and in one step of undo. */
+  it('gives every covered cell back on one press of ctrl-Z', async () => {
+    await merge(1, 1, 1, 3);
+    h.service.undo();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.document.sheet.input(1, 2)).toBe('r1c2');
+    expect(h.document.sheet.input(1, 3)).toBe('r1c3');
+  });
+
+  it('keeps the column after a merge where the window put it', async () => {
+    await merge(1, 1, 1, 3);
+    expect(h.ui.getByRole('cell', { name: 'r1c4' })).toHaveVisibleBox({
+      x: GUTTER_WIDTH + COLUMN_WIDTH * 4
+    });
+    // And the row below is undisturbed.
+    expect(h.ui.getByRole('cell', { name: 'r2c1' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH });
+  });
+
+  it('takes a merge apart again', async () => {
+    await merge(1, 1, 1, 3);
+    h.service.setSelection(1, 1, 1, 1);
+    h.service.unmergeCells();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.getByRole('cell', { name: 'r1c1' })).toHaveVisibleBox({ width: COLUMN_WIDTH });
+  });
+
+  /**
+   * The window reaching back for an anchor it has scrolled past,
+   * which is what `extendRange` is for: a merge drawn by a cell
+   * outside the window is a merge that disappears at the edge of the
+   * screen.
+   */
+  it('keeps drawing a merge whose anchor has scrolled out of view', async () => {
+    await merge(1, 1, 0, 8);
+    h.ui.fireEvent.wheel({ x: 300, y: 200, deltaX: COLUMN_WIDTH * 4 });
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    // The anchor is off to the left and still drawn, nine columns wide.
+    expect(h.ui.getByRole('cell', { name: 'r1c0' })).toHaveVisibleBox({ width: COLUMN_WIDTH * 9 });
+  });
+
+  /**
+   * `cellAt` is a division over the offsets and has never heard of a
+   * merge, so a sweep across one reports the cells underneath — which
+   * are not drawn and hold nothing. The merge is what is there.
+   */
+  it('sweeps to the merge rather than to the cells under it', async () => {
+    await merge(1, 2, 1, 2);
+    const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
+    const at = (row: number, column: number) => ({
+      x: grid.x + GUTTER_WIDTH + column * COLUMN_WIDTH + 4,
+      y: grid.y + HEADER_HEIGHT + row * ROW_HEIGHT + 4
+    });
+
+    // Press in an untouched cell, then drag into the merge — onto
+    // what would be its *second* row and column, which is a cell
+    // nobody can see.
+    const start = at(5, 5);
+    const end = at(2, 2);
+    h.ui.fireEvent.pointerDown(start.x, start.y, { buttons: 1 });
+    h.ui.fireEvent.pointerMove(start.x - 8, start.y - 8, { buttons: 1 });
+    h.ui.fireEvent.pointerMove(end.x, end.y, { buttons: 1 });
+    h.ui.fireEvent.pointerUp(end.x, end.y);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    // The far corner is the merge's anchor, not the covered cell the
+    // pointer is literally over.
+    expect(h.document.selection.row).toBe(1);
+    expect(h.document.selection.column).toBe(1);
+  });
+});

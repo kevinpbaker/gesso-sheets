@@ -391,6 +391,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'borderNone':
         sheet.send.setBorders('none', 0, '');
         break;
+      case 'mergeCells':
+        sheet.send.mergeCells();
+        break;
+      case 'unmergeCells':
+        sheet.send.unmergeCells();
+        break;
       case 'sortAscending':
         sortBy(true);
         break;
