@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { cellKey } from '../sheet/A1';
-import { Sheet } from '../sheet/Sheet';
+import { SheetDocument } from './SheetDocument';
 import { at, DEFAULT_FIND, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 
-function sheetWith(cells: Record<string, string>): Sheet {
-  const sheet = new Sheet();
+function sheetWith(cells: Record<string, string>): SheetDocument {
+  const document = new SheetDocument();
   for (const [address, input] of Object.entries(cells)) {
     const column = address.charCodeAt(0) - 65;
     const row = Number(address.slice(1)) - 1;
-    sheet.setCell(row, column, input);
+    document.sheet.setCell(row, column, input);
   }
-  sheet.recalculate();
-  return sheet;
+  document.sheet.recalculate();
+  return document;
 }
 
 const options = (over: Partial<FindOptions> = {}): FindOptions => ({ ...DEFAULT_FIND, ...over });
@@ -74,7 +74,7 @@ describe('finding', () => {
    */
   it('does not search past the end of the sheet', () => {
     const withChain = sheetWith({ A1: 'x' });
-    withChain.setCell(500, 0, 'x');
+    withChain.sheet.setCell(500, 0, 'x');
     expect(findMatches(withChain, 'x', options(), 100, 26).map(at)).toEqual([{ row: 0, column: 0 }]);
   });
 });
@@ -129,5 +129,38 @@ describe('replacing', () => {
 
   it('leaves a cell alone when the query is empty', () => {
     expect(replaceIn('anything', '', 'x', options())).toBe('anything');
+  });
+});
+
+/**
+ * Searching values has to find what is on the screen. Somebody
+ * looking at `$1,234.50` and searching for `1,234` is searching for
+ * what they can see, and a search that went to the raw number would
+ * tell them it is not there.
+ */
+describe('searching what the format shows', () => {
+  it('finds a number by how it is displayed', () => {
+    const document = sheetWith({ A1: '1234.5' });
+    document.setFormat(0, 0, {
+      number: { kind: 'currency', places: 2, symbol: '$' },
+      paint: {
+        bold: false,
+        italic: false,
+        underline: false,
+        fontSize: 0,
+        color: '',
+        fill: '',
+        align: 'auto',
+        wrap: false
+      }
+    });
+
+    expect(findMatches(document, '1,234.50', options({ inFormulas: false }), 100, 26).map(at)).toEqual([
+      { row: 0, column: 0 }
+    ]);
+    // And the raw value is what the formula search sees, unchanged.
+    expect(findMatches(document, '1234.5', options({ inFormulas: true }), 100, 26).map(at)).toEqual([
+      { row: 0, column: 0 }
+    ]);
   });
 });

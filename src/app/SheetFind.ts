@@ -1,5 +1,17 @@
 import { cellKey, columnOf, rowOf } from '../sheet/A1';
-import type { Sheet } from '../sheet/Sheet';
+
+/**
+ * What a search needs, which is less than a document.
+ *
+ * `display` and not `Sheet.display`: searching values has to find
+ * what is *on the screen*, and since Phase 9 that depends on the
+ * cell's number format — somebody who can see `$1,234.50` and
+ * searches for `1,234` has to find it.
+ */
+export interface Searchable {
+  entries(): Generator<{ row: number; column: number; input: string }>;
+  display(row: number, column: number): string;
+}
 
 /**
  * Find and replace, on the application worker.
@@ -41,7 +53,7 @@ export const DEFAULT_FIND: FindOptions = { matchCase: false, wholeCell: false, i
  * reads them in, which is the order Enter walks them in.
  */
 export function findMatches(
-  sheet: Sheet,
+  sheet: Searchable,
   query: string,
   options: FindOptions,
   rowCount: number,

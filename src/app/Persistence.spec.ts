@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { DEFAULT_FORMAT, GENERAL, PLAIN, type CellFormat } from '../sheet/Format';
+
 import { COLUMN_WIDTH } from './dimensions';
 import { applySnapshot, parseSnapshot, snapshotOf, type SheetSnapshot } from './SheetFile';
 import { SheetDocument } from './SheetDocument';
@@ -60,7 +62,14 @@ describe('what is written down', () => {
    */
   it('does not land on the undo stack', () => {
     const document = new SheetDocument();
-    applySnapshot(document, { version: 1, cells: [{ row: 0, column: 0, input: 'a' }], columnWidths: [] });
+    applySnapshot(document, {
+      version: 2,
+      cells: [{ row: 0, column: 0, input: 'a' }],
+      palette: [],
+      formats: [],
+      regions: { sheet: 0, rows: [], columns: [] },
+      columnWidths: []
+    });
     expect(document.canUndo).toBe(false);
   });
 });
@@ -68,8 +77,11 @@ describe('what is written down', () => {
 describe('reading a file that is not what this build writes', () => {
   it('reads one that is', () => {
     const snapshot: SheetSnapshot = {
-      version: 1,
+      version: 2,
       cells: [{ row: 1, column: 2, input: '=A1' }],
+      palette: [],
+      formats: [],
+      regions: { sheet: 0, rows: [], columns: [] },
       columnWidths: [80, 90]
     };
     const read = parseSnapshot(JSON.stringify(snapshot), 4);
@@ -159,8 +171,11 @@ describe('a sheet that is opened again', () => {
 
   it('does not seed over a sheet that exists', async () => {
     const repository = new InMemorySheetRepository({
-      version: 1,
+      version: 2,
       cells: [{ row: 0, column: 0, input: 'mine' }],
+      palette: [],
+      formats: [],
+      regions: { sheet: 0, rows: [], columns: [] },
       columnWidths: []
     });
     const { service, document } = harness(repository);
@@ -220,5 +235,106 @@ describe('undoing and then closing the tab', () => {
     await second.service.restore();
 
     expect(second.document.sheet.input(0, 0)).toBe('');
+  });
+});
+
+/**
+ * Phase 9 added formats to the file, which is what `version` was put
+ * there for in Phase 6 — the file that needs a version field is the
+ * one already on somebody's disk.
+ */
+describe('formats in the file', () => {
+  const bold: CellFormat = { number: GENERAL, paint: { ...PLAIN, bold: true } };
+  const money: CellFormat = { number: { kind: 'currency', places: 2, symbol: '$' }, paint: PLAIN };
+
+  it('writes the palette and the cells pointing into it', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '1234.5');
+    document.setFormat(0, 0, money);
+    document.setFormat(1, 1, bold);
+
+    const snapshot = snapshotOf(document, [], 100);
+    expect(snapshot.version).toBe(2);
+    expect(snapshot.palette).toHaveLength(3);
+    expect(snapshot.formats).toHaveLength(2);
+  });
+
+  it('brings a formatted sheet back exactly as it was', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '1234.5');
+    document.setFormat(0, 0, money);
+    document.setFormat(2, 0, bold);
+
+    const loaded = new SheetDocument();
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+
+    expect(loaded.display(0, 0)).toBe('$1,234.50');
+    expect(loaded.formatAt(2, 0).paint.bold).toBe(true);
+    expect(loaded.formatAt(5, 5)).toEqual(DEFAULT_FORMAT);
+  });
+
+  /**
+   * Formats have to be restored before inputs are read. The other way
+   * round, `007` in a Text cell is parsed as the number seven and
+   * then formatted as text, and the leading zeros somebody saved are
+   * gone by the time the format says to keep them.
+   */
+  it('keeps what a Text cell was holding', () => {
+    const document = new SheetDocument();
+    document.setFormat(0, 0, { number: { kind: 'text' }, paint: PLAIN });
+    document.setCell(0, 0, '007');
+    expect(document.display(0, 0)).toBe('007');
+
+    const loaded = new SheetDocument();
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+    expect(loaded.display(0, 0)).toBe('007');
+  });
+
+  /** A v1 file is a v2 file with no formats in it, so it still opens. */
+  it('reads a file written before formats existed', () => {
+    const read = parseSnapshot(
+      JSON.stringify({ version: 1, cells: [{ row: 0, column: 0, input: '5' }], columnWidths: [] }),
+      4
+    );
+    expect(read?.cells).toEqual([{ row: 0, column: 0, input: '5' }]);
+    expect(read?.formats).toEqual([]);
+    expect(read?.palette).toHaveLength(1);
+  });
+
+  /**
+   * A file is outside the program. A palette entry missing a field
+   * would otherwise reach the render worker as `undefined` and be
+   * drawn as nothing at all, so each field falls back rather than the
+   * cell being lost.
+   */
+  it('repairs a palette entry it only half understands', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        palette: [null, { number: { kind: 'currency' }, paint: { bold: true } }],
+        formats: [{ row: 0, column: 0, id: 1 }],
+        columnWidths: []
+      }),
+      4
+    );
+    const entry = read!.palette[1];
+    expect(entry.paint.bold).toBe(true);
+    expect(entry.paint.align).toBe('auto');
+    expect(entry.number).toEqual({ kind: 'currency', places: 2, symbol: '$' });
+  });
+
+  it('drops a cell pointing at a palette entry that is not there', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        palette: [],
+        formats: [{ row: 0, column: 0, id: 9 }],
+        columnWidths: []
+      }),
+      4
+    );
+    expect(read?.formats).toEqual([]);
   });
 });

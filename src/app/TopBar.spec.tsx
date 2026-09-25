@@ -132,7 +132,7 @@ describe('the top bar from the keyboard', () => {
 
       await press('ArrowRight');
       expect(h.ui.queryByRole('menu', { name: 'Edit' })).toBeNull();
-      expect(h.ui.getByRole('menu', { name: 'Data' })).toBeDefined();
+      expect(h.ui.getByRole('menu', { name: 'Format' })).toBeDefined();
 
       await press('ArrowLeft');
       expect(h.ui.getByRole('menu', { name: 'Edit' })).toBeDefined();
@@ -422,5 +422,213 @@ describe('the top bar from the keyboard', () => {
       expect(h.ui.getByRole('dialog')).toBeDefined();
       expect(h.ui.getByText(/Ctrl\+V/)).toBeDefined();
     });
+  });
+});
+
+/**
+ * Formatting from the keyboard — Phase 9's half of the chrome.
+ *
+ * Same rule as the rest of this file: no pointer event anywhere. A
+ * toolbar you can see and cannot reach is a toolbar half the people
+ * using this cannot reach at all.
+ */
+describe('formatting from the keyboard', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  async function press(key: string, modifiers: Partial<UiKeyModifiers> = {}): Promise<void> {
+    h.ui.fireEvent.press(key, modifiers);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function reachTheGrid(): Promise<void> {
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 10) {
+        throw new Error(`Tab never reached the grid; it stopped on ${h.ui.debug()}`);
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+  }
+
+  beforeEach(async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, '1234.5');
+      d.setCell(1, 0, '0.256');
+      d.setCell(0, 1, 'Total');
+    });
+    await reachTheGrid();
+  });
+
+  const paintOf = (row: number, column: number) => h.document.formatAt(row, column).paint;
+
+  it('makes the selection bold on Ctrl+B, and plain again', async () => {
+    await press('b', { ctrl: true });
+    expect(paintOf(0, 0).bold).toBe(true);
+    await press('b', { ctrl: true });
+    expect(paintOf(0, 0).bold).toBe(false);
+  });
+
+  it('applies to the whole selection, not just the active cell', async () => {
+    await press('ArrowDown', { shift: true });
+    await press('i', { ctrl: true });
+    expect(paintOf(0, 0).italic).toBe(true);
+    expect(paintOf(1, 0).italic).toBe(true);
+  });
+
+  /**
+   * The bug every naive formatting model has: a change is relative to
+   * what each cell already holds, so Italic must not undo Bold and
+   * Bold must not undo the currency symbol somebody chose.
+   */
+  it('leaves alone what it was not asked about', async () => {
+    await press('b', { ctrl: true });
+    await press('$', { ctrl: true, shift: true });
+    await press('i', { ctrl: true });
+
+    const format = h.document.formatAt(0, 0);
+    expect(format.paint.bold).toBe(true);
+    expect(format.paint.italic).toBe(true);
+    expect(format.number.kind).toBe('currency');
+  });
+
+  it('formats a number as currency and shows it that way', async () => {
+    await press('4', { ctrl: true, shift: true });
+    expect(h.document.display(0, 0)).toBe('$1,234.50');
+    expect(h.ui.getByText('$1,234.50')).toBeDefined();
+  });
+
+  it('formats a number as a percentage', async () => {
+    await press('ArrowDown');
+    await press('5', { ctrl: true, shift: true });
+    expect(h.document.display(1, 0)).toBe('26%');
+  });
+
+  it('adds and removes decimal places', async () => {
+    await press('ArrowDown');
+    await press('5', { ctrl: true, shift: true });
+    await press(']', { ctrl: true });
+    expect(h.document.display(1, 0)).toBe('25.6%');
+    await press('[', { ctrl: true });
+    expect(h.document.display(1, 0)).toBe('26%');
+  });
+
+  /** Formatting a range must never make what is in it unreadable. */
+  it('leaves text readable under a number format', async () => {
+    await press('ArrowRight');
+    await press('4', { ctrl: true, shift: true });
+    expect(h.document.display(0, 1)).toBe('Total');
+  });
+
+  it('aligns, and toggles back to automatic', async () => {
+    await press('e', { ctrl: true, shift: true });
+    expect(paintOf(0, 0).align).toBe('center');
+    await press('e', { ctrl: true, shift: true });
+    expect(paintOf(0, 0).align).toBe('auto');
+  });
+
+  /**
+   * Text is the one format that changes what *typing* means. `007` in
+   * a Text cell stays `007`, which is the whole reason it exists.
+   */
+  it('keeps the leading zeros in a Text cell', async () => {
+    await press('ArrowDown');
+    await press('ArrowDown');
+    await press('7', { ctrl: true, shift: true });
+    await press('0');
+    h.ui.fireEvent.type('07');
+    await h.ui.settle();
+    await press('Enter');
+
+    expect(h.document.display(2, 0)).toBe('007');
+  });
+
+  it('puts a whole range back to plain in one step of undo', async () => {
+    await press('ArrowDown', { shift: true });
+    await press('b', { ctrl: true });
+    expect(paintOf(1, 0).bold).toBe(true);
+
+    await press('z', { ctrl: true });
+    expect(paintOf(0, 0).bold).toBe(false);
+    expect(paintOf(1, 0).bold).toBe(false);
+  });
+
+  it('clears formatting', async () => {
+    await press('b', { ctrl: true });
+    await press('4', { ctrl: true, shift: true });
+    await press('\\', { ctrl: true });
+
+    expect(paintOf(0, 0).bold).toBe(false);
+    expect(h.document.display(0, 0)).toBe('1234.5');
+  });
+
+  it('shows the toolbar pressed for the cell the selection is on', async () => {
+    await press('b', { ctrl: true });
+    expect(h.ui.getByRole('button', { name: 'Bold', states: ['pressed'] })).toBeDefined();
+
+    await press('ArrowRight');
+    expect(h.ui.queryByRole('button', { name: 'Bold', states: ['pressed'] })).toBeNull();
+  });
+});
+
+/**
+ * The toolbar is one tab stop with the arrows moving inside it.
+ *
+ * As fifteen stops it put the grid fifteen presses from the keyboard,
+ * and the specs said so before a person could: `Tab never reached the
+ * grid` is what Phase 9 got for adding a Format section.
+ */
+describe('the toolbar', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount(d => d.setCell(0, 0, '5'));
+  });
+
+  it('is one tab stop, not one per button', async () => {
+    const stops: string[] = [];
+    for (let press = 0; press < 5; press++) {
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+      const node = h.ui.runtime.input.focus.focusedNode;
+      stops.push(node === null ? 'nothing' : String(node.properties.get('role') ?? 'none'));
+      if (node === h.ui.getByRole('grid')) {
+        break;
+      }
+    }
+    expect(stops).toEqual(['menubar', 'toolbar', 'textbox', 'textbox', 'grid']);
+  });
+
+  it('runs the button the arrows land on', async () => {
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
+    expect(h.ui.runtime.input.focus.focusedNode).toBe(h.ui.getByRole('toolbar'));
+
+    // Undo, Redo, then Bold.
+    for (let step = 0; step < 2; step++) {
+      h.ui.fireEvent.press('ArrowRight');
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('Enter');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.document.formatAt(0, 0).paint.bold).toBe(true);
   });
 });

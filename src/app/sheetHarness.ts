@@ -105,10 +105,15 @@ export interface Harness {
   window(): SheetWindow;
 }
 
-export function attach(options: { budget?: number } = {}): Harness {
+export function attach(options: { budget?: number; rowCount?: number; columnCount?: number } = {}): Harness {
   const document = new SheetDocument();
   const clock = new ManualSchedule();
-  const service = new SheetService(document, { schedule: clock.schedule, budget: options.budget ?? 2_000 });
+  const service = new SheetService(document, {
+    schedule: clock.schedule,
+    budget: options.budget ?? 2_000,
+    rowCount: options.rowCount,
+    columnCount: options.columnCount
+  });
   const port = new RecordingPort();
   provide(Sheet, sheetChannel(service).source as never, port);
   // The replica asks rather than waiting to be pushed to; this is that.

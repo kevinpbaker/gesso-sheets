@@ -21,7 +21,10 @@ export function sheetChannel(service: SheetService): ServedChannel {
       status: service.status,
       clipboard: service.clipboard,
       stats: service.selectionStats,
-      find: service.findView
+      find: service.findView,
+      formats: service.formats,
+      palette: service.palette,
+      activeFormat: service.activeFormat
     },
     commands: {
       setViewport: (firstRow, lastRow, firstColumn, lastColumn) =>
@@ -43,7 +46,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       findStep: forward => service.findStep(forward),
       replaceOne: replacement => service.replaceOne(replacement),
       replaceAll: replacement => service.replaceAll(replacement),
-      clearFind: () => service.clearFind()
+      clearFind: () => service.clearFind(),
+      format: change => service.format(change),
+      clearFormat: () => service.clearFormat()
     }
   });
 }

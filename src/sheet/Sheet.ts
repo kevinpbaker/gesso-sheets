@@ -65,20 +65,29 @@ export class Sheet {
    * Nothing is evaluated here. The cell's own value is settled if it
    * is a literal, its formula is parsed if it is one, and everything
    * that reads it is marked for `recalculate`.
+   *
+   * `asText` is the Text number format reaching back into parsing,
+   * and it is the only place a format touches a value. A cell
+   * formatted as Text holds `007` as the three characters somebody
+   * typed rather than the number seven, which is the whole reason
+   * that format exists; a Text format that changed only the display
+   * would be a menu item that does nothing anybody wanted. The
+   * decision is the document's, because the document is what owns
+   * both halves — see `SheetDocument.setCell`.
    */
-  setCell(row: number, column: number, input: string): void {
+  setCell(row: number, column: number, input: string, asText = false): void {
     const key = cellKey(row, column);
     if (input === '') {
       this.clearCell(row, column);
       return;
     }
 
-    if (input.startsWith('=')) {
+    if (input.startsWith('=') && !asText) {
       this.writeFormula(key, input);
     } else {
       this.graph.clearPrecedents(key);
       this.dirty.delete(key);
-      this.cells.set(key, { input, formula: null, value: literalValue(input) });
+      this.cells.set(key, { input, formula: null, value: asText ? input : literalValue(input) });
     }
     this.markDependentsDirty(key);
   }
@@ -230,7 +239,16 @@ export class Sheet {
     return this.cells.get(cellKey(row, column))?.input ?? '';
   }
 
-  /** What the screen shows, and what Phase 2 puts on the wire. */
+  /**
+   * The value as general text.
+   *
+   * **Not what the screen shows** — that was true until Phase 9 and
+   * is not any more. A cell's display string depends on its number
+   * format as well as its value, and a format is not the sheet's; ask
+   * `SheetDocument.display` for what a person sees. This is the
+   * unformatted answer, which is what a `General` cell shows and what
+   * everything comparing values as text wants.
+   */
   display(row: number, column: number): string {
     return formatValue(this.value(row, column));
   }

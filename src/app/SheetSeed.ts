@@ -1,3 +1,4 @@
+import { GENERAL, PLAIN, type CellFormat } from '../sheet/Format';
 import type { SheetDocument } from './SheetDocument';
 
 /**
@@ -47,6 +48,32 @@ export function seed(document: SheetDocument): void {
   document.setCell(10, 1, '=COUNT(D2:D6)');
   document.setCell(11, 0, 'Healthy');
   document.setCell(11, 1, '=IF(B7>700,"yes","no")');
+
+  // Formatted from Phase 9 onwards, because a sheet that opens with
+  // no formatting in it is a demonstration of the format axis that
+  // demonstrates nothing — and because the proof needs a formatted
+  // sheet to scroll over.
+  const header: CellFormat = {
+    number: GENERAL,
+    paint: { ...PLAIN, bold: true, fill: '#eef2f7', align: 'center' }
+  };
+  const money: CellFormat = {
+    number: { kind: 'currency', places: 2, symbol: '$' },
+    paint: PLAIN
+  };
+  const share: CellFormat = { number: { kind: 'number', places: 1, thousands: false }, paint: PLAIN };
+  const total: CellFormat = { number: money.number, paint: { ...PLAIN, bold: true } };
+
+  for (let column = 0; column <= 4; column++) {
+    document.setFormat(0, column, header);
+  }
+  for (let row = 1; row <= 6; row++) {
+    document.setFormat(row, 2, money);
+    document.setFormat(row, 3, row === 6 ? total : money);
+    document.setFormat(row, 4, share);
+  }
+  document.setFormat(6, 0, { number: GENERAL, paint: { ...PLAIN, bold: true } });
+  document.setFormat(6, 1, { number: GENERAL, paint: { ...PLAIN, bold: true } });
 
   document.setSelection(1, 1, 1, 1);
 }

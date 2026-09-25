@@ -34,7 +34,25 @@ export type CommandId =
   | 'gotoCell'
   | 'recalculate'
   | 'shortcuts'
-  | 'menuBar';
+  | 'menuBar'
+  | 'bold'
+  | 'italic'
+  | 'underline'
+  | 'alignLeft'
+  | 'alignCenter'
+  | 'alignRight'
+  | 'wrap'
+  | 'formatGeneral'
+  | 'formatNumber'
+  | 'formatCurrency'
+  | 'formatPercent'
+  | 'formatScientific'
+  | 'formatDate'
+  | 'formatTime'
+  | 'formatText'
+  | 'moreDecimals'
+  | 'fewerDecimals'
+  | 'clearFormat';
 
 /**
  * How long a chain the proof command builds.
@@ -60,6 +78,23 @@ export interface Accelerator {
   readonly key: string;
   readonly ctrl?: boolean;
   readonly shift?: boolean;
+  /**
+   * What the browser actually reports for this key with shift held.
+   *
+   * A keyboard event's `key` is the character produced, not the key
+   * pressed: hold shift and press 4 and a browser says `$`. So the
+   * number-format accelerators — Ctrl+Shift+1 through 7, which every
+   * spreadsheet binds and which this table would otherwise advertise
+   * and never answer — are matched by either. The label is still
+   * written from `key`, because `Ctrl+Shift+4` is what people have
+   * learned and `Ctrl+Shift+$` is what a bug report looks like.
+   *
+   * It is layout-dependent and unavoidably so; `code` would be the
+   * layout-independent answer and is not on `UiKeyboardEvent`. A
+   * layout where neither character is produced loses the shortcut and
+   * keeps the menu item, which is the right way round to fail.
+   */
+  readonly shifted?: string;
 }
 
 export interface Command {
@@ -105,7 +140,63 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     accelerator: { key: 'F9' }
   },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
-  menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true }
+  menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
+
+  bold: { id: 'bold', label: 'Bold', accelerator: { key: 'b', ctrl: true } },
+  italic: { id: 'italic', label: 'Italic', accelerator: { key: 'i', ctrl: true } },
+  underline: { id: 'underline', label: 'Underline', accelerator: { key: 'u', ctrl: true } },
+  alignLeft: { id: 'alignLeft', label: 'Align left', accelerator: { key: 'l', ctrl: true, shift: true } },
+  alignCenter: { id: 'alignCenter', label: 'Align centre', accelerator: { key: 'e', ctrl: true, shift: true } },
+  alignRight: { id: 'alignRight', label: 'Align right', accelerator: { key: 'r', ctrl: true, shift: true } },
+  wrap: { id: 'wrap', label: 'Wrap text', accelerator: { key: 'w', ctrl: true, shift: true } },
+  /**
+   * The number formats take Ctrl+Shift+1 through 7, which is what
+   * every spreadsheet binds them to and the one part of this table
+   * nobody has to learn.
+   */
+  formatGeneral: {
+    id: 'formatGeneral',
+    label: 'General',
+    accelerator: { key: '`', ctrl: true, shift: true, shifted: '~' }
+  },
+  formatNumber: {
+    id: 'formatNumber',
+    label: 'Number',
+    accelerator: { key: '1', ctrl: true, shift: true, shifted: '!' }
+  },
+  formatCurrency: {
+    id: 'formatCurrency',
+    label: 'Currency',
+    accelerator: { key: '4', ctrl: true, shift: true, shifted: '$' }
+  },
+  formatPercent: {
+    id: 'formatPercent',
+    label: 'Percent',
+    accelerator: { key: '5', ctrl: true, shift: true, shifted: '%' }
+  },
+  formatScientific: {
+    id: 'formatScientific',
+    label: 'Scientific',
+    accelerator: { key: '6', ctrl: true, shift: true, shifted: '^' }
+  },
+  formatDate: {
+    id: 'formatDate',
+    label: 'Date',
+    accelerator: { key: '3', ctrl: true, shift: true, shifted: '#' }
+  },
+  formatTime: {
+    id: 'formatTime',
+    label: 'Time',
+    accelerator: { key: '2', ctrl: true, shift: true, shifted: '@' }
+  },
+  formatText: {
+    id: 'formatText',
+    label: 'Plain text',
+    accelerator: { key: '7', ctrl: true, shift: true, shifted: '&' }
+  },
+  moreDecimals: { id: 'moreDecimals', label: 'More decimal places', accelerator: { key: ']', ctrl: true } },
+  fewerDecimals: { id: 'fewerDecimals', label: 'Fewer decimal places', accelerator: { key: '[', ctrl: true } },
+  clearFormat: { id: 'clearFormat', label: 'Clear formatting', accelerator: { key: '\\', ctrl: true } }
 };
 
 /** A rule drawn across a menu. Not choosable, and not a tab stop. */
@@ -130,12 +221,15 @@ export interface MenuDefinition {
 /**
  * The bar, as it stands after Phase 8.
  *
- * Three menus and not the seven a spreadsheet ends up with, because
- * the other four would be menus of things that do not work yet. File
- * arrives with Phase 16, which is when there is a file to open;
- * Insert and Format arrive with Phases 10 and 9. A menu of disabled
- * items is a worse answer than no menu: it advertises, and then it
- * refuses.
+ * Four menus and not the seven a spreadsheet ends up with, because
+ * the other three would be menus of things that do not work yet.
+ * File arrives with Phase 16, which is when there is a file to open,
+ * and Insert with Phase 10. A menu of disabled items is a worse
+ * answer than no menu: it advertises, and then it refuses.
+ *
+ * Format's mnemonic is `o` rather than `f`, because File is coming
+ * and will want `f` — and a mnemonic that moves once people have
+ * learned it is worse than one that was never the obvious letter.
  */
 export const MENUS: readonly MenuDefinition[] = [
   {
@@ -156,6 +250,35 @@ export const MENUS: readonly MenuDefinition[] = [
       'find',
       'replace',
       'gotoCell'
+    ]
+  },
+  {
+    id: 'format',
+    label: 'Format',
+    mnemonic: 'o',
+    entries: [
+      'bold',
+      'italic',
+      'underline',
+      SEPARATOR,
+      'alignLeft',
+      'alignCenter',
+      'alignRight',
+      'wrap',
+      SEPARATOR,
+      'formatGeneral',
+      'formatNumber',
+      'formatCurrency',
+      'formatPercent',
+      'formatScientific',
+      'formatDate',
+      'formatTime',
+      'formatText',
+      SEPARATOR,
+      'moreDecimals',
+      'fewerDecimals',
+      SEPARATOR,
+      'clearFormat'
     ]
   },
   {
@@ -207,7 +330,7 @@ export function commandFor(key: string, modifiers: KeyModifiers): CommandId | nu
       continue;
     }
     if (
-      matchesKey(wanted.key, key) &&
+      (matchesKey(wanted.key, key) || (wanted.shifted !== undefined && wanted.shifted === key)) &&
       (wanted.ctrl === true) === accel &&
       (wanted.shift === true) === shift
     ) {

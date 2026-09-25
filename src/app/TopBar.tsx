@@ -1,6 +1,13 @@
 import { combineLatest, map, type Observable } from 'rxjs';
 
-import { editorFor, percent, type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } from 'gesso-core';
+import {
+  editorFor,
+  percent,
+  type UiKeyboardEvent,
+  type UiNode,
+  type UiSemanticState,
+  type UiTextChangeEvent
+} from 'gesso-core';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { FindBar } from './FindBar';
@@ -8,6 +15,9 @@ import { MenuBar } from './MenuBar';
 import { NameBox } from './NameBox';
 import { Sheet } from './SheetContract';
 import { COMMANDS, STRESS_CELLS, type CommandId } from './SheetCommands';
+import type { SheetFormatChange } from './SheetContract';
+import type { CellPaint } from '../sheet/Format';
+import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
 import { PasteHint, Shortcuts } from './Shortcuts';
@@ -39,6 +49,54 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const focus = ctx.inject(FocusService);
   const edit = inputs.editing.value;
   const status = sheet.view.status;
+
+  /** A property of the active cell's paint, as something to bind. */
+  const on = (read: (paint: CellPaint) => boolean): Observable<boolean> =>
+    sheet.view.activeFormat.pipe(map(current => read(current.paint)));
+
+  /**
+   * The toolbar, as data.
+   *
+   * A list rather than a row of elements so the toolbar can own its
+   * own keyboard — see `Toolbar.tsx` — and so that what each button
+   * does is the same `run` the menu and the accelerators go through.
+   * Three ways to reach a command and one place that performs it.
+   */
+  const tools: readonly ToolbarItem[] = [
+    { id: 'undo', text: 'Undo', onRun: () => run('undo'), enabled: status.pipe(map(s => s.canUndo)) },
+    { id: 'redo', text: 'Redo', onRun: () => run('redo'), enabled: status.pipe(map(s => s.canRedo)) },
+    { id: 'bold', text: 'B', label: 'Bold', weight: 'bold', startsGroup: true, pressed: on(p => p.bold), onRun: () => run('bold') },
+    { id: 'italic', text: 'I', label: 'Italic', pressed: on(p => p.italic), onRun: () => run('italic') },
+    { id: 'underline', text: 'U', label: 'Underline', pressed: on(p => p.underline), onRun: () => run('underline') },
+    {
+      id: 'alignLeft',
+      text: '\u258f\u2261',
+      label: 'Align left',
+      startsGroup: true,
+      pressed: on(p => p.align === 'start'),
+      onRun: () => run('alignLeft')
+    },
+    {
+      id: 'alignCenter',
+      text: '\u2263',
+      label: 'Align centre',
+      pressed: on(p => p.align === 'center'),
+      onRun: () => run('alignCenter')
+    },
+    {
+      id: 'alignRight',
+      text: '\u2261\u2595',
+      label: 'Align right',
+      pressed: on(p => p.align === 'end'),
+      onRun: () => run('alignRight')
+    },
+    { id: 'wrap', text: '\u21b5', label: 'Wrap text', pressed: on(p => p.wrap), onRun: () => run('wrap') },
+    { id: 'currency', text: '$', label: 'Currency', startsGroup: true, onRun: () => run('formatCurrency') },
+    { id: 'percent', text: '%', label: 'Percent', onRun: () => run('formatPercent') },
+    { id: 'fewerDecimals', text: '.0\u2190', label: 'Fewer decimal places', onRun: () => run('fewerDecimals') },
+    { id: 'moreDecimals', text: '.00\u2192', label: 'More decimal places', onRun: () => run('moreDecimals') },
+    { id: 'recalculate', text: COMMANDS.recalculate.label, startsGroup: true, onRun: () => run('recalculate') }
+  ];
 
   const finding = internalState<Finding>('closed');
   const shortcutsOpen = internalState(false);
@@ -137,6 +195,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     }
   };
 
+  /** The active cell's paint, read without a round trip. */
+  const paint = () => sheet.view.activeFormat.value.paint;
+
+  const format = (change: SheetFormatChange): void => sheet.send.format(change);
+
   const run = (id: CommandId): void => {
     switch (id) {
       case 'undo':
@@ -195,6 +258,69 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           focus.focus(menuBarNode);
         }
         return;
+      /**
+       * The three that toggle rather than set.
+       *
+       * Read off the *active cell*, because a toolbar has one Bold
+       * button and a selection can hold both. Every spreadsheet
+       * answers this from the active cell and this one does too: if
+       * the cell you are on is bold, the button turns the selection
+       * plain; if it is not, the button turns it bold.
+       */
+      case 'bold':
+        format({ bold: !paint().bold });
+        break;
+      case 'italic':
+        format({ italic: !paint().italic });
+        break;
+      case 'underline':
+        format({ underline: !paint().underline });
+        break;
+      case 'wrap':
+        format({ wrap: !paint().wrap });
+        break;
+      case 'alignLeft':
+        format({ align: paint().align === 'start' ? 'auto' : 'start' });
+        break;
+      case 'alignCenter':
+        format({ align: paint().align === 'center' ? 'auto' : 'center' });
+        break;
+      case 'alignRight':
+        format({ align: paint().align === 'end' ? 'auto' : 'end' });
+        break;
+      case 'formatGeneral':
+        format({ number: { kind: 'general' } });
+        break;
+      case 'formatNumber':
+        format({ number: { kind: 'number', places: 2, thousands: true } });
+        break;
+      case 'formatCurrency':
+        format({ number: { kind: 'currency', places: 2, symbol: '$' } });
+        break;
+      case 'formatPercent':
+        format({ number: { kind: 'percent', places: 0 } });
+        break;
+      case 'formatScientific':
+        format({ number: { kind: 'scientific', places: 2 } });
+        break;
+      case 'formatDate':
+        format({ number: { kind: 'date', pattern: 'ymd' } });
+        break;
+      case 'formatTime':
+        format({ number: { kind: 'time', pattern: 'hm' } });
+        break;
+      case 'formatText':
+        format({ number: { kind: 'text' } });
+        break;
+      case 'moreDecimals':
+        format({ places: 1 });
+        break;
+      case 'fewerDecimals':
+        format({ places: -1 });
+        break;
+      case 'clearFormat':
+        sheet.send.clearFormat();
+        break;
     }
     edit.focusSheet();
   };
@@ -284,9 +410,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           ref={(node: UiNode | null) => (menuBarNode = node)}
         />
         <box flex={1} minWidth={0} />
-        {toolButton('Undo', status.pipe(map(s => s.canUndo)), () => run('undo'))}
-        {toolButton('Redo', status.pipe(map(s => s.canRedo)), () => run('redo'))}
-        {toolButton(COMMANDS.recalculate.label, undefined, () => run('recalculate'))}
+        <Toolbar items={tools} label="Formatting" />
         <box width={8} />
       </row>
       <box width={percent(100)} height={1} backgroundColor="border" />
@@ -314,26 +438,5 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       <Shortcuts open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
       <PasteHint open={pasteHint} onClose={() => (pasteHint.value = false)} />
     </column>
-  );
-}
-
-function toolButton(label: string, enabled: Observable<boolean> | undefined, onClick: () => void) {
-  return (
-    <button
-      onClick={onClick}
-      label={label}
-      paddingLeft={10}
-      paddingRight={10}
-      paddingTop={4}
-      paddingBottom={4}
-      marginLeft={4}
-      borderRadius={6}
-      backgroundColor="controlBackground"
-      borderColor="controlBorder"
-      borderWidth={1}
-      cursor="pointer"
-      opacity={enabled === undefined ? 1 : enabled.pipe(map(on => (on ? 1 : 0.4)))}>
-      <text text={label} fontSize={12} color="controlForeground" selectable={false} />
-    </button>
   );
 }

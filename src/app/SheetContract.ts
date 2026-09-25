@@ -1,5 +1,6 @@
 import { channel } from 'gesso-framework';
 
+import type { CellPaint } from '../sheet/Format';
 import { NO_STATS, type SheetStats } from './Statistics';
 
 /**
@@ -17,6 +18,13 @@ import { NO_STATS, type SheetStats } from './Statistics';
  * share a key. A keystroke moves `window` and `editor`; it does not
  * touch `geometry`, and the differ should not have to walk a hundred
  * column widths to find that out.
+ *
+ * Phase 9 adds two more again, and they are the clearest case in the
+ * file. `formats` is a palette *index* per visible cell and moves
+ * whenever the viewport does; `palette` is the table those indices
+ * point into and moves only when somebody formats something. Sharing
+ * one key, a scroll would put the whole palette back on the wire and
+ * a single click on Bold would put the whole window back.
  *
  * Phase 8 adds two more on the same argument. `stats` moves whenever
  * the selection does, which is on every arrow key; `find` moves only
@@ -130,6 +138,43 @@ export interface SheetFindView {
   readonly active: number;
 }
 
+/**
+ * Which format each visible cell has, as an index into `palette`.
+ *
+ * Keyed exactly as `window` is, and an index rather than a record for
+ * the reason the window is a map rather than an array: the shape
+ * decides the patch count more than the contents do. A column of
+ * fifty thousand cells formatted as currency is one palette entry
+ * and one small integer per cell *in view*; a record per cell would
+ * put a nested object on the wire for every cell in the window and
+ * give the differ one to walk on every publish, to discover that all
+ * of them are identical.
+ *
+ * A key that is absent is a cell with the default format, which is
+ * also what index 0 means — so an unformatted sheet sends nothing at
+ * all here, forever.
+ */
+export interface SheetFormatWindow {
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly firstColumn: number;
+  readonly lastColumn: number;
+  readonly cells: Readonly<Record<string, Readonly<Record<string, number>>>>;
+}
+
+/**
+ * The formats the indices point at — the paint half only.
+ *
+ * The number format is deliberately not here. Turning 1234.5 into
+ * `$1,234.50` happens on the application worker and what crosses is
+ * the finished string, so the render worker never learns a locale, a
+ * currency symbol or a thousands separator. It learns that a cell is
+ * bold.
+ */
+export interface SheetPalette {
+  readonly entries: readonly CellPaint[];
+}
+
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
@@ -212,7 +257,57 @@ export interface SheetCommands {
   replaceAll(replacement: string): void;
   /** Closes the search, so the highlight and the count go away. */
   clearFind(): void;
+  /**
+   * Applies a change to every cell in the selection.
+   *
+   * A *change*, not a format: `{ bold: true }` means "make these
+   * bold" and has to leave the italics, the currency symbol and the
+   * alignment of each cell as they were. Sending a whole format
+   * would make every button on the toolbar destroy what the others
+   * had done, which is the bug every naive formatting model has.
+   */
+  format(change: SheetFormatChange): void;
+  /** Puts the selection back to the default format. */
+  clearFormat(): void;
 }
+
+/**
+ * What one press of a formatting control means.
+ *
+ * Every field optional and every one of them meaning "leave it
+ * alone" when absent. `number` carries the whole number format
+ * because its parts are not independent — places belong to a
+ * currency format, not to a cell — and the paint fields are
+ * independent and so are listed one by one.
+ */
+export interface SheetFormatChange {
+  readonly number?: NumberFormatPatch;
+  readonly bold?: boolean;
+  readonly italic?: boolean;
+  readonly underline?: boolean;
+  readonly fontSize?: number;
+  readonly color?: string;
+  readonly fill?: string;
+  readonly align?: 'auto' | 'start' | 'center' | 'end';
+  readonly wrap?: boolean;
+  /** More or fewer decimal places, relative to what each cell has. */
+  readonly places?: number;
+}
+
+/**
+ * A number format as it crosses: plain data, so a tagged object and
+ * not a class, and named so the render worker can ask for one
+ * without importing the engine's own type.
+ */
+export type NumberFormatPatch =
+  | { readonly kind: 'general' }
+  | { readonly kind: 'number'; readonly places: number; readonly thousands: boolean }
+  | { readonly kind: 'currency'; readonly places: number; readonly symbol: string }
+  | { readonly kind: 'percent'; readonly places: number }
+  | { readonly kind: 'scientific'; readonly places: number }
+  | { readonly kind: 'date'; readonly pattern: 'ymd' | 'dmy' | 'mdy' }
+  | { readonly kind: 'time'; readonly pattern: 'hm' | 'hms' }
+  | { readonly kind: 'text' };
 
 export interface SheetView {
   readonly window: SheetWindow;
@@ -224,7 +319,43 @@ export interface SheetView {
   /** Sum, average and count over the selection. */
   readonly stats: SheetStats;
   readonly find: SheetFindView;
+  readonly formats: SheetFormatWindow;
+  readonly palette: SheetPalette;
+  /**
+   * The active cell's own format, for the toolbar to show itself
+   * pressed with.
+   *
+   * One cell and not the selection's, because a toolbar has one Bold
+   * button and a selection can hold both. Every spreadsheet answers
+   * this from the active cell and this one does too.
+   */
+  readonly activeFormat: SheetActiveFormat;
 }
+
+/** What the controls read to draw themselves. */
+export interface SheetActiveFormat {
+  readonly paint: CellPaint;
+  readonly number: NumberFormatPatch;
+}
+
+export const EMPTY_FORMATS: SheetFormatWindow = {
+  firstRow: 0,
+  lastRow: -1,
+  firstColumn: 0,
+  lastColumn: -1,
+  cells: {}
+};
+
+export const PLAIN_PAINT: CellPaint = {
+  bold: false,
+  italic: false,
+  underline: false,
+  fontSize: 0,
+  color: '',
+  fill: '',
+  align: 'auto',
+  wrap: false
+};
 
 export const NO_FIND: SheetFindView = {
   query: '',
@@ -262,5 +393,8 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
   stats: NO_STATS,
-  find: NO_FIND
+  find: NO_FIND,
+  formats: EMPTY_FORMATS,
+  palette: { entries: [PLAIN_PAINT] },
+  activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } }
 });

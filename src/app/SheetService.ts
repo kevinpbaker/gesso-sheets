@@ -3,16 +3,23 @@ import { BehaviorSubject, type Observable } from 'rxjs';
 import { aggregateOf } from './Aggregate';
 import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
+  EMPTY_FORMATS,
   EMPTY_WINDOW,
   NO_FIND,
+  PLAIN_PAINT,
   type SheetClipboard,
   type SheetEditor,
   type SheetFindView,
   type SheetGeometry,
   type SheetSelection,
+  type SheetActiveFormat,
+  type SheetFormatChange,
+  type SheetFormatWindow,
+  type SheetPalette,
   type SheetStatus,
   type SheetWindow
 } from './SheetContract';
+import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 import { NO_STATS, type SheetStats } from './Statistics';
 import type { SheetDocument } from './SheetDocument';
@@ -81,6 +88,9 @@ export class SheetService {
   readonly clipboard: Observable<SheetClipboard>;
   readonly selectionStats: Observable<SheetStats>;
   readonly findView: Observable<SheetFindView>;
+  readonly formats: Observable<SheetFormatWindow>;
+  readonly palette: Observable<SheetPalette>;
+  readonly activeFormat: Observable<SheetActiveFormat>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -93,6 +103,12 @@ export class SheetService {
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
   private readonly findSubject = new BehaviorSubject<SheetFindView>(NO_FIND);
+  private readonly formatsSubject = new BehaviorSubject<SheetFormatWindow>(EMPTY_FORMATS);
+  private readonly paletteSubject = new BehaviorSubject<SheetPalette>({ entries: [PLAIN_PAINT] });
+  private readonly activeFormatSubject = new BehaviorSubject<SheetActiveFormat>({
+    paint: PLAIN_PAINT,
+    number: { kind: 'general' }
+  });
   /**
    * The cells the current search matched, as keys, in reading order.
    *
@@ -163,7 +179,11 @@ export class SheetService {
     this.clipboard = this.clipboardSubject;
     this.selectionStats = this.statsSubject;
     this.findView = this.findSubject;
+    this.formats = this.formatsSubject;
+    this.palette = this.paletteSubject;
+    this.activeFormat = this.activeFormatSubject;
     this.publishStats();
+    this.publishActiveFormat();
   }
 
   // ---------------------------------------------------------------------
@@ -183,6 +203,7 @@ export class SheetService {
   setViewport(firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void {
     this.viewport = { firstRow, lastRow, firstColumn, lastColumn };
     this.publishWindow();
+    this.publishFormats();
   }
 
   setCell(row: number, column: number, input: string): void {
@@ -202,6 +223,7 @@ export class SheetService {
     this.selectionSubject.next(this.document.selection);
     this.publishEditor();
     this.publishStats();
+    this.publishActiveFormat();
     // Which match the selection is on, not which matches there are.
     // Moving off a match with the find bar open has to stop saying
     // "3 of 412", and the only thing that changed is where we are.
@@ -428,7 +450,7 @@ export class SheetService {
   /** Runs the search and publishes what it found. */
   private search(query: string, options: FindOptions): void {
     const { rowCount, columnCount } = this.geometrySubject.value;
-    this.found = findMatches(this.document.sheet, query, options, rowCount, columnCount);
+    this.found = findMatches(this.document, query, options, rowCount, columnCount);
     this.findSubject.next({
       query,
       ...options,
@@ -476,6 +498,101 @@ export class SheetService {
   }
 
   // ---------------------------------------------------------------------
+  // Phase 9: formatting
+  // ---------------------------------------------------------------------
+
+  /**
+   * Applies a change to every cell in the selection.
+   *
+   * Cell by cell, and that is not laziness: a change is relative to
+   * what each cell already has, so a selection holding one bold cell
+   * and one plain one, told `{ italic: true }`, ends up bold-italic
+   * and italic rather than both the same. Making a format out of the
+   * change once and stamping it over the range is the bug every
+   * naive formatting model has, and it is the reason `format` takes
+   * a change rather than a format.
+   *
+   * One step on the undo stack however many cells it touched.
+   */
+  format(change: SheetFormatChange): void {
+    this.applyToSelection(format => applyChange(format, change));
+  }
+
+  clearFormat(): void {
+    this.applyToSelection(() => DEFAULT_FORMAT);
+  }
+
+  /**
+   * Runs a formatting change over the selection, as regions where it
+   * can and cell by cell where it cannot.
+   *
+   * **The region case is not an optimisation.** Cell by cell, ctrl-A
+   * followed by ctrl-B wrote a million cell entries, a million-entry
+   * undo step, and a thirty-megabyte file that was then read back on
+   * every load — found by pressing two keys in a browser, and by no
+   * spec at all. A selection that covers the whole sheet, a whole
+   * column or a whole row *is* a region, and storing it as one is the
+   * same insight as the palette turned on its side.
+   *
+   * The change still has to be computed per region from what that
+   * region already had, so that Bold does not undo Currency. What a
+   * region cannot do is vary per cell inside it, which is exactly
+   * what a region means.
+   */
+  private applyToSelection(change: (format: CellFormat) => CellFormat): void {
+    const rect = rectOf(this.document.selection);
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const lastRow = Math.min(rect.lastRow, rowCount - 1);
+    const lastColumn = Math.min(rect.lastColumn, columnCount - 1);
+    const allRows = rect.firstRow === 0 && lastRow >= rowCount - 1;
+    const allColumns = rect.firstColumn === 0 && lastColumn >= columnCount - 1;
+
+    this.document.transact(() => {
+      if (allRows && allColumns) {
+        this.document.formatRegion('sheet', 0, change);
+        return;
+      }
+      if (allRows) {
+        for (let column = rect.firstColumn; column <= lastColumn; column++) {
+          this.document.formatRegion('column', column, change);
+        }
+        return;
+      }
+      if (allColumns) {
+        for (let row = rect.firstRow; row <= lastRow; row++) {
+          this.document.formatRegion('row', row, change);
+        }
+        return;
+      }
+      for (let row = rect.firstRow; row <= lastRow; row++) {
+        for (let column = rect.firstColumn; column <= lastColumn; column++) {
+          this.document.setFormat(row, column, change(this.document.formatAt(row, column)));
+        }
+      }
+    });
+    this.afterFormat();
+  }
+
+  /**
+   * What a format change has to republish.
+   *
+   * The window as well as the indices, because a number format
+   * changes the *string* a cell shows — that is what a number format
+   * is — and the string is what the window carries. Bounded by the
+   * viewport, which is the whole answer to whether that is
+   * affordable.
+   */
+  private afterFormat(): void {
+    this.publishPalette();
+    this.publishFormats();
+    this.publishWindow();
+    this.publishStatus();
+    this.publishActiveFormat();
+    this.persist();
+    this.pump();
+  }
+
+  // ---------------------------------------------------------------------
   // Keeping it
   // ---------------------------------------------------------------------
 
@@ -500,9 +617,18 @@ export class SheetService {
     this.restored = true;
     this.selectionSubject.next(this.document.selection);
     this.publishWindow();
+    this.publishFormats();
+    // The palette, which nothing else publishes on this path. Without
+    // it a loaded sheet's cells all point at entries the render
+    // worker has never been sent, so every one of them falls back to
+    // plain — the numbers come out formatted, because that happens on
+    // this thread, and not one cell is bold. Which is exactly how it
+    // looked in a browser.
+    this.publishPalette();
     this.publishEditor();
     this.publishStatus();
     this.publishStats();
+    this.publishActiveFormat();
     if (stored === null) {
       this.persist();
     }
@@ -529,6 +655,7 @@ export class SheetService {
   /** What every edit that is not a single keystroke has to do afterwards. */
   private afterEdit(): void {
     this.publishWindow();
+    this.publishFormats();
     this.publishEditor();
     this.publishStatus();
     this.publishStats();
@@ -604,12 +731,60 @@ export class SheetService {
     for (let row = firstRow; row <= lastRow; row++) {
       const line: Record<string, string> = {};
       for (let column = firstColumn; column <= lastColumn; column++) {
-        line[column] = this.document.sheet.display(row, column);
+        line[column] = this.document.display(row, column);
       }
       cells[row] = line;
     }
     this.stats.publishes++;
     this.windowSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
+  }
+
+  /**
+   * The palette index for each visible cell.
+   *
+   * A cell with the default format is left out rather than sent as a
+   * zero, so an unformatted sheet publishes an object of empty
+   * objects — and, once the differ has seen it, nothing at all on
+   * every publish after. Scrolling a sheet nobody has formatted
+   * costs four patches here and no more, the same as the window.
+   */
+  private publishFormats(): void {
+    const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
+    if (lastRow < firstRow || lastColumn < firstColumn) {
+      this.formatsSubject.next(EMPTY_FORMATS);
+      return;
+    }
+    const cells: Record<string, Record<string, number>> = {};
+    for (let row = firstRow; row <= lastRow; row++) {
+      const line: Record<string, number> = {};
+      for (let column = firstColumn; column <= lastColumn; column++) {
+        const id = this.document.formats.idAt(row, column);
+        if (id !== 0) {
+          line[column] = id;
+        }
+      }
+      cells[row] = line;
+    }
+    this.formatsSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
+  }
+
+  /**
+   * The paint half of every palette entry.
+   *
+   * Only ever appended to, so the differ sees one new element and
+   * emits one patch however long the palette has grown. The number
+   * format is left behind on this thread on purpose: what crosses is
+   * the formatted string, and the render worker never learns a
+   * locale.
+   */
+  private publishPalette(): void {
+    this.paletteSubject.next({ entries: this.document.formats.entries.map(format => format.paint) });
+  }
+
+  private publishActiveFormat(): void {
+    const { row, column } = this.document.selection;
+    const format = this.document.formatAt(row, column);
+    this.activeFormatSubject.next({ paint: format.paint, number: format.number });
   }
 
   private publishEditor(): void {
@@ -647,4 +822,34 @@ export class SheetService {
 /** A published find view read back as the options that produced it. */
 function optionsOf(view: SheetFindView): FindOptions {
   return { matchCase: view.matchCase, wholeCell: view.wholeCell, inFormulas: view.inFormulas };
+}
+
+/**
+ * One cell's format with a change applied on top of it.
+ *
+ * Every absent field means "leave it alone", which is what makes a
+ * toolbar of independent buttons possible: pressing Italic must not
+ * undo what Bold did, and pressing Bold must not undo the currency
+ * symbol somebody chose.
+ */
+function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat {
+  const number =
+    change.number !== undefined
+      ? (change.number as CellFormat['number'])
+      : change.places !== undefined
+        ? withPlaces(format.number, change.places)
+        : format.number;
+  return {
+    number,
+    paint: {
+      bold: change.bold ?? format.paint.bold,
+      italic: change.italic ?? format.paint.italic,
+      underline: change.underline ?? format.paint.underline,
+      fontSize: change.fontSize ?? format.paint.fontSize,
+      color: change.color ?? format.paint.color,
+      fill: change.fill ?? format.paint.fill,
+      align: change.align ?? format.paint.align,
+      wrap: change.wrap ?? format.paint.wrap
+    }
+  };
 }

@@ -165,3 +165,44 @@ describe('the menus', () => {
     }
   });
 });
+
+/**
+ * A keyboard event's `key` is the character produced, not the key
+ * pressed. Hold shift and press 4 and a browser says `$` — so an
+ * accelerator written as Ctrl+Shift+4 and matched literally is one
+ * the menu advertises and the application never answers.
+ */
+describe('the shifted number row', () => {
+  it('answers the character the browser actually reports', () => {
+    expect(commandFor('$', { ctrl: true, shift: true })).toBe('formatCurrency');
+    expect(commandFor('%', { ctrl: true, shift: true })).toBe('formatPercent');
+    expect(commandFor('!', { ctrl: true, shift: true })).toBe('formatNumber');
+    expect(commandFor('~', { ctrl: true, shift: true })).toBe('formatGeneral');
+  });
+
+  it('answers the digit too, for a layout that reports one', () => {
+    expect(commandFor('4', { ctrl: true, shift: true })).toBe('formatCurrency');
+  });
+
+  /** The label is what people have learned, not what the browser says. */
+  it('still advertises the digit', () => {
+    expect(acceleratorLabel(COMMANDS.formatCurrency.accelerator!)).toBe('Ctrl+Shift+4');
+  });
+
+  /**
+   * Every shifted accelerator needs its character, or it is a menu
+   * item advertising a key that does nothing.
+   */
+  it('gives every shifted accelerator the character it produces', () => {
+    for (const command of Object.values(COMMANDS)) {
+      const accelerator = command.accelerator;
+      if (accelerator?.shift !== true || accelerator.ctrl !== true) {
+        continue;
+      }
+      if (/^[a-z]$/i.test(accelerator.key)) {
+        continue;
+      }
+      expect(accelerator.shifted, `${command.id} (${accelerator.key})`).toBeDefined();
+    }
+  });
+});

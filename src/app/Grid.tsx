@@ -30,7 +30,8 @@ import {
   ROW_COUNT,
   ROW_HEIGHT
 } from './dimensions';
-import { cellIn, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
+import type { CellPaint } from '../sheet/Format';
+import { cellIn, PLAIN_PAINT, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
@@ -75,6 +76,17 @@ interface MountedCell {
   readonly element: UiElement;
   readonly value: BehaviorSubject<string | null>;
   readonly standing: BehaviorSubject<Standing>;
+  /**
+   * How the cell is painted, pushed in like the other two.
+   *
+   * A third subject rather than a pipe off the channel, on the rule
+   * this file has followed since Phase 0: a cell subscribes to its
+   * own subjects and one subscriber per source fills them. A cell
+   * that piped its own paint off the palette would put every mounted
+   * cell on the palette's observer list, and RxJS removes an observer
+   * by scanning that list.
+   */
+  readonly paint: BehaviorSubject<CellPaint>;
 }
 
 const SELECTED_WASH = 'selectionBackground';
@@ -157,6 +169,47 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   });
 
   /**
+   * The formats, resolved through the palette on the way in.
+   *
+   * The window carries an index and the palette carries the entry,
+   * and a cell wants neither — it wants the paint. Resolving here
+   * means the lookup happens once per changed cell per publish rather
+   * than once per bound property per frame, and it is the same shape
+   * as the two effects above for the same reason.
+   *
+   * `paintOf` returns the *same object* for every unformatted cell,
+   * so the `!==` below is a pointer comparison that is false for the
+   * whole window on a sheet nobody has formatted, and nothing is
+   * pushed at all.
+   */
+  let latestFormats: { cells: Readonly<Record<string, Readonly<Record<string, number>>>> } | null = null;
+  let latestPalette: readonly CellPaint[] = [PLAIN_PAINT];
+
+  const paintOf = (row: number, column: number): CellPaint => {
+    const id = latestFormats?.cells[row]?.[column] ?? 0;
+    return id === 0 ? PLAIN_PAINT : (latestPalette[id] ?? PLAIN_PAINT);
+  };
+
+  const repaint = (): void => {
+    for (const mounted of cells.values()) {
+      const next = paintOf(mounted.row, mounted.column);
+      if (next !== mounted.paint.value) {
+        mounted.paint.next(next);
+      }
+    }
+  };
+
+  ctx.effect(sheet.view.formats, current => {
+    latestFormats = current;
+    repaint();
+  });
+
+  ctx.effect(sheet.view.palette, current => {
+    latestPalette = current.entries;
+    repaint();
+  });
+
+  /**
    * The column widths, which a drag on a header's edge changes.
    *
    * Held here rather than on the channel. A width is not the
@@ -195,15 +248,34 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
   });
 
-  const buildCell = (row: number, column: number, value: Observable<string | null>, state: Observable<Standing>): UiElement => {
+  const buildCell = (
+    row: number,
+    column: number,
+    value: Observable<string | null>,
+    state: Observable<Standing>,
+    paint: Observable<CellPaint>
+  ): UiElement => {
     return Text({
       key: column,
       text: value.pipe(map(text => text ?? '')),
       // A cell the application worker has not sent yet is drawn as a
       // rule rather than left blank, so a gap on a fling reads as
       // "not here yet" instead of as the end of the sheet.
-      color: value.pipe(map(text => (text === null ? 'placeholder' : 'text'))),
-      backgroundColor: state.pipe(map(where => (where === 0 ? 'background' : SELECTED_WASH))),
+      color: combineLatest([value, paint]).pipe(
+        map(([text, how]) => (text === null ? 'placeholder' : how.color === '' ? 'text' : how.color))
+      ),
+      /**
+       * A fill wins everywhere except inside a selected range.
+       *
+       * The active cell keeps its fill — the ring is what marks it,
+       * and washing it out would hide the colour somebody is in the
+       * middle of choosing. The rest of a multi-cell selection takes
+       * the wash, because a rectangle you cannot see is not a
+       * selection.
+       */
+      backgroundColor: combineLatest([state, paint]).pipe(
+        map(([where, how]) => (where === 1 ? SELECTED_WASH : how.fill === '' ? 'background' : how.fill))
+      ),
       borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
       borderWidth: state.pipe(map(where => (where === 2 ? 2 : 1))),
       width: widthOf(column),
@@ -211,11 +283,23 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       flexShrink: 0,
       paddingLeft: 6,
       paddingRight: 6,
-      fontSize: 12,
+      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? 12 : how.fontSize))),
+      fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
+      fontStyle: paint.pipe(map(how => (how.italic ? 'italic' : 'normal'))),
+      textDecoration: paint.pipe(map(how => (how.underline ? 'underline' : 'none'))),
       textWrap: 'none',
       textOverflow: 'clip',
       verticalAlign: 'middle',
-      textAlign: value.pipe(map(text => (isNumeric(text) ? 'right' : 'start'))),
+      /**
+       * `auto` is the spreadsheet rule — numbers right, text left —
+       * and it is a real alignment rather than an absent one: a
+       * column of numbers nobody has touched still has to line up.
+       */
+      textAlign: combineLatest([value, paint]).pipe(
+        map(([text, how]) =>
+          how.align === 'auto' ? (isNumeric(text) ? 'right' : 'start') : how.align === 'center' ? 'center' : how.align
+        )
+      ),
       // A sweep drags a text selection through anything selectable,
       // so the numbers and the row labels would highlight as prose
       // does while a rectangle is being picked out.
@@ -280,8 +364,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const standing = new BehaviorSubject<Standing>(
       latestSelection === null ? 0 : standingOf(latestSelection, row, column)
     );
-    const element = buildCell(row, column, value, standing);
-    cells.set(key, { row, column, element, value, standing });
+    const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
+    const element = buildCell(row, column, value, standing, paint);
+    cells.set(key, { row, column, element, value, standing, paint });
     return element;
   };
 

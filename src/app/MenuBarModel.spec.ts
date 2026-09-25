@@ -49,7 +49,8 @@ describe('the bar with nothing open', () => {
     expect(press(CLOSED, ['ArrowRight']).state.focused).toBe(1);
     expect(press(CLOSED, ['ArrowRight', 'ArrowRight']).state.focused).toBe(2);
     // Off the end and round to the start, which is what a bar does.
-    expect(press(CLOSED, ['ArrowRight', 'ArrowRight', 'ArrowRight']).state.focused).toBe(0);
+    const toTheEnd = Array.from({ length: MENUS.length }, () => 'ArrowRight');
+    expect(press(CLOSED, toTheEnd).state.focused).toBe(0);
     expect(press(CLOSED, ['ArrowLeft']).state.focused).toBe(MENUS.length - 1);
   });
 
@@ -75,7 +76,7 @@ describe('the bar with nothing open', () => {
 
   it('opens a menu by its letter', () => {
     const { state } = press(CLOSED, ['d']);
-    expect(state.focused).toBe(1);
+    expect(state.focused).toBe(MENUS.findIndex(menu => menu.id === 'data'));
     expect(highlighted(state)).toBe('fillDown');
   });
 
@@ -132,7 +133,7 @@ describe('a menu that is open', () => {
     const next = press(open, ['ArrowRight']).state;
     expect(next.focused).toBe(1);
     expect(next.open).toBe(true);
-    expect(highlighted(next)).toBe('fillDown');
+    expect(highlighted(next)).toBe(MENUS[1].entries[0]);
 
     const back = press(next, ['ArrowLeft']).state;
     expect(back.focused).toBe(0);

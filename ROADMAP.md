@@ -15,15 +15,16 @@ themselves rather than take a benchmark's word for it.
 **Status:** Part One is done — eight phases, eight exit criteria met —
 and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
-in, is one phase into nine: the top bar is done and the format axis is
-next. `pnpm test` is 398 specs and `pnpm proof` is five budgets. Phase
+in, is two phases into nine: the top bar and the format axis are
+done, and structural edits are next. `pnpm test` is 475 specs and
+`pnpm proof` is five budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
 `src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
-of and paste into, find and replace across, fill down, and navigate by
-typing an address — and which remembers what you typed. `pnpm proof`
-is the frame budget: it drives the built application in headless
+of and paste into, find and replace across, fill down, format, and
+navigate by typing an address — and which remembers what you typed.
+`pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
 ---
@@ -557,40 +558,85 @@ dialog a button. Both dialogs here now carry a Close button, which is
 better UI anyway and makes the focus settle. Seventh phase running in
 which a real browser found something the suite could not.
 
-### Phase 9 — The format axis
+### Phase 9 — The format axis — **done**
 
-The format model in `src/sheet`: number formats (general, number with
-places, currency, percent, scientific, date, time, text, and a custom
-pattern), weight, italic, underline, size, text colour, fill,
-horizontal and vertical alignment, wrap, indent, and borders.
-
-The contract gains a seventh view key, `formats`, a window keyed
-exactly as `window` is — carrying **an index into a palette, not a
-record**. A column formatted as currency is one palette entry and one
-small integer per visible cell; a record per cell would double the
-bytes on the wire and give the differ a nested object to walk for
-every cell in the window. The palette changes when somebody formats
-something and the indices change when the viewport moves, and those
-being different rates is the same argument that split `rows` from
-`open`.
-
-Formatting itself stays on the application worker. `display()`
-already returns a formatted string and now consults the cell's format
-to build it; the render worker must never learn a number format,
-because a locale-aware formatter on the frame path is precisely the
-work this architecture exists to keep off it. The consequence to
-accept rather than engineer around: changing a format republishes the
-window's *values* as well as its indices. That is bounded by the
-viewport, which is the whole answer.
-
-File format v2 — `formats` and the palette beside `cells` — and a
-format change is a `Step` on the existing undo stack, not a second
-one.
+Number formats (general, number, currency, percent, scientific, date,
+time and text), weight, italic, underline, size, text colour, fill,
+alignment and wrap. A Format menu, a toolbar that shows itself
+pressed, and the accelerators every spreadsheet binds.
 
 **Exit:** a patch-count spec. Formatting a column of 50,000 cells
 emits one palette patch and one patch per visible cell,
-`toHaveLength` and not a ceiling. And `pnpm proof` over a sheet where
-every cell is formatted: the same budget, not a new one.
+`toHaveLength` and not a ceiling. And `pnpm proof` over a formatted
+sheet: the same budget, not a new one.
+
+**Met.** `FormatChannel.spec.ts`: fifty thousand cells formatted at
+once with thirty in view sends **one palette patch and thirty index
+patches**, and the same edit with the column scrolled off screen
+sends nothing at all. `pnpm proof` over the now-formatted seed reads
+2.00 / 2.20 / 2.30 ms against Phase 8's 2.00 / 2.10 / 2.30 — the
+format axis costs nothing measurable.
+
+**The palette is the design.** `formats` carries a palette *index*
+per visible cell and `palette` carries the entries, on two keys
+because they move at different rates: a scroll would otherwise put
+the whole palette on the wire and one click on Bold would put the
+whole window back. Only the *paint* crosses; the number format stays
+on the application worker, so what the render worker receives is the
+finished string and it never learns a locale, a currency symbol or a
+thousands separator.
+
+Four things the phase learned, two of them from a browser.
+
+**A format is applied as a change, not as a format.** `format` takes
+`{ bold: true }` and every absent field means "leave it alone",
+because a selection holding one bold cell and one plain one, told to
+go italic, has to end up bold-italic and italic. Sending a whole
+format would make every button on the toolbar destroy what the others
+had done, which is the bug every naive formatting model has.
+
+**The toolbar had to stop being fifteen tab stops.** Adding a Format
+section put the grid fifteen presses away from the keyboard, and the
+specs said so before a person could — `Tab never reached the grid` is
+what Phase 9 got for the fourth button. It is now one stop with the
+arrows moving inside it, which is ARIA's toolbar pattern and what the
+menu bar already did. `focusable: false` is the opt-out that makes it
+possible, and it is the same `tabindex="-1"` this file wanted for
+`Dialog` in Phase 8 — so that gap is narrower than it looked.
+
+**Every spec passed while nothing was bold.** They all asserted the
+*document* — `formatAt(0, 0).paint.bold` — and the document was
+right; the palette was simply never published on the load path, so
+every cell pointed at an entry the render worker had never been sent
+and fell back to plain. Number formats looked perfect throughout,
+because those are applied on this side and cross as strings.
+`FormatPaint.spec.tsx` now reads the properties the renderer draws
+with, which is the assertion that was missing rather than the fix.
+
+**Ctrl+A, then ctrl+B, wrote thirty megabytes to somebody's disk.**
+A format stored per cell is a million entries for two keystrokes, a
+million-entry undo step, and a file parsed back on every load for the
+rest of that sheet's life. Phase 7 learned this about the proof
+chain; this is the same lesson on the other axis. A region is now
+stored **as a region** — sheet, row and column defaults resolved
+cell, then row, then column, then sheet — and the file went from
+30.32 MB to 2,365 bytes with nothing on screen changing. The wire is
+untouched, because the render worker asks what a *cell's* id is and
+the resolution happens behind that question.
+
+And the correction inside the correction: the first version of the
+region write *cleared* the cell overrides inside it, which looked
+right and threw away the currency in column C the moment anybody made
+the sheet bold. A change applies to the region and to each override
+under it; "make this bold" has nothing to say about somebody's
+currency symbol. One keystroke in a browser showed both.
+
+Two things deliberately left out. **Borders**, because `borderWidth`
+is a single number in the engine and per-edge borders need either
+engine support or four child boxes per cell — see the gaps below.
+And **a custom number-format pattern language**, Excel's
+`#,##0.00;[Red](#,##0.00)`, which is a parser, a spec and a class of
+bugs; the eight named formats cover what people pick.
 
 ### Phase 10 — Rows, columns, and cells that span
 
@@ -850,7 +896,11 @@ Carried forward from the head of this file, with what Part Two adds:
   `tabStop: false` of the kind `tabindex="-1"` gives the DOM, or a
   `settleScope` that falls back to the scope root instead of blurring.
   Both are focus-semantics decisions with a wide blast radius and
-  deserve their own change rather than a drive-by.
+  deserve their own change rather than a drive-by. *Narrower than it
+  looked after Phase 9*: `focusable: false` already exists as the
+  opt-out half, so `Dialog` making its body `focusable: true` and
+  every control inside it staying an ordinary stop would work — what
+  is missing is only that the body must not itself become a stop.
 - **A mounted set that depends on the document.** `UiVirtualSheet`
   mounts what the window covers, and a merged cell anchored above the
   window still has to paint into it. Phase 10, and it is the deepest
@@ -858,6 +908,12 @@ Carried forward from the head of this file, with what Part Two adds:
 - **A floating object layer over a scroll surface.** Selectable,
   movable, resizable things in a scrolled coordinate space, which
   charts need and images would reuse. Phase 15.
+- **Per-edge borders.** `borderWidth` is one number and `borderColor`
+  one colour, so a cell cannot have a heavy bottom edge and a hairline
+  top. Found in Phase 9, which left borders out because of it. The
+  alternative inside the application is four child boxes per bordered
+  cell, which is four times the nodes on the one surface whose node
+  count is a budget.
 - **Two-axis touch scroll.** Still open, from Phase 0.
 
 ---
