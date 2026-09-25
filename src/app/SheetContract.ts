@@ -476,6 +476,7 @@ export type NumberFormatPatch =
   | { readonly kind: 'scientific'; readonly places: number }
   | { readonly kind: 'date'; readonly pattern: 'ymd' | 'dmy' | 'mdy' }
   | { readonly kind: 'time'; readonly pattern: 'hm' | 'hms' }
+  | { readonly kind: 'datetime'; readonly date: 'ymd' | 'dmy' | 'mdy'; readonly time: 'hm' | 'hms' }
   | { readonly kind: 'text' };
 
 export interface SheetView {

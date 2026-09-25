@@ -99,3 +99,98 @@ describe('SheetDocument', () => {
     expect(document.sheet.display(2, 3)).toBe('3');
   });
 });
+
+/**
+ * Typing a date, which is the one place the engine and the format
+ * axis touch.
+ *
+ * A date is a number with a format — Excel's serial from 1899-12-30 —
+ * so neither half is optional. The engine turns the text into a
+ * serial and the document puts the format on, and a spec that checked
+ * only one of them would pass for a cell showing 46,289 to somebody
+ * who typed a date.
+ */
+describe('typing a date', () => {
+  it('stores the serial and shows the date', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '2026-09-24');
+    document.sheet.recalculate();
+
+    expect(document.sheet.value(0, 0)).toBe(46_289);
+    expect(document.display(0, 0)).toBe('2026-09-24');
+  });
+
+  it('gives it back for editing exactly as it was typed', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '24/9/2026');
+    expect(document.sheet.input(0, 0)).toBe('24/9/2026');
+  });
+
+  it('shows it in the shape it was typed in', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '24/9/2026');
+    document.setCell(1, 0, 'Sep 24, 2026');
+    document.setCell(2, 0, '2026-09-24');
+
+    expect(document.display(0, 0)).toBe('24 Sep 2026');
+    expect(document.display(1, 0)).toBe('Sep 24, 2026');
+    expect(document.display(2, 0)).toBe('2026-09-24');
+  });
+
+  it('keeps the clock when one was typed', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '2026-09-24 09:30');
+    expect(document.display(0, 0)).toBe('2026-09-24 09:30');
+  });
+
+  it('shows a time on its own as a time', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '13:45');
+    expect(document.display(0, 0)).toBe('13:45');
+  });
+
+  /** A date is a number, which is what makes date arithmetic work. */
+  it('subtracts two dates into a number of days', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '2026-09-01');
+    document.setCell(1, 0, '2026-09-24');
+    document.setCell(2, 0, '=A2-A1');
+    document.sheet.recalculate();
+
+    // The difference is a count, not a date: the formula cell was
+    // never formatted, so it shows the number.
+    expect(document.display(2, 0)).toBe('23');
+  });
+
+  /** Both halves, in one press. */
+  it('takes the value and the format back on one undo', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '2026-09-24');
+    document.undo();
+
+    expect(document.sheet.input(0, 0)).toBe('');
+    expect(document.formatAt(0, 0).number.kind).toBe('general');
+  });
+
+  /**
+   * A format somebody chose on purpose is an answer already given.
+   * This looks odd and is what every spreadsheet does; the
+   * alternative is a format that silently undoes a decision.
+   */
+  it('leaves a format somebody chose alone', () => {
+    const document = new SheetDocument();
+    document.setFormat(0, 0, { ...document.formatAt(0, 0), number: { kind: 'number', places: 0, thousands: true } });
+    document.setCell(0, 0, '2026-09-24');
+
+    expect(document.formatAt(0, 0).number.kind).toBe('number');
+    expect(document.display(0, 0)).toBe('46,289');
+  });
+
+  /** And text stays text: the number test runs before the date one. */
+  it('leaves a bare year as a number', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '2026');
+    expect(document.sheet.value(0, 0)).toBe(2026);
+    expect(document.formatAt(0, 0).number.kind).toBe('general');
+  });
+});

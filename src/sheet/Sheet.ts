@@ -1,5 +1,6 @@
 import { cellKey, columnOf, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
 import { referencesOf, type Ast } from './Ast';
+import { parseTypedDate } from './Dates';
 import { DependencyGraph } from './DependencyGraph';
 import { evaluate } from './Evaluator';
 import { FormulaSyntaxError, parseFormula } from './Parser';
@@ -369,10 +370,20 @@ function precedentsOf(formula: Ast): number[] {
 /**
  * What typing something that is not a formula means.
  *
- * Numbers and TRUE/FALSE are recognised; everything else is text. The
- * number test is deliberately stricter than `Number()`, which reads
- * `''` as 0 and `'0x10'` as 16 — neither of which is what someone who
- * typed them meant.
+ * Numbers, TRUE/FALSE and dates are recognised; everything else is
+ * text. The number test is deliberately stricter than `Number()`,
+ * which reads `''` as 0 and `'0x10'` as 16 — neither of which is what
+ * someone who typed them meant.
+ *
+ * A date becomes its serial number, because in a spreadsheet that is
+ * what a date *is* — see `Dates.ts`. The number test runs first, so
+ * `2026` stays the number two thousand and twenty-six rather than
+ * becoming a year.
+ *
+ * The format that makes the serial legible is the document's to
+ * apply, and `SheetDocument.setCell` applies it in the same undo step.
+ * The two have to agree: a serial written here without a format there
+ * is a cell showing 46,289 to somebody who typed a date.
  */
 function literalValue(input: string): CellValue {
   const trimmed = input.trim();
@@ -386,5 +397,5 @@ function literalValue(input: string): CellValue {
   if (/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(trimmed)) {
     return Number(trimmed);
   }
-  return input;
+  return parseTypedDate(trimmed)?.serial ?? input;
 }

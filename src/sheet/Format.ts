@@ -1,3 +1,4 @@
+import { dateOfSerial, timeOfSerial } from './Dates';
 import { formatNumber, isError, type CellValue } from './Values';
 
 /**
@@ -26,6 +27,16 @@ export type NumberFormat =
   | { readonly kind: 'scientific'; readonly places: number }
   | { readonly kind: 'date'; readonly pattern: DatePattern }
   | { readonly kind: 'time'; readonly pattern: TimePattern }
+  /**
+   * A day and a clock together.
+   *
+   * Here because typing one is ordinary — a timestamp in a log, a
+   * meeting in a schedule — and because the alternative was to keep
+   * the time in the value and drop it from the screen, which is a
+   * cell that does not show what somebody typed into it. It is one
+   * more named pattern, not the start of a pattern language.
+   */
+  | { readonly kind: 'datetime'; readonly date: DatePattern; readonly time: TimePattern }
   /**
    * Never a number, however much it looks like one.
    *
@@ -160,7 +171,9 @@ export function keyOf(format: CellFormat): string {
               ? `date:${n.pattern}`
               : n.kind === 'time'
                 ? `time:${n.pattern}`
-                : n.kind;
+                : n.kind === 'datetime'
+                  ? `datetime:${n.date}:${n.time}`
+                  : n.kind;
   const p = format.paint;
   return [
     number,
@@ -226,6 +239,8 @@ export function formatWith(value: CellValue, format: NumberFormat): string {
       return date(value, format.pattern);
     case 'time':
       return time(value, format.pattern);
+    case 'datetime':
+      return `${date(value, format.date)} ${time(value, format.time)}`;
   }
 }
 
@@ -279,58 +294,29 @@ function clampPlaces(places: number): number {
   return Math.min(Math.max(Math.trunc(places), 0), 15);
 }
 
-/**
- * The epoch spreadsheets count days from.
- *
- * 1899-12-30, not 1900-01-01, because Lotus 1-2-3 believed 1900 was a
- * leap year and every spreadsheet since has kept the bug so that
- * serial numbers move between them. Serial 45,000 is 2023-03-15 here
- * and in Excel, which is the only property worth having.
- *
- * The bug itself is a single phantom day: Excel's serial 60 is
- * 1900-02-29, a date that did not happen. Serials 1 to 59 are
- * therefore a day *ahead* of what this epoch alone would give, which
- * `SHIFT_BEFORE` puts back, and serial 60 is a day this application
- * declines to invent — it shows 1900-02-28, the same as 59. That is
- * one wrong day in 1900 against reproducing a calendar error on
- * purpose, and it is the trade every implementation has to pick.
- */
-const EPOCH_UTC = Date.UTC(1899, 11, 30);
-/** Serials below this predate the phantom day and need the shift. */
-const SHIFT_BEFORE = 60;
-const DAY_MS = 86_400_000;
-
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /**
  * A serial number as a date.
  *
- * Built in UTC throughout. A local-time construction would shift the
- * displayed day for anybody west of Greenwich for part of the year,
- * so a sheet would show a different date to two people looking at the
- * same file — which is the one thing a date must never do.
- *
- * Phase 9 can *show* a date and cannot yet *make* one: nothing parses
- * `2026-09-24` into a serial, and no function returns one. That is
- * Phase 11, and it is the single point where the engine and this file
- * meet.
+ * The epoch, and the phantom day of 1900 that comes with it, live in
+ * `Dates.ts` — this only draws what that file counts. They were here
+ * first and moved when Phase 11 needed to *make* dates as well as show
+ * them: two definitions of the epoch is one more than a spreadsheet
+ * can survive.
  */
 function date(serial: number, pattern: DatePattern): string {
   if (!Number.isFinite(serial)) {
     return formatNumber(serial);
   }
-  const days = Math.floor(serial);
-  const at = new Date(EPOCH_UTC + (days < SHIFT_BEFORE ? days + 1 : days) * DAY_MS);
-  const year = at.getUTCFullYear();
-  const month = at.getUTCMonth();
-  const day = at.getUTCDate();
+  const { year, month, day } = dateOfSerial(serial);
   switch (pattern) {
     case 'ymd':
-      return `${pad(year, 4)}-${pad(month + 1, 2)}-${pad(day, 2)}`;
+      return `${pad(year, 4)}-${pad(month, 2)}-${pad(day, 2)}`;
     case 'dmy':
-      return `${day} ${MONTHS[month]} ${year}`;
+      return `${day} ${MONTHS[month - 1]} ${year}`;
     case 'mdy':
-      return `${MONTHS[month]} ${day}, ${year}`;
+      return `${MONTHS[month - 1]} ${day}, ${year}`;
   }
 }
 
@@ -339,15 +325,10 @@ function time(serial: number, pattern: TimePattern): string {
   if (!Number.isFinite(serial)) {
     return formatNumber(serial);
   }
-  // Rounded to the second before splitting, so 23:59:59.7 reads as
-  // the next midnight rather than as 23:59:60.
-  const ofDay = serial - Math.floor(serial);
-  const seconds = Math.round(ofDay * 86_400) % 86_400;
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
+  const { hours, minutes, seconds } = timeOfSerial(serial);
   return pattern === 'hm'
     ? `${pad(hours, 2)}:${pad(minutes, 2)}`
-    : `${pad(hours, 2)}:${pad(minutes, 2)}:${pad(seconds % 60, 2)}`;
+    : `${pad(hours, 2)}:${pad(minutes, 2)}:${pad(seconds, 2)}`;
 }
 
 function pad(value: number, width: number): string {

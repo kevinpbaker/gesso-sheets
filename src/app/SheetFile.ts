@@ -280,6 +280,12 @@ function numberFrom(stored: unknown): NumberFormat {
       return { kind: 'date', pattern: format.pattern === 'dmy' || format.pattern === 'mdy' ? format.pattern : 'ymd' };
     case 'time':
       return { kind: 'time', pattern: format.pattern === 'hms' ? 'hms' : 'hm' };
+    case 'datetime':
+      return {
+        kind: 'datetime',
+        date: format.date === 'dmy' || format.date === 'mdy' ? format.date : 'ymd',
+        time: format.time === 'hms' ? 'hms' : 'hm'
+      };
     case 'text':
       return { kind: 'text' };
     default:

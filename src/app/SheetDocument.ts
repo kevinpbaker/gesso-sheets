@@ -1,4 +1,5 @@
-import { formatWith, type CellFormat } from '../sheet/Format';
+import { parseTypedDate } from '../sheet/Dates';
+import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format';
 import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import { Sheet } from '../sheet/Sheet';
@@ -172,8 +173,49 @@ export class SheetDocument {
     if (before === input) {
       return;
     }
-    this.writeCell(row, column, input);
-    this.record({ kind: 'text', row, column, before, after: input });
+    // One step, because typing a date is one action: it writes a
+    // serial number and the format that makes the serial legible, and
+    // undoing it has to take both back.
+    this.transact(() => {
+      this.writeCell(row, column, input);
+      this.record({ kind: 'text', row, column, before, after: input });
+      this.formatTypedDate(row, column, input);
+    });
+  }
+
+  /**
+   * A typed date brings its format with it.
+   *
+   * The engine turns `2026-09-24` into 46,289 — see `literalValue` —
+   * and on its own that is a cell showing forty-six thousand to
+   * somebody who typed a date. The format is what finishes the job,
+   * and it is applied here because the format axis is the document's
+   * and the value is the sheet's.
+   *
+   * Only over `General`, and that is the whole of the rule. A cell
+   * somebody has deliberately formatted has been answered already: a
+   * date typed into a currency column shows as currency, which looks
+   * odd and is what every spreadsheet does, because the alternative is
+   * a format that silently undoes a choice somebody made on purpose.
+   * The pattern is the one they typed in, so slashes give slashes
+   * back.
+   */
+  private formatTypedDate(row: number, column: number, input: string): void {
+    const current = this.formats.formatAt(row, column);
+    if (current.number.kind !== 'general') {
+      return;
+    }
+    const typed = parseTypedDate(input);
+    if (typed === null) {
+      return;
+    }
+    const number: NumberFormat =
+      typed.date === null
+        ? { kind: 'time', pattern: typed.time ?? 'hm' }
+        : typed.time === null
+          ? { kind: 'date', pattern: typed.date }
+          : { kind: 'datetime', date: typed.date, time: typed.time };
+    this.setFormat(row, column, { ...current, number });
   }
 
   /**
