@@ -111,8 +111,9 @@ overflows both ways dropped every wheel delta on the axis it was not
 classified as — a trackpad could not scroll the sheet sideways at all.
 Fixed by asking each axis whether it has room. The scrollbar thumb's
 grab target was also the six pixels it paints, which made a press page
-the track instead of dragging. `UiTouchScroller` is still one-axis and
-will need the same treatment before a tablet is in scope.
+the track instead of dragging. `UiTouchScroller` had the same bug and
+now has the same fix, through a `hasScrollRoom` the two paths share
+rather than write twice.
 
 **Paste into a range.** `UiEditingController.paste` routes pasted text
 into the focused editable. A spreadsheet needs to intercept a paste when
@@ -1004,36 +1005,53 @@ export, rich text runs *within* a single cell (formatting is
 per-cell, and a bold word inside a cell is a different text model),
 and touch.
 
-Touch is the one with a date on it. `UiTouchScroller` is still
-one-axis, noted in Phase 0 and still true, so a tablet cannot scroll
-this sheet sideways at all. Whichever phase first wants a tablet
-closes it.
+Touch was the one with a date on it, and the date has passed:
+`UiTouchScroller` took one axis per container, noted in Phase 0 and
+true for ten phases, so a tablet could not scroll this sheet sideways
+at all. That is fixed in the engine now. What touch still wants before
+a tablet is in scope is this application's own: targets sized for a
+finger, a long press that means what a right click means, and a
+selection that can be dragged without a hover to show what it would
+select.
 
 ## What Gesso still does not have
 
-Carried forward from the head of this file, with what Part Two adds:
+Carried forward from the head of this file, with what Part Two adds.
+Most of it is struck through now. Two of these were closed by the
+engine while Phase 10 was running, and the rest in one pass over the
+list afterwards, which is the argument for keeping a list like this in
+the application rather than in the engine: every one of them was found
+by trying to build something, and none of them would have been found by
+reading the engine.
 
-- **Menu bar traversal.** `Menu` is a popup with no notion of a bar
-  above it, and it traps focus, so the arrows cannot reach the bar to
-  move along it. *Worked around in Phase 8* by owning the traversal in
-  `MenuBarModel.ts` and drawing the panel in an overlay that does not
-  take the keyboard. The shape is known now, so it can be upstreamed
-  as a peer of `Menu` rather than a second mode on it.
-- **A focus trap with nothing to focus.** `UiFocusManager.settleScope`
-  moves focus into the innermost scope and blurs when that scope holds
-  nothing focusable, so `Dialog` — whose body is not `focusable`,
-  unlike `Menu`'s — hands the keyboard to nothing when its content is
-  plain text. Found in Phase 8. The one-line fix, making the body
-  focusable as `Menu`'s is, puts the dialog container into the Tab
-  cycle and breaks `Overlays.spec.ts`; the real fix is either a
-  `tabStop: false` of the kind `tabindex="-1"` gives the DOM, or a
-  `settleScope` that falls back to the scope root instead of blurring.
-  Both are focus-semantics decisions with a wide blast radius and
-  deserve their own change rather than a drive-by. *Narrower than it
-  looked after Phase 9*: `focusable: false` already exists as the
-  opt-out half, so `Dialog` making its body `focusable: true` and
-  every control inside it staying an ordinary stop would work — what
-  is missing is only that the body must not itself become a stop.
+What is genuinely left is the floating object layer, which Phase 15
+needs and nothing before it does, and first-class per-edge border
+properties, which `borders()` may well have made unnecessary.
+
+- ~~**Menu bar traversal.**~~ *Closed, and upstreamed.* `Menu` is a
+  popup that traps focus, so the arrows could not reach the bar to
+  move along it, and Phase 8 worked around that by owning the
+  traversal here. `menuBarStep` is now a peer of `Menu` in
+  `gesso-components`, generic in the command type, with its own specs
+  against its own menus; `MenuBarModel.ts` is the four lines that bind
+  it to `CommandId`, and its spec still runs against this
+  application's real menus, which is the second consumer the upstream
+  version needed. The *chrome* stays here: a third of `MenuBar.tsx` is
+  this application's accelerator column, mnemonic underlines and
+  theme, and generalising a component against one consumer is how a
+  library gets props nobody wants.
+- ~~**A focus trap with nothing to focus.**~~ *Closed, and this file
+  had guessed the fix right.* `UiFocusManager.settleScope` blurred
+  when the innermost scope held nothing focusable, so a `Dialog` whose
+  content is plain text handed the keyboard to nothing and could not
+  be dismissed with Escape. Both halves this file named turned out to
+  be needed and neither was enough on its own: `tabStop`, which is
+  `tabindex="-1"` — focusable, reachable by a press and by `focus()`,
+  skipped by the cycle — and a `settleScope` that falls back to the
+  scope root before blurring. `Dialog` sets `focusable: true,
+  tabStop: false` on its body. The prediction that the one-line
+  version breaks `Overlays.spec.ts` was right, and the two-property
+  version does not.
 - ~~**A mounted set that depends on the document.**~~ *Closed.*
   `UiVirtualSheet` mounted what the window covered, so a merged cell
   anchored above the window could not paint into it and a frozen row
@@ -1072,13 +1090,17 @@ Carried forward from the head of this file, with what Part Two adds:
   thin rects per bordered cell is four draw instances and zero nodes.
   Phase 10 can have borders without an engine change.
 
-  What is genuinely missing is smaller and only matters to a general
-  `borders()` modifier: `decorationRect` resolves `x`/`y` from the
-  node's top-left and defaults `width`/`height` to the node's own, so
-  a shape cannot say "the bottom edge" without already knowing the
-  height. An application that knows its own geometry — this one knows
-  `ROW_HEIGHT` and its column widths — does not need it. An anchoring
-  convention on `DecorationBox` would close it in about ten lines.
+  What was genuinely missing is *closed*, and it was not an anchoring
+  convention. `DecorationBox` now takes `right` and `bottom`, and the
+  rule is CSS's for an absolutely positioned box: any two of near
+  edge, size and far edge fix an axis. An anchor alone would have
+  covered "the bottom edge" and not "the span between the two
+  horizontal borders", which is what a side edge is and what decided
+  the shape. `borders()` in `gesso-core` is the general modifier that
+  needed it — this application still does its own, because it pushes
+  per-cell shapes into a subject and a modifier per cell is not the
+  same thing, but anything that is not a hundred thousand cells can
+  now just ask.
 
   First-class `borderTopWidth` props are a different and much larger
   change, and the cost is not where it looks: the property, the paint
@@ -1088,7 +1110,41 @@ Carried forward from the head of this file, with what Part Two adds:
   instance carries one colour — so four widths need a wider vertex
   format, an anisotropic inner rect in the shader, and up to four
   instances when the colours differ.
-- **Two-axis touch scroll.** Still open, from Phase 0.
+- ~~**Two-axis touch scroll.**~~ *Closed.* `UiTouchScroller` picked one
+  axis per container from its flex direction, exactly as
+  `UiWheelController` did before 38e70a3, so a finger could not move
+  this sheet sideways at all. The same fix on the same shared state,
+  through a `hasScrollRoom` the two paths now share rather than write
+  twice, and a fling that passes the threshold per axis so a vertical
+  throw does not drift sideways by the thumb.
+- ~~**The engine on the thread that does not run it.**~~ *Closed, and
+  it was never on this list because nobody had weighed a bundle.*
+  `createApp` took either the worker options or a root component, and
+  the overload that took a component reached `GessoAppBuilder` →
+  `GessoApp` → `GessoRuntime`: the layout engine, both renderers and
+  the hit-tester, statically, in every shell. A bundler cannot see
+  which half of one function a call reaches, so this application's
+  main thread downloaded and parsed all of it in order to create a
+  canvas and forward input. The single-thread configuration is now
+  `createSyncApp`, and `check-bundle-size.ts` holds the line with a
+  budget and with a look for Canvas2D calls in the shell's bytes.
+  Measured here: **152.7 kB gzipped to 45.0**, and what is left is the
+  proof panel, which is the one thing on this thread that is supposed
+  to be.
+- ~~**A fan-out that scales.**~~ *Closed, and this application is why
+  it exists.* Every prop taking an Observable is the whole binding
+  model and it has a cliff: N cells each reading their own slice of
+  one channel is N pipelines per emission, and RxJS removes an
+  observer by scanning a list, so tearing down a window is quadratic.
+  This file's Phases 0, 3 and 10 each learned that separately and each
+  wrote the same `Map` of subjects with one writer — 0.2 ms of median
+  frame and five milliseconds of input latency, measured, for one
+  piped binding per cell. `fanOut` in `gesso-framework` is that
+  pattern with the lesson attached, and its `changed` hint is where the
+  frame is won: one key changing costs one read rather than ten
+  thousand. The grid here can drop its hand-rolled version whenever
+  somebody wants to; it has not, because the hand-rolled one works and
+  a rewrite of the hot path wants its own phase.
 
 ---
 

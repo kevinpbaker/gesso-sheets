@@ -3,8 +3,8 @@
 # Written by scripts/vendor-gesso.sh. pnpm 11 reads overrides only
 # from this file, not from package.json.
 overrides:
-  gesso-components: file:vendor/gesso-components-0.2.1-e6bc744f.tgz
-  gesso-core: file:vendor/gesso-core-0.2.1-9044f778.tgz
+  gesso-components: file:vendor/gesso-components-0.2.1-b897b9dc.tgz
+  gesso-core: file:vendor/gesso-core-0.2.1-c80d25f2.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.2.1-463f467f.tgz
   gesso-framework: file:vendor/gesso-framework-0.2.1-bf739010.tgz
   gesso-testing: file:vendor/gesso-testing-0.2.1-38196b17.tgz
