@@ -83,6 +83,21 @@ export interface SheetEditing {
   dismiss(): boolean;
   /** The chrome, saying what it has open. Called once, on mount. */
   provideDismiss(run: () => boolean): void;
+  /**
+   * Puts the tab strip into rename mode, for `Sheet ▸ Rename`.
+   *
+   * The command is dispatched by the top bar and the box that has to
+   * open is along the bottom, and the two are siblings — so it goes
+   * the way every other cross-chrome call already goes, through the
+   * handle both of them hold. The alternative is a rename that works
+   * from the strip and not from the menu, which is the half of the
+   * feature a keyboard cannot reach.
+   */
+  renameSheet(): void;
+  provideRename(run: () => void): void;
+  /** Puts the keyboard on the tab strip, for Alt+F10. */
+  focusTabs(): void;
+  provideTabs(run: () => void): void;
 }
 
 /**
@@ -128,6 +143,8 @@ export function editing(
   /** Set by the chrome on mount; does nothing until then. */
   let runCommand: (id: CommandId) => void = () => {};
   let dismiss: () => boolean = () => false;
+  let renameSheet: () => void = () => {};
+  let focusTabs: () => void = () => {};
 
   // The application worker's selection, when it is not one we caused.
   // Sending `setSelection` echoes the value straight back, which
@@ -298,6 +315,14 @@ export function editing(
     dismiss: () => dismiss(),
     provideDismiss: run => {
       dismiss = run;
+    },
+    renameSheet: () => renameSheet(),
+    provideRename: run => {
+      renameSheet = run;
+    },
+    focusTabs: () => focusTabs(),
+    provideTabs: run => {
+      focusTabs = run;
     }
   };
 }

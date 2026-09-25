@@ -33,7 +33,16 @@ import { SheetService } from './SheetService';
  * both at once.
  */
 
-const VIEWPORT = { width: 700, height: 300 };
+/**
+ * Tall enough that the grid is the size it has always been.
+ *
+ * The chrome around it grows — a row of toolbar icons in Phase 9, a
+ * strip of tabs in Phase 13 — and every time it does the grid loses
+ * rows and the specs that count them start measuring the chrome. The
+ * window is raised to match rather than the numbers being re-tuned,
+ * because the numbers are the claims.
+ */
+const VIEWPORT = { width: 700, height: 331 };
 
 interface Harness {
   ui: Rendered;
@@ -1050,10 +1059,18 @@ describe('picking a reference by clicking', () => {
       throw new Error(`row ${row} is not on screen`);
     }
     const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
-    return {
+    const point = {
       x: grid.x + GUTTER_WIDTH + column * COLUMN_WIDTH + 4,
       y: h.ui.getVisibleBox(rowNode).y + 4
     };
+    // A row can be mounted and still be above the visible area, which
+    // is what a scrolled grid looks like from here. Clicking there
+    // lands on the formula bar and reads as picking that did nothing
+    // — so it is said out loud instead.
+    if (point.y < grid.y || point.y > grid.y + grid.height) {
+      throw new Error(`row ${row} is mounted but scrolled out of view`);
+    }
+    return point;
   }
 
   async function clickCell(row: number, column: number): Promise<void> {

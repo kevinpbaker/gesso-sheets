@@ -15,6 +15,7 @@ import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
+import { TAB_COLOURS } from './SheetTabs';
 import { Sheet } from './SheetContract';
 import { acceleratorLabel, COMMANDS, menusFor, offers, STRESS_CELLS, type CommandId } from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
@@ -350,6 +351,61 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
        * one table for the whole application — so without this the
        * route would hide the command and answer it anyway.
        */
+      // ---- the sheets --------------------------------------------
+      case 'insertSheet':
+        sheet.send.addSheet();
+        break;
+      case 'duplicateSheet':
+        sheet.send.duplicateSheet(sheet.view.sheets.value.active);
+        break;
+      /**
+       * Renaming happens in the strip along the bottom, which is a
+       * sibling of this one — so the command goes through the handle
+       * both of them hold rather than being done twice.
+       */
+      case 'renameSheet':
+        edit.renameSheet();
+        return;
+      case 'sheetTabs':
+        edit.focusTabs();
+        return;
+      case 'deleteSheet': {
+        const tabs = sheet.view.sheets.value;
+        if (tabs.entries.length > 1) {
+          sheet.send.removeSheet(tabs.active);
+        }
+        break;
+      }
+      case 'moveSheetLeft':
+      case 'moveSheetRight': {
+        const tabs = sheet.view.sheets.value;
+        const to = tabs.active + (id === 'moveSheetLeft' ? -1 : 1);
+        if (to >= 0 && to < tabs.entries.length) {
+          sheet.send.moveSheet(tabs.active, to);
+        }
+        break;
+      }
+      case 'nextSheet':
+      case 'previousSheet': {
+        const tabs = sheet.view.sheets.value;
+        // Wrapped, because a strip somebody is stepping through has
+        // two ends and stopping dead at one of them is a shortcut
+        // that stops working exactly when it is being used.
+        const count = tabs.entries.length;
+        const to = (tabs.active + (id === 'nextSheet' ? 1 : -1) + count) % count;
+        sheet.send.activateSheet(to);
+        break;
+      }
+      case 'sheetColourNone':
+      case 'sheetColourBlue':
+      case 'sheetColourRed':
+      case 'sheetColourGreen':
+      case 'sheetColourPurple':
+      case 'sheetColourOrange': {
+        const named = id.slice('sheetColour'.length).toLowerCase();
+        sheet.send.setSheetColour(sheet.view.sheets.value.active, TAB_COLOURS[named] ?? null);
+        break;
+      }
       case 'recalculate':
         if (proof) {
           sheet.send.stress(STRESS_CELLS);

@@ -35,6 +35,7 @@ export type CommandId =
   | 'recalculate'
   | 'shortcuts'
   | 'menuBar'
+  | 'sheetTabs'
   | 'bold'
   | 'italic'
   | 'underline'
@@ -81,7 +82,21 @@ export type CommandId =
   | 'freezeHere'
   | 'freezeTopRow'
   | 'freezeFirstColumn'
-  | 'unfreeze';
+  | 'unfreeze'
+  | 'insertSheet'
+  | 'renameSheet'
+  | 'duplicateSheet'
+  | 'deleteSheet'
+  | 'moveSheetLeft'
+  | 'moveSheetRight'
+  | 'nextSheet'
+  | 'previousSheet'
+  | 'sheetColourNone'
+  | 'sheetColourBlue'
+  | 'sheetColourRed'
+  | 'sheetColourGreen'
+  | 'sheetColourPurple'
+  | 'sheetColourOrange';
 
 /**
  * How long a chain the proof command builds.
@@ -183,6 +198,26 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
   menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
+  /**
+   * The door to the tab strip, and it needs one.
+   *
+   * **Tab does not get there**, and cannot: Tab moves the selection
+   * one cell right, which is what it does in every spreadsheet, so
+   * the grid consumes it and a keyboard standing in the sheet can
+   * never leave by that route. Found in a browser and not by the
+   * specs, which drive focus rather than pressing the key — so the
+   * strip was a region that read perfectly in the accessibility tree
+   * and nobody using a keyboard could reach.
+   *
+   * Alt+F10 rather than a letter, because it is the same kind of
+   * thing F10 is and reads as the same gesture: F10 for the menus
+   * along the top, Alt+F10 for the tabs along the bottom. Hidden from
+   * the menus for the reason `menuBar` is — an item that takes you
+   * somewhere cannot usefully live in the place it takes you from —
+   * and still advertised by the shortcut sheet, which reads this
+   * table.
+   */
+  sheetTabs: { id: 'sheetTabs', label: 'Go to the sheet tabs', accelerator: { key: 'F10', alt: true }, hidden: true },
 
   /**
    * Alt, and not the Ctrl+Shift+= and Ctrl+- a desktop spreadsheet
@@ -229,6 +264,40 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * worse than no shortcut at all.
    */
   defineName: { id: 'defineName', label: 'Name the selection…' },
+
+  /**
+   * The sheets, as commands as well as tabs.
+   *
+   * The strip along the bottom is the surface a pointer wants; this
+   * is the one a keyboard wants, and it is the complete one. Every
+   * tab operation is here, because Phase 4's standard is that
+   * anything the mouse can do the keyboard can, and a colour chosen
+   * from a swatch nobody can tab to is a colour only half the people
+   * using this can set.
+   */
+  insertSheet: { id: 'insertSheet', label: 'Insert sheet' },
+  renameSheet: { id: 'renameSheet', label: 'Rename sheet…', accelerator: { key: 'F2', shift: true } },
+  duplicateSheet: { id: 'duplicateSheet', label: 'Duplicate sheet' },
+  deleteSheet: { id: 'deleteSheet', label: 'Delete sheet…' },
+  moveSheetLeft: { id: 'moveSheetLeft', label: 'Move sheet left' },
+  moveSheetRight: { id: 'moveSheetRight', label: 'Move sheet right' },
+  /**
+   * Alt, and not the Ctrl+PageUp and Ctrl+PageDown every desktop
+   * spreadsheet uses.
+   *
+   * Those switch *browser* tabs, and a page cannot prevent it. A
+   * shortcut that took somebody out of the spreadsheet altogether
+   * would be worse than no shortcut, which is the same reasoning the
+   * insert-row accelerators are on Alt for.
+   */
+  nextSheet: { id: 'nextSheet', label: 'Next sheet', accelerator: { key: 'PageDown', alt: true } },
+  previousSheet: { id: 'previousSheet', label: 'Previous sheet', accelerator: { key: 'PageUp', alt: true } },
+  sheetColourNone: { id: 'sheetColourNone', label: 'Tab colour: none' },
+  sheetColourBlue: { id: 'sheetColourBlue', label: 'Tab colour: blue' },
+  sheetColourRed: { id: 'sheetColourRed', label: 'Tab colour: red' },
+  sheetColourGreen: { id: 'sheetColourGreen', label: 'Tab colour: green' },
+  sheetColourPurple: { id: 'sheetColourPurple', label: 'Tab colour: purple' },
+  sheetColourOrange: { id: 'sheetColourOrange', label: 'Tab colour: orange' },
 
   /**
    * Six borders and not a grid of sixteen buttons.
@@ -459,6 +528,30 @@ export const MENUS: readonly MenuDefinition[] = [
       'unmergeCells',
       SEPARATOR,
       'clearFormat'
+    ]
+  },
+  {
+    id: 'sheet',
+    label: 'Sheet',
+    mnemonic: 's',
+    entries: [
+      'insertSheet',
+      'duplicateSheet',
+      'renameSheet',
+      'deleteSheet',
+      SEPARATOR,
+      'moveSheetLeft',
+      'moveSheetRight',
+      SEPARATOR,
+      'previousSheet',
+      'nextSheet',
+      SEPARATOR,
+      'sheetColourNone',
+      'sheetColourBlue',
+      'sheetColourRed',
+      'sheetColourGreen',
+      'sheetColourPurple',
+      'sheetColourOrange'
     ]
   },
   {

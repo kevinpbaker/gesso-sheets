@@ -956,7 +956,7 @@ has, and not in a click handler.
 tree, keyboard-only wherever keyboard will do — and the reference
 picking written as a table of (caret context, click) → result.
 
-### Phase 13 — Many sheets
+### Phase 13 — Many sheets — **done**
 
 Tabs along the bottom: add, rename, delete, reorder, duplicate,
 colour. `Sheet2!A1` and `'Q3 Budget'!A1:B9` in the parser.

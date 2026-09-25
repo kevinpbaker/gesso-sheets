@@ -4,6 +4,7 @@ import { type ComponentContext, type Inputs } from 'gesso-framework';
 import { Grid } from './Grid';
 import { Sheet } from './SheetContract';
 import { editing } from './SheetEditing';
+import { SheetTabs } from './SheetTabs';
 import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
 
@@ -17,10 +18,11 @@ import { TopBar } from './TopBar';
  * parser, the dependency graph, the recalc — is on the other thread
  * and shares nothing with this file but the token.
  *
- * Three pieces rather than one since Phase 8, and the split is by who
+ * Four pieces rather than one since Phase 13, and the split is by who
  * owns the keyboard: `TopBar` owns the menus, the fields and command
- * dispatch, `Grid` owns the sheet, and `StatusBar` owns nothing at
- * all and is the only one of the three that cannot be focused.
+ * dispatch, `Grid` owns the sheet, `SheetTabs` owns the strip along
+ * the bottom, and `StatusBar` owns nothing at all and is the only one
+ * of the four that cannot be focused.
  *
  * The same screen on both routes, and deliberately the same one: the
  * proof route is not a different application with a spreadsheet in
@@ -42,6 +44,7 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
     <column width={percent(100)} height={percent(100)} backgroundColor="background">
       <TopBar editing={edit} proof={inputs.proof.value === true} />
       <Grid editing={edit} />
+      <SheetTabs editing={edit} />
       <StatusBar />
     </column>
   );
