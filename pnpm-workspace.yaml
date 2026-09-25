@@ -4,8 +4,8 @@
 # from this file, not from package.json.
 overrides:
   gesso-components: file:vendor/gesso-components-0.2.1-af57cdae.tgz
-  gesso-core: file:vendor/gesso-core-0.2.1-fac8cce7.tgz
-  gesso-devtools: file:vendor/gesso-devtools-0.2.1-463f467f.tgz
-  gesso-framework: file:vendor/gesso-framework-0.2.1-3a8db503.tgz
+  gesso-core: file:vendor/gesso-core-0.2.1-fbef44e8.tgz
+  gesso-devtools: file:vendor/gesso-devtools-0.2.1-8ba1b124.tgz
+  gesso-framework: file:vendor/gesso-framework-0.2.1-3750409e.tgz
   gesso-testing: file:vendor/gesso-testing-0.2.1-38196b17.tgz
   gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz
