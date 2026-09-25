@@ -14,10 +14,11 @@ import { FocusService, internalState, type ComponentContext, type Inputs } from 
 import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
-import { NameBox } from './NameBox';
+import { NameBox, ONE_CELL } from './NameBox';
 import { Sheet } from './SheetContract';
 import { acceleratorLabel, COMMANDS, menusFor, offers, STRESS_CELLS, type CommandId } from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
+import { formatRange, relativeRef } from '../sheet/A1';
 import type { CellPaint } from '../sheet/Format';
 import { ICONS } from './icons';
 import { Toolbar, type ToolbarItem } from './Toolbar';
@@ -128,6 +129,16 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
 
   const finding = internalState<Finding>('closed');
   const shortcutsOpen = internalState(false);
+  /**
+   * The line under the bar: what the name box is waiting for, or why
+   * it would not take what it was given.
+   *
+   * One slot rather than two, because it is one conversation. `Insert
+   * ▸ Name` opens it by saying which range is about to be named, the
+   * box answers in the same place when the name will not do, and a
+   * keystroke that changes the name clears it.
+   */
+  const notice = internalState('');
   /** Where the paste hint is, when somebody asks for Paste from a menu. */
   const pasteHint = internalState(false);
 
@@ -302,8 +313,36 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         askFor('find', () => (finding.value = id));
         return;
       case 'gotoCell':
+        notice.value = '';
         askFor('name');
         return;
+      /**
+       * `Insert ▸ Name`, which is the name box with a sentence under
+       * it.
+       *
+       * The item exists because the gesture had no way in: somebody
+       * who has not been told that the box showing `B7` also defines
+       * names will never find out. It does not open a dialog, because
+       * a dialog would ask which range — and the selection has
+       * already answered, which is the whole reason the gesture is
+       * the box.
+       */
+      case 'defineName': {
+        const at = edit.selectionNow();
+        const range = formatRange({
+          start: relativeRef(Math.min(at.row, at.anchorRow), Math.min(at.column, at.anchorColumn)),
+          end: relativeRef(Math.max(at.row, at.anchorRow), Math.max(at.column, at.anchorColumn))
+        });
+        if (at.row === at.anchorRow && at.column === at.anchorColumn) {
+          // Said rather than greyed out. A disabled item tells
+          // somebody they cannot, and this tells them how.
+          notice.value = ONE_CELL;
+          return;
+        }
+        notice.value = `Type a name for ${range}, then press Enter.`;
+        askFor('name');
+        return;
+      }
       /**
        * Guarded rather than trusted, because a command has three ways
        * in and only two of them are drawn. The button and the menu
@@ -537,6 +576,32 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   ];
 
   /**
+   * The notice, as a rule and a line of text.
+   *
+   * Rebuilt per sentence rather than built once like the find bar,
+   * which is safe here for the reason it was not there: there is
+   * nothing inside it to focus and nothing to lose. It carries
+   * `status` so a screen reader is told without being interrupted,
+   * which is what a sentence under a field is for.
+   */
+  const noticeRow = (text: string) => [
+    <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
+    <row
+      key="notice"
+      width={percent(100)}
+      y="center"
+      paddingLeft={8}
+      paddingRight={8}
+      paddingTop={4}
+      paddingBottom={4}
+      backgroundColor="surface"
+      role="status"
+      label="Name box notice">
+      <text text={text} fontSize={11} color="textMuted" textWrap="word" selectable={false} />
+    </row>
+  ];
+
+  /**
    * What the formula bar shows: the draft while a cell is open, and
    * what the application worker says the cell holds otherwise.
    *
@@ -597,7 +662,23 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           menus={menusFor(proof)}
           enabled={enabled}
           onChoose={run}
-          onDismiss={() => edit.focusSheet()}
+          /**
+           * The sheet gets the keyboard back, unless the command that
+           * closed the menu wanted it somewhere else.
+           *
+           * `Insert ▸ Name` puts it in the name box and the menu
+           * closes immediately after — so without this the box was
+           * focused and then unfocused within the frame, and the
+           * person typed their name into cell A1. `wanted` covers the
+           * field that has not mounted yet, which is the find bar's
+           * case.
+           */
+          onDismiss={() => {
+            const claimed = focus.focused.value;
+            if (wanted === null && claimed !== nameBoxNode && claimed !== findFieldNode) {
+              edit.focusSheet();
+            }
+          }}
           ref={(node: UiNode | null) => (menuBarNode = node)}
         />
         <box flex={1} minWidth={0} />
@@ -606,7 +687,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       </row>
       <box width={percent(100)} height={1} backgroundColor="border" />
       <row width={percent(100)} y="center" gap={8} padding={6}>
-        <NameBox editing={edit} ref={arrived('name')} />
+        <NameBox editing={edit} ref={arrived('name')} onNotice={(text: string) => (notice.value = text)} />
         <editabletext
           value={formula}
           spans={formulaSpans$}
@@ -635,6 +716,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           onBlur={refreshFormulaSpans}
         />
       </row>
+      {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
       <PasteHint open={pasteHint} onClose={() => (pasteHint.value = false)} />

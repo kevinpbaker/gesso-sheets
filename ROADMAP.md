@@ -930,7 +930,7 @@ half-implemented pattern language that ignored the parts it could not
 do would produce text that is wrong rather than absent, which is worse
 in a cell nobody is checking.
 
-### Phase 12 — The formula editor
+### Phase 12 — The formula editor — **done**
 
 Everything a person uses while actually typing a formula: function
 autocomplete with the signature and the current argument highlighted,

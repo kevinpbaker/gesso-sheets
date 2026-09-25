@@ -86,6 +86,18 @@ describe('the top bar from the keyboard', () => {
 
   const address = () => textProperty(h.ui.getByRole('textbox', { name: 'Name box' }));
   const focused = () => h.ui.runtime.input.focus.focusedNode;
+  /** The sentence under the bar, or the empty string when there is none. */
+  const notice = (): string => {
+    const row = h.ui.queryByRole('status', { name: 'Name box notice' });
+    if (row === null) {
+      return '';
+    }
+    return h.ui
+      .allNodes()
+      .filter(node => node.parent === row)
+      .map(node => String(node.properties.get('text') ?? ''))
+      .join('');
+  };
 
   describe('the menu bar', () => {
     beforeEach(async () => {
@@ -271,12 +283,21 @@ describe('the top bar from the keyboard', () => {
     /**
      * `B7+1` is a formula typed into the wrong box. Jumping to B7
      * would be reading half of what somebody wrote and acting on it.
+     *
+     * It is not an address and not a name the sheet knows, so the box
+     * reads it as an attempt to name the selection and says why that
+     * will not do. The text is left where it is: the sentence under
+     * the bar is about *that* text, and reverting to `A1` would take
+     * away the thing it is talking about.
      */
     it('stays put when what was typed is not an address', async () => {
       await press('g', { ctrl: true });
       await type('not a cell');
       await press('Enter');
-      expect(address()).toBe('A1');
+      expect(h.document.selection.row).toBe(0);
+      expect(h.document.selection.column).toBe(0);
+      expect(address()).toBe('not a cell');
+      expect(notice()).toContain('starts with a letter');
     });
 
     it('puts the address back on Escape', async () => {
@@ -285,6 +306,101 @@ describe('the top bar from the keyboard', () => {
       await press('Escape');
       expect(address()).toBe('A1');
       expect(focused()).toBe(h.ui.getByRole('grid'));
+    });
+  });
+
+  /**
+   * `Insert ▸ Name`, which is a route to the box rather than a second
+   * way of doing what the box does.
+   *
+   * Worth its own specs because the gesture was unreachable: naming a
+   * range worked and nothing anywhere said so.
+   */
+  describe('naming the selection from the menu', () => {
+    beforeEach(async () => {
+      h = await mount();
+      await reachTheGrid();
+    });
+
+    // Chosen with the keyboard, like everything else in this file.
+    // It is the last entry in the menu, which ArrowUp reaches by
+    // wrapping — and a menu that did not wrap would fail here rather
+    // than quietly choosing something else, because only this command
+    // writes a sentence under the bar.
+    const chooseName = async (): Promise<void> => {
+      await press('F10');
+      await press('i');
+      await press('ArrowUp');
+      await press('Enter');
+      await h.served.settle();
+      await h.ui.settle();
+    };
+
+    it('is in the Insert menu', async () => {
+      await press('F10');
+      await press('i');
+      expect(h.ui.getByRole('menuitem', { name: 'Name the selection…' })).toBeDefined();
+    });
+
+    it('puts the keyboard in the name box and says which range', async () => {
+      await press('ArrowDown', { shift: true });
+      await press('ArrowRight', { shift: true });
+      await chooseName();
+
+      expect(focused()).toBe(h.ui.getByRole('textbox', { name: 'Name box' }));
+      expect(notice()).toContain('A1:B2');
+    });
+
+    it('names the range when one is typed', async () => {
+      await press('ArrowDown', { shift: true });
+      await press('ArrowRight', { shift: true });
+      await chooseName();
+
+      await type('Block');
+      await press('Enter');
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(h.document.sheet.names.rangeOf('Block')).toMatchObject({
+        start: { row: 0, column: 0 },
+        end: { row: 1, column: 1 }
+      });
+      expect(notice()).toBe('');
+      expect(focused()).toBe(h.ui.getByRole('grid'));
+    });
+
+    /** Said rather than greyed out: the item tells them how instead. */
+    it('explains itself on a single cell rather than doing nothing', async () => {
+      await chooseName();
+      expect(notice()).toContain('more than one cell');
+      expect(focused()).toBe(h.ui.getByRole('grid'));
+    });
+
+    it('says why a name will not do, and keeps it to be fixed', async () => {
+      await press('ArrowDown', { shift: true });
+      await chooseName();
+
+      await type('MEDIAN');
+      await press('Enter');
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(notice()).toContain('function');
+      expect(address()).toBe('MEDIAN');
+      expect(h.document.sheet.names.rangeOf('MEDIAN')).toBeNull();
+    });
+
+    /** A keystroke changes the name, so the sentence is about nothing. */
+    it('clears the sentence once the name is being changed', async () => {
+      await press('ArrowDown', { shift: true });
+      await chooseName();
+
+      await type('MEDIAN');
+      await press('Enter');
+      expect(notice()).not.toBe('');
+
+      await type('Total');
+      expect(notice()).toBe('');
     });
   });
 

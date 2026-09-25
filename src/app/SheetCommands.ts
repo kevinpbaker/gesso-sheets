@@ -60,6 +60,7 @@ export type CommandId =
   | 'insertColumnRight'
   | 'deleteRows'
   | 'deleteColumns'
+  | 'defineName'
   | 'borderAll'
   | 'borderOutline'
   | 'borderTop'
@@ -212,6 +213,22 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     label: 'Delete columns',
     accelerator: { key: '-', ctrl: true, alt: true, shift: true, shifted: '_' }
   },
+
+  /**
+   * The menu route to a gesture that already existed.
+   *
+   * Naming a range is done in the name box — select, type what it is,
+   * press Enter — and a gesture nobody can find is a feature nobody
+   * has. This item is the route: it puts the keyboard in the box and
+   * says, under it, which range is about to be named. The work is
+   * still the box's, which is why this is a menu entry and not a
+   * dialog.
+   *
+   * No accelerator. Excel's is Ctrl+F3, F3 is the browser's find, and
+   * a shortcut that opens the browser's own search bar instead is
+   * worse than no shortcut at all.
+   */
+  defineName: { id: 'defineName', label: 'Name the selection…' },
 
   /**
    * Six borders and not a grid of sixteen buttons.
@@ -400,7 +417,9 @@ export const MENUS: readonly MenuDefinition[] = [
       'insertColumnRight',
       SEPARATOR,
       'deleteRows',
-      'deleteColumns'
+      'deleteColumns',
+      SEPARATOR,
+      'defineName'
     ]
   },
   {

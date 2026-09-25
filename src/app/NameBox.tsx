@@ -4,8 +4,18 @@ import { editorFor, type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } 
 import { internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { columnName, parseAddress, relativeRef, type RangeRef } from '../sheet/A1';
+import { nameProblem, nameProblemText } from '../sheet/Names';
 import type { SheetName } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
+
+/**
+ * Why a single cell is not named.
+ *
+ * The rule is this side's, because it is about the selection rather
+ * than about the name, and `nameProblem` is only ever asked about a
+ * name.
+ */
+export const ONE_CELL = 'A name is for a range. Select more than one cell, then name it.';
 
 /**
  * The box to the left of the formula bar: where you are, and where
@@ -27,6 +37,14 @@ export interface NameBoxProps {
   readonly editing: SheetEditing;
   /** Receives the node, so a command can put the keyboard here. */
   readonly ref?: (node: UiNode | null) => void;
+  /**
+   * A sentence to show under the bar, or the empty string to clear it.
+   *
+   * The box is 92 pixels wide and the reasons are sentences, so the
+   * saying-so happens above this component and the knowing happens
+   * inside it.
+   */
+  readonly onNotice?: (text: string) => void;
 }
 
 export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
@@ -76,34 +94,67 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
     };
   };
 
+  const notice = (text: string): void => inputs.onNotice.value?.(text);
+
+  /**
+   * Naming the selection: the whole of `Insert ▸ Name` in one gesture.
+   *
+   * The rules are asked for here rather than sent for. `nameProblem`
+   * is the one place that holds them and it is pure, so both threads
+   * can call it: this one to *say* why a name will not do, the
+   * application worker to *refuse* it, because it owns the sheet.
+   * Sending for the answer instead would put a round trip between a
+   * keystroke and the sentence explaining it, and would leave the
+   * sentence stuck on a view key that cannot say the same thing
+   * twice.
+   *
+   * A single cell is not named. Naming one is legal in other
+   * spreadsheets and almost always a slip here — the selection was a
+   * range a moment ago — and a box that silently defined `Sales` as
+   * `B7` would be worse than one that says why it did not.
+   */
+  const define = (typed: string): void => {
+    /**
+     * The text first, the selection second.
+     *
+     * `not a cell` typed into the box is a slip rather than an
+     * attempt to name anything, and answering it with "select more
+     * than one cell" would explain a gesture nobody was making. What
+     * is wrong with what they typed is the thing they can see.
+     */
+    const problem = nameProblem(typed);
+    if (problem !== null) {
+      notice(nameProblemText(problem));
+      return;
+    }
+    const at = edit.selectionNow();
+    if (at.row === at.anchorRow && at.column === at.anchorColumn) {
+      notice(ONE_CELL);
+      return;
+    }
+    draft.value = null;
+    notice('');
+    edit.defineName(typed);
+    edit.focusSheet();
+  };
+
   const commit = (): void => {
     const typed = draft.value;
-    draft.value = null;
     if (typed === null) {
       return;
     }
     const range = parseAddress(typed) ?? namedRange(typed);
     if (range === null) {
-      /**
-       * Not an address and not a name the sheet knows — so it is
-       * somebody naming the selection.
-       *
-       * This is the whole of `Insert ▸ Name` in one gesture: pick a
-       * range, type what it is, press Enter. The rules live on the
-       * other thread and the answer comes back on the names view, so
-       * nothing here has to know what a legal name looks like.
-       *
-       * A single cell is not named. Naming one is legal and almost
-       * always a slip — the selection was a range a moment ago — and
-       * a name box that silently defined `Sales` as `B7` would be
-       * worse than one that did nothing.
-       */
-      const at = edit.selectionNow();
-      if (at.row !== at.anchorRow || at.column !== at.anchorColumn) {
-        edit.defineName(typed);
-      }
+      // Not an address and not a name the sheet knows, so it is
+      // somebody naming the selection. The draft is kept when that is
+      // refused: the sentence under the bar is only useful beside the
+      // text it is about, and springing back to `B7:D9` would throw
+      // away the thing that needs fixing.
+      define(typed);
       return;
     }
+    draft.value = null;
+    notice('');
     // The anchor goes on the *far* corner and the active cell is
     // extended back to the near one, because `extendTo` moves the
     // active corner and leaves the anchor. Somebody who asked for
@@ -145,6 +196,7 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
       event.preventDefault();
       event.stopPropagation();
       draft.value = null;
+      notice('');
       edit.focusSheet();
     }
   };
@@ -169,7 +221,12 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
       padding={4}
       role="textbox"
       label="Name box"
-      onInput={(event: UiTextChangeEvent) => (draft.value = event.value)}
+      onInput={(event: UiTextChangeEvent) => {
+        draft.value = event.value;
+        // A refusal is about the text that was committed. The moment
+        // that text changes it is about nothing, so it goes.
+        notice('');
+      }}
       onKeyDown={onKeyDown}
       onFocus={onFocus}
     />
