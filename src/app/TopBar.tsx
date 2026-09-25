@@ -130,8 +130,18 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   ];
 
   const finding = internalState<Finding>('closed');
-  /** Which half of the rules bar is showing, or neither. */
-  const ruling = internalState<'closed' | RulesTab>('closed');
+  /**
+   * Whether the rules bar is open, and which half it is showing.
+   *
+   * Two states rather than one, and not for tidiness: written as one,
+   * the bar's own `tab` prop was derived from the state that switches
+   * the bar in and out — so swapping it in emitted into its own
+   * props in the same turn, and the subtree arrived in the
+   * accessibility tree having never been laid out. A browser showed
+   * a bar of zero height with every role in it correct.
+   */
+  const ruling = internalState(false);
+  const rulesTab = internalState<RulesTab>('format');
   const shortcutsOpen = internalState(false);
   /**
    * The line under the bar: what the name box is waiting for, or why
@@ -321,7 +331,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return;
       case 'conditionalFormat':
       case 'dataValidation':
-        askFor('rules', () => (ruling.value = id === 'conditionalFormat' ? 'format' : 'validation'));
+        askFor('rules', () => {
+          rulesTab.value = id === 'conditionalFormat' ? 'format' : 'validation';
+          ruling.value = true;
+        });
         return;
       case 'clearRules':
         sheet.send.clearRules();
@@ -614,8 +627,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       pasteHint.value = false;
       return true;
     }
-    if (ruling.value !== 'closed') {
-      ruling.value = 'closed';
+    if (ruling.value) {
+      ruling.value = false;
       return true;
     }
     if (finding.value !== 'closed') {
@@ -672,6 +685,30 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       label="Name box notice">
       <text text={text} fontSize={11} color="textMuted" textWrap="word" selectable={false} />
     </row>
+  ];
+
+  /**
+   * The rules bar, built once and switched in — for the reason the
+   * find bar is, and it was written here the other way first.
+   *
+   * Built inside the `map` it is a *new* element on every emission,
+   * which is a new component, a new node and a new set of fields.
+   * The bar mounted, its roles reached the accessibility tree, and
+   * every node in it had a width and a height of zero: it was being
+   * replaced before it had ever been laid out. Every spec passed,
+   * because a spec asks what a node's properties are and the
+   * properties were right.
+   */
+  const rulesBar = [
+    <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
+    <RulesBar
+      key="rules"
+      editing={edit}
+      tab={rulesTab}
+      onTab={(next: RulesTab) => (rulesTab.value = next)}
+      onClose={() => (ruling.value = false)}
+      ref={arrived('rules')}
+    />
   ];
 
   /**
@@ -794,23 +831,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           onBlur={refreshFormulaSpans}
         />
       </row>
-      {ruling.pipe(
-        map(which =>
-          which === 'closed'
-            ? []
-            : [
-                <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
-                <RulesBar
-                  key="rules"
-                  editing={edit}
-                  tab={ruling.pipe(map(open => (open === 'validation' ? 'validation' : 'format')))}
-                  onTab={(next: RulesTab) => (ruling.value = next)}
-                  onClose={() => (ruling.value = 'closed')}
-                  ref={arrived('rules')}
-                />
-              ]
-        )
-      )}
+      {ruling.pipe(map(open => (open ? rulesBar : [])))}
       {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />

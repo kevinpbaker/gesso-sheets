@@ -1,4 +1,4 @@
-import { map, type Observable } from 'rxjs';
+import { combineLatest, map, type Observable } from 'rxjs';
 
 import {
   percent,
@@ -240,8 +240,9 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   ) => (
     <row gap={2} y="center" role="radiogroup" label={label}>
       {options.map(option => (
-        <row
+        <button
           key={option.id}
+          focusable={false}
           paddingLeft={7}
           paddingRight={7}
           paddingTop={3}
@@ -259,7 +260,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
             onPick?.();
           }}>
           <text text={option.label} fontSize={11} textWrap="none" color="controlForeground" selectable={false} />
-        </row>
+        </button>
       ))}
     </row>
   );
@@ -267,8 +268,9 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   const swatches = () => (
     <row gap={3} y="center" role="radiogroup" label="Colour">
       {FILLS.map((entry, index) => (
-        <row
+        <button
           key={entry.name}
+          focusable={false}
           width={20}
           height={18}
           borderRadius={4}
@@ -280,13 +282,16 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
           label={entry.name}
           states={fill.pipe(map((is): readonly UiSemanticState[] => (is === index ? ['checked'] : [])))}
           onClick={() => (fill.value = index)}
-        />
+        >
+          <box width={0} height={0} />
+        </button>
       ))}
     </row>
   );
 
   const toggle = (label: string, held: { value: boolean } & Observable<boolean>) => (
-    <row
+    <button
+      focusable={false}
       paddingLeft={8}
       paddingRight={8}
       paddingTop={4}
@@ -301,7 +306,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
       states={held.pipe(map((is): readonly UiSemanticState[] => (is ? ['checked'] : [])))}
       onClick={() => (held.value = !held.value)}>
       <text text={label} fontSize={11} textWrap="none" color="controlForeground" selectable={false} />
-    </row>
+    </button>
   );
 
   const button = (label: string, onClick: () => void) => (
@@ -321,7 +326,38 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
     </button>
   );
 
-  const values = test.pipe(map(id => TESTS.find(entry => entry.id === id)?.values ?? 0));
+  /**
+   * The middle of the bar, from one observable rather than two
+   * nested ones.
+   *
+   * Written as `{tab.pipe(map(… {values.pipe(map(…))} …))}` the bar
+   * mounted, reached the accessibility tree with every role in place,
+   * and laid out at zero by zero: an observable of elements inside an
+   * observable of elements is a subtree the engine never measures.
+   * Every spec passed, because a spec asks what a node's properties
+   * are and the properties were right; a browser showed a bar one
+   * pixel tall.
+   */
+  const middle = combineLatest([inputs.tab, test]).pipe(
+    map(([which, id]) => {
+      if (which !== 'format') {
+        return [
+          choice('Allow', CHECKS, check),
+          field('Allowed values', allowed, applyValidation, 200, inputs.ref.value ?? undefined),
+          toggle('Refuse anything else', strict),
+          button('Apply', applyValidation)
+        ];
+      }
+      const count = TESTS.find(entry => entry.id === id)?.values ?? 0;
+      return [
+        choice('Condition', TESTS, test),
+        ...(count === 0 ? [] : [field('Value', first, applyFormat, 110, inputs.ref.value ?? undefined)]),
+        ...(count > 1 ? [field('And', second, applyFormat, 80)] : []),
+        swatches(),
+        button('Apply', applyFormat)
+      ];
+    })
+  );
 
   return (
     <row
@@ -338,8 +374,9 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
       label="Rules for the selection">
       <row gap={2} y="center" role="radiogroup" label="Rule kind">
         {(['format', 'validation'] as const).map(which => (
-          <row
+          <button
             key={which}
+            focusable={false}
             paddingLeft={7}
             paddingRight={7}
             paddingTop={3}
@@ -360,39 +397,10 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
               color="controlForeground"
               selectable={false}
             />
-          </row>
+          </button>
         ))}
       </row>
-      {inputs.tab.pipe(
-        map(which =>
-          which === 'format'
-            ? [
-                <row key="format" gap={8} y="center">
-                  {choice('Condition', TESTS, test)}
-                  {values.pipe(
-                    map(count =>
-                      count === 0
-                        ? []
-                        : [
-                            field('Value', first, applyFormat, 110, inputs.ref.value ?? undefined),
-                            ...(count > 1 ? [field('And', second, applyFormat, 80)] : [])
-                          ]
-                    )
-                  )}
-                  {swatches()}
-                  {button('Apply', applyFormat)}
-                </row>
-              ]
-            : [
-                <row key="validation" gap={8} y="center">
-                  {choice('Allow', CHECKS, check)}
-                  {field('Allowed values', allowed, applyValidation, 200, inputs.ref.value ?? undefined)}
-                  {toggle('Refuse anything else', strict)}
-                  {button('Apply', applyValidation)}
-                </row>
-              ]
-        )
-      )}
+      {middle}
       <box flex={1} minWidth={0} />
       {button('Clear rules', () => {
         sheet.send.clearRules();
