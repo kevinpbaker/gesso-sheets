@@ -984,7 +984,7 @@ aimed down a third axis. File format v3.
 reload proof run over a three-sheet workbook with cross-references in
 both directions.
 
-### Phase 14 — Formats that think
+### Phase 14 — Formats that think — **done**
 
 Conditional formatting and data validation.
 

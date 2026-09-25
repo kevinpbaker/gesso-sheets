@@ -206,6 +206,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
     ref?: (node: UiNode | null) => void
   ) => (
     <editabletext
+      key={`field-${label}`}
       ref={ref}
       value={value as never}
       width={width}
@@ -238,7 +239,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
     held: { value: T } & Observable<T>,
     onPick?: () => void
   ) => (
-    <row gap={2} y="center" role="radiogroup" label={label}>
+    <row key={`choice-${label}`} gap={2} y="center" role="radiogroup" label={label}>
       {options.map(option => (
         <button
           key={option.id}
@@ -266,7 +267,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   );
 
   const swatches = () => (
-    <row gap={3} y="center" role="radiogroup" label="Colour">
+    <row key="swatches" gap={3} y="center" role="radiogroup" label="Colour">
       {FILLS.map((entry, index) => (
         <button
           key={entry.name}
@@ -291,6 +292,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
 
   const toggle = (label: string, held: { value: boolean } & Observable<boolean>) => (
     <button
+      key={`toggle-${label}`}
       focusable={false}
       paddingLeft={8}
       paddingRight={8}
@@ -311,6 +313,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
 
   const button = (label: string, onClick: () => void) => (
     <button
+      key={`button-${label}`}
       onClick={onClick}
       label={label}
       paddingLeft={9}

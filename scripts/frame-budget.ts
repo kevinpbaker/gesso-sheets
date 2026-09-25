@@ -78,7 +78,19 @@ const BUDGET = {
    * cost it silently. Stated as a *difference*, like the one above, so
    * it means the same thing on a slower machine.
    */
-  costOfAnOpenMenu: 2
+  costOfAnOpenMenu: 2,
+  /**
+   * How much slower a frame is allowed to get with a colour scale
+   * over every cell of the sheet.
+   *
+   * Phase 14's exit criterion, and a *difference* like the two above
+   * so it means the same thing on a slower machine. A conditional
+   * format is resolved at the window rather than in the graph, so a
+   * rule covering a million cells has to cost the same scroll as a
+   * rule covering none: the work per publish is one comparison per
+   * visible cell, which should not be measurable.
+   */
+  costOfAConditionalFormat: 2
 };
 
 const PORT = Number(process.env.PROOF_PORT ?? '4319');
@@ -254,6 +266,78 @@ async function main(): Promise<void> {
       `an insert during a scroll: median frame ${inserted.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms idle`,
       inserted.median - idle.median <= BUDGET.costOfRecalculating,
       BUDGET.costOfRecalculating
+    );
+
+    // --------------------------------------------------------------
+    // A colour scale over every cell of the sheet
+    // --------------------------------------------------------------
+    //
+    // Phase 14's exit criterion. The obvious implementation of a
+    // conditional format is a graph node per cell it covers, which
+    // for a rule over the sheet is a million of them; this one asks
+    // the rule about the cells in the *window* at publish time and
+    // folds the answer into the palette index Phase 9 was already
+    // sending. So the claim is that a rule over a million cells
+    // scrolls like a sheet with no rules at all.
+    //
+    // Opened with its accelerator rather than from the Format menu,
+    // and that is not a preference: a bar switched into the chrome by
+    // a menu choice is never laid out, which is a bug that predates
+    // this phase and shows on `Edit ▸ Find…` too. See the commit that
+    // found it.
+    await openMenu(devtools, 'Edit');
+    await chooseItem(devtools, 'Select all');
+    await sleep(160);
+    await devtools.press('r', 82, 2 + 8);
+    await sleep(200);
+    const scale = await devtools.evaluate<{ x: number; y: number } | null>(
+      `(() => {
+         const el = document.querySelector('[aria-label="Colour scale"]');
+         if (el === null) { return null; }
+         const box = el.getBoundingClientRect();
+         return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+       })()`
+    );
+    if (scale === null) {
+      throw new Error('The conditional formatting bar did not open.');
+    }
+    await devtools.click(scale.x, scale.y);
+    await sleep(80);
+    const apply = await devtools.evaluate<{ x: number; y: number } | null>(
+      `(() => {
+         const el = document.querySelector('[aria-label="Apply"]');
+         if (el === null) { return null; }
+         const box = el.getBoundingClientRect();
+         return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+       })()`
+    );
+    if (apply === null) {
+      throw new Error('The conditional formatting bar has no Apply button.');
+    }
+    await devtools.click(apply.x, apply.y);
+    await sleep(250);
+
+    // And the rule really landed, or the run below measures a sheet
+    // quietly doing nothing — the same trap the recalculation run has.
+    // The bar closes when a rule is taken, so one still open is an
+    // Apply that did nothing.
+    const stillOpen = await devtools.evaluate<number>(
+      `document.querySelectorAll('[aria-label="Rules for the selection"]').length`
+    );
+    if (stillOpen !== 0) {
+      throw new Error('The rule was not taken: the conditional formatting bar is still open.');
+    }
+
+    const ruled = report(
+      'scrolling with a colour scale over every cell',
+      await scrollRun(devtools, 'scrolling with a colour scale over every cell'),
+      failures
+    );
+    check(
+      failures,
+      `a colour scale over every cell: median frame ${ruled.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms with no rules`,
+      ruled.median - idle.median <= BUDGET.costOfAConditionalFormat,
+      BUDGET.costOfAConditionalFormat
     );
 
     // --------------------------------------------------------------

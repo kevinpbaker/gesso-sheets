@@ -147,6 +147,20 @@ export class DevTools {
     }
   }
 
+  /**
+   * A key, with the modifiers a shortcut is held with.
+   *
+   * `Alt=1, Ctrl=2, Meta=4, Shift=8`, added together, which is what
+   * the protocol wants. A `rawKeyDown` rather than a `keyDown`
+   * because an accelerator is about the key and not the character it
+   * would type.
+   */
+  async press(key: string, code: number, modifiers = 0): Promise<void> {
+    for (const type of ['rawKeyDown', 'keyUp'] as const) {
+      await this.send('Input.dispatchKeyEvent', { type, key, windowsVirtualKeyCode: code, modifiers });
+    }
+  }
+
   close(): void {
     this.socket.close();
   }

@@ -275,7 +275,17 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * same gesture — pick a range, say what about it, press Enter — and
    * two bars would be two places to learn it.
    */
-  conditionalFormat: { id: 'conditionalFormat', label: 'Conditional formatting…' },
+  conditionalFormat: {
+    id: 'conditionalFormat',
+    label: 'Conditional formatting…',
+    /**
+     * `shifted` because a browser reports the character produced and
+     * not the key pressed: hold shift and press R and the event says
+     * `R`. The label is still written from `key`, which is what
+     * people have learned.
+     */
+    accelerator: { key: 'r', ctrl: true, shift: true, shifted: 'R' }
+  },
   dataValidation: { id: 'dataValidation', label: 'Data validation…' },
   clearRules: { id: 'clearRules', label: 'Clear rules from this sheet' },
 
