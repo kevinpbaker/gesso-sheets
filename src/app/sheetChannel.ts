@@ -16,6 +16,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
     view: {
       window: service.window,
       sheets: service.sheets,
+      validation: service.validation,
       geometry: service.geometry,
       selection: service.selection,
       editor: service.editor,
@@ -32,6 +33,10 @@ export function sheetChannel(service: SheetService): ServedChannel {
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
         service.setViewport(sheet, firstRow, lastRow, firstColumn, lastColumn),
+      addConditional: rule => service.addConditional(rule),
+      removeConditional: at => service.removeConditional(at),
+      addValidation: (rule, strict, message) => service.addValidation(rule, strict, message),
+      removeValidation: at => service.removeValidation(at),
       activateSheet: sheet => service.activateSheet(sheet),
       addSheet: () => service.addSheet(),
       renameSheet: (sheet, name) => service.renameSheet(sheet, name),

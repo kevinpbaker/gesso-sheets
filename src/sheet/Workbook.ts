@@ -964,6 +964,10 @@ function renameInFormula(input: string, from: string, to: string): string {
  * text. A date becomes its serial number, because in a spreadsheet
  * that is what a date *is* — see `Dates.ts`.
  */
+export function literalOf(input: string): CellValue {
+  return literalValue(input);
+}
+
 function literalValue(input: string): CellValue {
   const trimmed = input.trim();
   const upper = trimmed.toUpperCase();

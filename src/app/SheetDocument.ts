@@ -3,9 +3,12 @@ import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format'
 import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import type { RangeRef } from '../sheet/A1';
+import type { ConditionalRule } from '../sheet/Conditional';
+import type { Validation } from '../sheet/Validation';
 import type { NamedRange, NameProblem } from '../sheet/Names';
 import { Sheet } from '../sheet/Sheet';
-import { Workbook } from '../sheet/Workbook';
+import { literalOf, Workbook } from '../sheet/Workbook';
+import { validate } from '../sheet/Validation';
 import { shiftIndex, type Shift } from '../sheet/Shift';
 
 /**
@@ -16,7 +19,7 @@ import { shiftIndex, type Shift } from '../sheet/Shift';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit;
 
 /**
  * Where an edit was made, which every kind of edit has to say.
@@ -47,6 +50,23 @@ interface NamesEdit extends OnASheet {
   readonly column: number;
   readonly before: readonly NamedRange[];
   readonly after: readonly NamedRange[];
+}
+
+/**
+ * The conditional formats and validations of a sheet, before and
+ * after.
+ *
+ * Both lists whole rather than the entry that changed, on the same
+ * rule the names go by: a sheet holds a handful of rules, an edit
+ * that carries them whole cannot get its own inverse wrong, and the
+ * saving from being cleverer is a few hundred bytes.
+ */
+interface RulesEdit extends OnASheet {
+  readonly kind: 'rules';
+  readonly row: number;
+  readonly column: number;
+  readonly before: { readonly conditional: readonly ConditionalRule[]; readonly validations: readonly Validation[] };
+  readonly after: { readonly conditional: readonly ConditionalRule[]; readonly validations: readonly Validation[] };
 }
 
 interface TextEdit extends OnASheet {
@@ -191,6 +211,16 @@ interface Page {
   frozenRows: number;
   frozenColumns: number;
   selection: { row: number; column: number; anchorRow: number; anchorColumn: number };
+  /**
+   * Formats that think, and what a cell is allowed to hold.
+   *
+   * Per sheet like everything else drawn over the cells, and held as
+   * plain lists rather than indexed by cell: a rule is a fact about
+   * a *range*, and a million-cell range indexed per cell would be
+   * the million entries this whole design exists to avoid.
+   */
+  conditional: ConditionalRule[];
+  validations: Validation[];
 }
 
 function newPage(sheet: Sheet): Page {
@@ -203,7 +233,9 @@ function newPage(sheet: Sheet): Page {
     filteredRows: new Set<number>(),
     frozenRows: 0,
     frozenColumns: 0,
-    selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 }
+    selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
+    conditional: [],
+    validations: []
   };
 }
 
@@ -247,6 +279,14 @@ export class SheetDocument {
 
   get merges(): Merges {
     return this.page.merges;
+  }
+
+  get conditional(): readonly ConditionalRule[] {
+    return this.page.conditional;
+  }
+
+  get validations(): readonly Validation[] {
+    return this.page.validations;
   }
 
   get hiddenRows(): Set<number> {
@@ -304,10 +344,26 @@ export class SheetDocument {
    * text, or pressing Enter on a cell without touching it, must not
    * put an entry on the stack that undoes to itself and looks broken.
    */
-  setCell(row: number, column: number, input: string): void {
+  setCell(row: number, column: number, input: string): string | null {
     const before = this.sheet.input(row, column);
     if (before === input) {
-      return;
+      return null;
+    }
+    /**
+     * A rule that refuses, refusing.
+     *
+     * Only what was *typed*, and only when it is not a formula: a
+     * formula's value is not known until the recalculation has run,
+     * and a commit that waited for it would be a keystroke that
+     * blocked on the other thread. Those are marked after the fact
+     * instead, which is where the marker in the window comes from.
+     */
+    const rule = this.validationAt(row, column);
+    if (rule?.strict === true && !input.startsWith('=')) {
+      const complaint = validate(rule.rule, literalOf(input));
+      if (complaint !== null) {
+        return rule.message ?? complaint;
+      }
     }
     // One step, because typing a date is one action: it writes a
     // serial number and the format that makes the serial legible, and
@@ -317,6 +373,7 @@ export class SheetDocument {
       this.record({ kind: 'text', sheet: this.activeSheet, row, column, before, after: input });
       this.formatTypedDate(row, column, input);
     });
+    return null;
   }
 
   /**
@@ -556,6 +613,8 @@ export class SheetDocument {
         this.undoShift(edit);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.before);
+      } else if (edit.kind === 'rules') {
+        this.restoreRules(edit.before);
       } else {
         this.applyFormat(edit.row, edit.column, edit.before);
       }
@@ -587,6 +646,8 @@ export class SheetDocument {
         this.columnWidths = shiftWidths(edit.widths, edit.shift);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.after);
+      } else if (edit.kind === 'rules') {
+        this.restoreRules(edit.after);
       } else {
         this.applyFormat(edit.row, edit.column, edit.after);
       }
@@ -662,6 +723,86 @@ export class SheetDocument {
     });
     this.sheet.namesChanged();
     return true;
+  }
+
+  // ---------------------------------------------------------------------
+  // Formats that think, and what a cell is allowed to hold
+  // ---------------------------------------------------------------------
+
+  /**
+   * Adds a conditional format, as one step.
+   *
+   * The selection is left where it is: unlike a name or a cell edit,
+   * a rule is about a range somebody has already chosen, and moving
+   * the selection to announce it would take them away from what they
+   * were looking at.
+   */
+  addConditional(rule: ConditionalRule): void {
+    this.changeRules(page => page.conditional.push(rule), rule.range.start.row, rule.range.start.column);
+  }
+
+  removeConditional(at: number): boolean {
+    if (this.page.conditional[at] === undefined) {
+      return false;
+    }
+    const { row, column } = this.page.conditional[at].range.start;
+    this.changeRules(page => page.conditional.splice(at, 1), row, column);
+    return true;
+  }
+
+  addValidation(validation: Validation): void {
+    this.changeRules(
+      page => page.validations.push(validation),
+      validation.range.start.row,
+      validation.range.start.column
+    );
+  }
+
+  removeValidation(at: number): boolean {
+    if (this.page.validations[at] === undefined) {
+      return false;
+    }
+    const { row, column } = this.page.validations[at].range.start;
+    this.changeRules(page => page.validations.splice(at, 1), row, column);
+    return true;
+  }
+
+  /** The validation over a cell, or null. The first one wins. */
+  validationAt(row: number, column: number): Validation | null {
+    for (const validation of this.page.validations) {
+      if (coversCell(validation.range, row, column)) {
+        return validation;
+      }
+    }
+    return null;
+  }
+
+  private changeRules(change: (page: Page) => void, row: number, column: number): void {
+    const page = this.page;
+    const before = {
+      conditional: [...page.conditional],
+      validations: [...page.validations]
+    };
+    change(page);
+    this.record({
+      kind: 'rules',
+      sheet: this.activeSheet,
+      row,
+      column,
+      before,
+      after: { conditional: [...page.conditional], validations: [...page.validations] }
+    });
+  }
+
+  private restoreRules(held: {
+    readonly conditional: readonly ConditionalRule[];
+    readonly validations: readonly Validation[];
+  }): void {
+    const page = this.page;
+    page.conditional.length = 0;
+    page.conditional.push(...held.conditional);
+    page.validations.length = 0;
+    page.validations.push(...held.validations);
   }
 
   private restoreNames(entries: readonly NamedRange[]): void {
@@ -930,6 +1071,15 @@ export class SheetDocument {
  * wide. It is the same arithmetic the cells get, on an array instead
  * of a map.
  */
+/** Whether a cell is inside a range, corners in any order. */
+function coversCell(range: RangeRef, row: number, column: number): boolean {
+  const firstRow = Math.min(range.start.row, range.end.row);
+  const lastRow = Math.max(range.start.row, range.end.row);
+  const firstColumn = Math.min(range.start.column, range.end.column);
+  const lastColumn = Math.max(range.start.column, range.end.column);
+  return row >= firstRow && row <= lastRow && column >= firstColumn && column <= lastColumn;
+}
+
 function shiftWidths(widths: readonly number[], shift: Shift): number[] {
   if (shift.axis !== 'column') {
     return [...widths];

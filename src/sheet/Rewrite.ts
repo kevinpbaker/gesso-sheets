@@ -39,6 +39,20 @@ export function rewriteFormula(input: string, rowDelta: number, columnDelta: num
   return `=${printFormula(shift(formula, rowDelta, columnDelta))}`;
 }
 
+/**
+ * A tree with its relative references moved, without going through
+ * the text.
+ *
+ * Exported for the conditional formats, which move one rule's
+ * formula to every cell in the window on every publish. Through the
+ * text that is a parse per cell per publish; through the tree it is
+ * an allocation per node, which is the difference between the
+ * feature being affordable and not.
+ */
+export function shiftAstBy(node: Ast, rowDelta: number, columnDelta: number): Ast {
+  return shift(node, rowDelta, columnDelta);
+}
+
 function shift(node: Ast, rowDelta: number, columnDelta: number): Ast {
   switch (node.kind) {
     case 'ref':

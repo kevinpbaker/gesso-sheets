@@ -1,4 +1,6 @@
 import { channel } from 'gesso-framework';
+import type { ColourScale, ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
+import type { ValidationRule } from '../sheet/Validation';
 
 import { NO_BORDERS, type CellPaint } from '../sheet/Format';
 import { NO_STATS, type SheetStats } from './Statistics';
@@ -248,6 +250,39 @@ export interface SheetFormatWindow {
  * currency symbol or a thousands separator. It learns that a cell is
  * bold.
  */
+/**
+ * What a cell is not allowed to hold, and what it may.
+ *
+ * The marks are keyed like the format window and for the same
+ * reason: nested records diff structurally, so a cell that starts or
+ * stops breaking its rule is one patch and the rest of the window is
+ * silent.
+ *
+ * Only the cells *in view* are marked, which is the whole shape of
+ * this phase — a rule over a million cells is asked about the ones
+ * somebody can see.
+ */
+export interface SheetValidation {
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly cells: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /**
+   * Why the last commit was refused, or the empty string.
+   *
+   * Travels with the marks rather than as its own key because it is
+   * only ever read beside them: it answers "did that go in", which is
+   * a question about this rule at this moment.
+   */
+  readonly refused: string;
+  /**
+   * The values the active cell may take, when its rule is a list.
+   *
+   * Empty for every other kind, which is what the cell editor reads
+   * to decide whether there is a dropdown to offer.
+   */
+  readonly list: readonly string[];
+}
+
 export interface SheetPalette {
   readonly entries: readonly CellPaint[];
 }
@@ -290,6 +325,22 @@ export interface SheetStatus {
   readonly canRedo: boolean;
 }
 
+/**
+ * A conditional rule as it crosses the barrier.
+ *
+ * Plain data, because a `postMessage` carries no closures — which is
+ * also why the tests in `Conditional.ts` are a tagged union rather
+ * than a predicate. The range is the *selection's*, filled in on the
+ * other side, so the command says what the rule is and not where.
+ */
+export interface SheetConditionalRule {
+  readonly test: ConditionalTest | null;
+  readonly paint?: ConditionalPaint;
+  readonly scale?: ColourScale;
+}
+
+export type SheetValidationRule = ValidationRule;
+
 export interface SheetCommands {
   /**
    * The range the render worker has mounted, on the sheet it is
@@ -301,6 +352,18 @@ export interface SheetCommands {
    * same thing forty times and gets it wrong once.
    */
   setViewport(sheet: number, firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void;
+  /**
+   * Adds a conditional format over the selection.
+   *
+   * The rule crosses as data rather than as a closure, because a
+   * closure cannot cross a `postMessage` — which is also why the
+   * tests are a tagged union rather than a predicate.
+   */
+  addConditional(rule: SheetConditionalRule): void;
+  removeConditional(at: number): void;
+  /** Adds a validation over the selection. */
+  addValidation(rule: SheetValidationRule, strict: boolean, message: string): void;
+  removeValidation(at: number): void;
   /** Shows a sheet, without waiting for its viewport to arrive. */
   activateSheet(sheet: number): void;
   /** Adds a sheet at the end and shows it. */
@@ -591,6 +654,8 @@ export interface SheetView {
   readonly find: SheetFindView;
   readonly formats: SheetFormatWindow;
   readonly palette: SheetPalette;
+  /** Markers for the cells in view that break a rule; see `SheetValidation`. */
+  readonly validation: SheetValidation;
   /**
    * The active cell's own format, for the toolbar to show itself
    * pressed with.
@@ -680,6 +745,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   find: NO_FIND,
   formats: EMPTY_FORMATS,
   palette: { entries: [PLAIN_PAINT] },
+  validation: { firstRow: 0, lastRow: -1, cells: {}, refused: '', list: [] },
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
   autofit: { serial: 0, columns: [] }
 });

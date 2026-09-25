@@ -4,6 +4,9 @@ import { relativeRef } from '../sheet/A1';
 import { addressOf, explainCell } from '../sheet/Explain';
 import { nameProblemText } from '../sheet/Names';
 import { aggregateOf } from './Aggregate';
+import { ConditionalPainter } from './ConditionalPaint';
+import type { CellPaint } from '../sheet/Format';
+import { validate } from '../sheet/Validation';
 import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
   EMPTY_FORMATS,
@@ -26,6 +29,9 @@ import {
   type SheetPalette,
   type SheetStatus,
   type SheetTabs,
+  type SheetValidation,
+  type SheetConditionalRule,
+  type SheetValidationRule,
   type SheetWindow
 } from './SheetContract';
 import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
@@ -95,6 +101,7 @@ export interface SheetServiceOptions {
 export class SheetService {
   readonly window: Observable<SheetWindow>;
   readonly sheets: Observable<SheetTabs>;
+  readonly validation: Observable<SheetValidation>;
   readonly geometry: Observable<SheetGeometry>;
   readonly selection: Observable<SheetSelection>;
   readonly editor: Observable<SheetEditor>;
@@ -111,8 +118,35 @@ export class SheetService {
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
 
+  /** What the conditional formats cost, for the budget spec and nothing else. */
+  get painterStats(): { scans: number; scanned: number; evaluations: number } {
+    return this.painter.stats;
+  }
+
   private readonly windowSubject = new BehaviorSubject<SheetWindow>(EMPTY_WINDOW);
   private readonly sheetsSubject: BehaviorSubject<SheetTabs>;
+  private readonly validationSubject = new BehaviorSubject<SheetValidation>({
+    firstRow: 0,
+    lastRow: -1,
+    cells: {},
+    refused: '',
+    list: []
+  });
+  /** Why the last commit was refused, until the next one. */
+  private refusal = '';
+  /**
+   * The conditional formats of the sheet in view, resolved for its
+   * window; see `ConditionalPainter`.
+   */
+  private readonly painter = new ConditionalPainter(() => this.document.sheet);
+  /**
+   * Paints a rule asked for that the document's palette does not
+   * hold, appended after it and never reordered.
+   */
+  private readonly extraPaints: CellPaint[] = [];
+  private readonly extraIds = new Map<string, number>();
+  /** The document palette's size when the palette was last sent. */
+  private publishedBase = 0;
   private readonly geometrySubject: BehaviorSubject<SheetGeometry>;
   private readonly selectionSubject: BehaviorSubject<SheetSelection>;
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
@@ -207,6 +241,7 @@ export class SheetService {
 
     this.window = this.windowSubject;
     this.sheets = this.sheetsSubject;
+    this.validation = this.validationSubject;
     this.geometry = this.geometrySubject;
     this.selection = this.selectionSubject;
     this.editor = this.editorSubject;
@@ -248,6 +283,7 @@ export class SheetService {
     }
     this.publishWindow();
     this.publishFormats();
+    this.publishValidation();
   }
 
   // ---------------------------------------------------------------------
@@ -315,6 +351,110 @@ export class SheetService {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Formats that think, and what a cell is allowed to hold
+  // ---------------------------------------------------------------------
+
+  addConditional(rule: SheetConditionalRule): void {
+    const rect = rectOf(this.document.selection);
+    this.document.addConditional({
+      range: {
+        start: relativeRef(rect.firstRow, rect.firstColumn),
+        end: relativeRef(rect.lastRow, rect.lastColumn)
+      },
+      test: rule.test,
+      paint: rule.paint,
+      scale: rule.scale
+    });
+    this.rulesChanged();
+  }
+
+  removeConditional(at: number): void {
+    if (this.document.removeConditional(at)) {
+      this.rulesChanged();
+    }
+  }
+
+  addValidation(rule: SheetValidationRule, strict: boolean, message: string): void {
+    const rect = rectOf(this.document.selection);
+    this.document.addValidation({
+      range: {
+        start: relativeRef(rect.firstRow, rect.firstColumn),
+        end: relativeRef(rect.lastRow, rect.lastColumn)
+      },
+      rule,
+      strict,
+      message: message === '' ? undefined : message
+    });
+    this.rulesChanged();
+  }
+
+  removeValidation(at: number): void {
+    if (this.document.removeValidation(at)) {
+      this.rulesChanged();
+    }
+  }
+
+  /**
+   * The rules changed, so everything they decide has to be asked
+   * again.
+   *
+   * The palette is republished because a rule that has gone leaves
+   * entries nothing points at — harmless, since the palette only
+   * grows — but a rule that has *arrived* needs its colours sent
+   * before the indices naming them are.
+   */
+  private rulesChanged(): void {
+    this.painter.setRules(this.document.conditional);
+    this.publishFormats();
+    this.publishValidation();
+    this.publishStatus();
+    this.persist();
+  }
+
+  /**
+   * The cells in view that break a rule, and what the active cell may
+   * hold.
+   *
+   * Only the window, which is the whole shape of this phase: a rule
+   * over a million cells is asked about the ones somebody can see.
+   */
+  private publishValidation(): void {
+    const { firstRow, lastRow } = this.viewport;
+    const rules = this.document.validations;
+    const at = this.document.selection;
+    const held = this.document.validationAt(at.row, at.column);
+    const list = held !== null && held.rule.kind === 'list' ? held.rule.values : [];
+    if (rules.length === 0) {
+      // Nothing to say and nothing to walk. A sheet with no
+      // validations costs this exactly one comparison per publish.
+      const current = this.validationSubject.value;
+      if (current.refused !== this.refusal || Object.keys(current.cells).length > 0 || current.list.length > 0) {
+        this.validationSubject.next({ firstRow, lastRow, cells: {}, refused: this.refusal, list: [] });
+      }
+      return;
+    }
+    const columns = this.columnsInView();
+    const cells: Record<string, Record<string, string>> = {};
+    for (const row of this.rowsInView()) {
+      const line: Record<string, string> = {};
+      for (const column of columns) {
+        const rule = this.document.validationAt(row, column);
+        if (rule === null) {
+          continue;
+        }
+        const complaint = validate(rule.rule, this.document.sheet.value(row, column));
+        if (complaint !== null) {
+          line[column] = rule.message ?? complaint;
+        }
+      }
+      if (Object.keys(line).length > 0) {
+        cells[row] = line;
+      }
+    }
+    this.validationSubject.next({ firstRow, lastRow, cells, refused: this.refusal, list: [...list] });
+  }
+
   private tabsNow(): SheetTabs {
     return { entries: this.document.sheets(), active: this.document.active };
   }
@@ -332,6 +472,9 @@ export class SheetService {
    * cannot publish anything — there is no key for it to publish on.
    */
   private publishSheet(): void {
+    // Each sheet has its own rules, so the painter is bound to the
+    // one in view rather than to the document.
+    this.painter.setRules(this.document.conditional);
     this.publishTabs();
     this.publishWindow();
     this.publishFormats();
@@ -340,16 +483,28 @@ export class SheetService {
     this.selectionSubject.next(this.document.selection);
     this.publishEditor();
     this.publishActiveFormat();
+    this.publishValidation();
     this.publishStats();
     this.publishStatus();
   }
 
   setCell(row: number, column: number, input: string): void {
-    this.document.setCell(row, column, input);
+    // A changed cell can move what a colour scale spreads between.
+    this.painter.invalidate();
+    const refused = this.document.setCell(row, column, input);
+    this.refusal = refused ?? '';
+    if (refused !== null) {
+      // A rule refused the write, so nothing changed but what has to
+      // be said about it.
+      this.publishValidation();
+      return;
+    }
     // The edited cell's own value is settled already — a literal is
     // itself and a formula is queued — so the window can go out before
     // any arithmetic, which is what makes typing feel immediate.
     this.publishWindow();
+    this.repaintIfRuled();
+    this.publishValidation();
     this.publishEditor();
     this.publishStatus();
     this.persist();
@@ -1206,9 +1361,28 @@ export class SheetService {
   }
 
   /** What every edit that is not a single keystroke has to do afterwards. */
+  /**
+   * The formats again, but only when a rule could have changed them.
+   *
+   * Before this phase a cell's format could not change because its
+   * *value* did, so typing never republished them. A conditional
+   * format is exactly that, so it has to — and a sheet with no rules
+   * goes on paying nothing, which is what keeps `pnpm proof`
+   * measuring the same thing it always did.
+   */
+  private repaintIfRuled(): void {
+    if (!this.painter.isEmpty) {
+      this.publishFormats();
+    }
+  }
+
   private afterEdit(): void {
+    // The rules read the cells, so a changed cell can change what a
+    // scale spreads between.
+    this.painter.invalidate();
     this.publishWindow();
     this.publishFormats();
+    this.publishValidation();
     this.publishEditor();
     this.publishStatus();
     this.publishStats();
@@ -1254,7 +1428,14 @@ export class SheetService {
   private step(): void {
     const result = this.document.sheet.recalculate(this.budget);
     this.stats.slices++;
+    // A formula settling is a value changing, which a scale's extent
+    // is computed from — so a recalculation invalidates it the same
+    // way an edit does.
+    if (result.evaluated > 0) {
+      this.painter.invalidate();
+    }
     this.publishWindow();
+    this.repaintIfRuled();
     this.publishStatus();
     this.publishStats();
     if (result.done) {
@@ -1354,10 +1535,11 @@ export class SheetService {
     }
     const columns = this.columnsInView();
     const cells: Record<string, Record<string, number>> = {};
+    const grew = this.extraPaints.length;
     for (const row of this.rowsInView()) {
       const line: Record<string, number> = {};
       for (const column of columns) {
-        const id = this.document.formats.idAt(row, column);
+        const id = this.paintedId(row, column);
         if (id !== 0) {
           line[column] = id;
         }
@@ -1365,6 +1547,67 @@ export class SheetService {
       cells[row] = line;
     }
     this.formatsSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
+    // A rule that asked for a colour nothing has used yet has just
+    // put it in the palette, and an index into a palette the other
+    // side has not been sent is an index it cannot draw.
+    if (this.extraPaints.length !== grew || this.document.formats.size !== this.publishedBase) {
+      this.publishPalette();
+    }
+  }
+
+  /**
+   * A cell's palette index, with its conditional formats folded in.
+   *
+   * The index is the document's own unless a rule paints over it, and
+   * then it is an entry in a second palette that is appended to the
+   * first. **Interned and never reordered**, so the same rule
+   * produces the same index on every publish and a scroll costs the
+   * rows that moved rather than the whole window.
+   *
+   * A sheet with no rules never reaches past the first line, which is
+   * why this costs `pnpm proof` nothing.
+   */
+  private paintedId(row: number, column: number): number {
+    const base = this.document.formats.idAt(row, column);
+    if (this.painter.isEmpty) {
+      return base;
+    }
+    const over = this.painter.paintFor(row, column, this.document.sheet.value(row, column));
+    if (over === null) {
+      return base;
+    }
+    const painted: CellPaint = {
+      ...this.document.formats.byId(base).paint,
+      ...(over.fill === undefined ? {} : { fill: over.fill }),
+      ...(over.color === undefined ? {} : { color: over.color }),
+      ...(over.bold === undefined ? {} : { bold: over.bold }),
+      ...(over.italic === undefined ? {} : { italic: over.italic })
+    };
+    // A *position* in the extras, resolved against the document's
+    // palette at publish time — so the document growing a format
+    // moves every extra index and the palette goes out with it.
+    return this.document.formats.size + this.internPaint(painted);
+  }
+
+  /**
+   * A painted cell's index, appended to the palette the first time it
+   * is seen.
+   *
+   * The table only grows, and what bounds it is the colour scale's
+   * quantisation: a scale can ask for at most `SCALE_STEPS` colours
+   * however many cells it covers, so scrolling a million-cell rule
+   * reuses entries rather than making them.
+   */
+  private internPaint(paint: CellPaint): number {
+    const key = JSON.stringify(paint);
+    const held = this.extraIds.get(key);
+    if (held !== undefined) {
+      return held;
+    }
+    const at = this.extraPaints.length;
+    this.extraIds.set(key, at);
+    this.extraPaints.push(paint);
+    return at;
   }
 
   /**
@@ -1377,7 +1620,10 @@ export class SheetService {
    * locale.
    */
   private publishPalette(): void {
-    this.paletteSubject.next({ entries: this.document.formats.entries.map(format => format.paint) });
+    this.publishedBase = this.document.formats.size;
+    this.paletteSubject.next({
+      entries: [...this.document.formats.entries.map(format => format.paint), ...this.extraPaints]
+    });
   }
 
   private publishActiveFormat(): void {
