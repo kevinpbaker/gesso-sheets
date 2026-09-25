@@ -1,5 +1,7 @@
 import { channel } from 'gesso-framework';
 
+import { NO_STATS, type SheetStats } from './Statistics';
+
 /**
  * The barrier.
  *
@@ -8,12 +10,20 @@ import { channel } from 'gesso-framework';
  * dependency graph and the recalc are behind it and the render worker
  * never loads a line of them.
  *
- * Five view keys rather than one object, for the reason
- * `NotesContract.ts` splits `rows` from `open`: the differ walks a
- * projection structurally on every publish, so two things that change
- * at different rates must not share a key. A keystroke moves `window`
- * and `editor`; it does not touch `geometry`, and the differ should
- * not have to walk a hundred column widths to find that out.
+ * A view key per thing that changes at its own rate, rather than one
+ * object, for the reason `NotesContract.ts` splits `rows` from
+ * `open`: the differ walks a projection structurally on every
+ * publish, so two things that change at different rates must not
+ * share a key. A keystroke moves `window` and `editor`; it does not
+ * touch `geometry`, and the differ should not have to walk a hundred
+ * column widths to find that out.
+ *
+ * Phase 8 adds two more on the same argument. `stats` moves whenever
+ * the selection does, which is on every arrow key; `find` moves only
+ * while somebody has the find bar open, which is almost never. Shared
+ * with `status` — which moves on every slice of a recalc — either one
+ * would be walked tens of times a second to discover it had not
+ * changed.
  */
 
 /**
@@ -101,6 +111,25 @@ export interface SheetClipboard {
   readonly serial: number;
 }
 
+/**
+ * What the find bar is looking for and how it is going.
+ *
+ * The matches are a count and a position, not the list. The list can
+ * be tens of thousands of cell keys and the render worker has no use
+ * for any of them: it shows "3 of 412" and the application worker
+ * moves the selection. Sending the list would put the largest thing
+ * in the application on the wire to draw eight characters.
+ */
+export interface SheetFindView {
+  readonly query: string;
+  readonly matchCase: boolean;
+  readonly wholeCell: boolean;
+  readonly inFormulas: boolean;
+  readonly matches: number;
+  /** Which match the selection is on, from one, or zero for none. */
+  readonly active: number;
+}
+
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
@@ -157,6 +186,32 @@ export interface SheetCommands {
    * Built once and bumped on every call after.
    */
   stress(cells: number): void;
+  /**
+   * Repeats the top row of the selection down it, or the left column
+   * across it.
+   *
+   * Ctrl+D and Ctrl+R, which are muscle memory. On a selection one
+   * cell tall or wide they take from the neighbouring cell instead,
+   * which is what every spreadsheet does and what makes them usable
+   * without selecting anything first.
+   */
+  fillDown(): void;
+  fillRight(): void;
+  /**
+   * Searches the sheet and moves to the first match.
+   *
+   * On this side because only this side has the sheet: the render
+   * worker holds the thirty rows it has mounted, so a find run there
+   * could only ever search what somebody was already looking at.
+   */
+  find(query: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean): void;
+  /** Moves to the next match, or the previous one. */
+  findStep(forward: boolean): void;
+  /** Replaces the match the selection is on, and moves to the next. */
+  replaceOne(replacement: string): void;
+  replaceAll(replacement: string): void;
+  /** Closes the search, so the highlight and the count go away. */
+  clearFind(): void;
 }
 
 export interface SheetView {
@@ -166,7 +221,19 @@ export interface SheetView {
   readonly editor: SheetEditor;
   readonly status: SheetStatus;
   readonly clipboard: SheetClipboard;
+  /** Sum, average and count over the selection. */
+  readonly stats: SheetStats;
+  readonly find: SheetFindView;
 }
+
+export const NO_FIND: SheetFindView = {
+  query: '',
+  matchCase: false,
+  wholeCell: false,
+  inFormulas: true,
+  matches: 0,
+  active: 0
+};
 
 export const EMPTY_WINDOW: SheetWindow = {
   firstRow: 0,
@@ -193,5 +260,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
-  clipboard: { text: '', serial: 0 }
+  clipboard: { text: '', serial: 0 },
+  stats: NO_STATS,
+  find: NO_FIND
 });

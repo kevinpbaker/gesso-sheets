@@ -19,7 +19,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       selection: service.selection,
       editor: service.editor,
       status: service.status,
-      clipboard: service.clipboard
+      clipboard: service.clipboard,
+      stats: service.selectionStats,
+      find: service.findView
     },
     commands: {
       setViewport: (firstRow, lastRow, firstColumn, lastColumn) =>
@@ -34,7 +36,14 @@ export function sheetChannel(service: SheetService): ServedChannel {
       clearRange: () => service.clearRange(),
       fill: (toRow, toColumn) => service.fill(toRow, toColumn),
       setColumnWidth: (column, width) => service.setColumnWidth(column, width),
-      stress: cells => service.stress(cells)
+      stress: cells => service.stress(cells),
+      fillDown: () => service.fillDown(),
+      fillRight: () => service.fillRight(),
+      find: (query, matchCase, wholeCell, inFormulas) => service.find(query, matchCase, wholeCell, inFormulas),
+      findStep: forward => service.findStep(forward),
+      replaceOne: replacement => service.replaceOne(replacement),
+      replaceAll: replacement => service.replaceAll(replacement),
+      clearFind: () => service.clearFind()
     }
   });
 }

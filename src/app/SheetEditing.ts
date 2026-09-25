@@ -2,6 +2,7 @@ import { combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs'
 
 import { internalState, type ChannelReplica, type ComponentContext } from 'gesso-framework';
 
+import type { CommandId } from './SheetCommands';
 import type { SheetCommands, SheetSelection, SheetView } from './SheetContract';
 import type { SheetAction } from './SheetKeys';
 
@@ -30,6 +31,54 @@ export interface SheetEditing {
   /** Where the open edit was started, for deciding what takes focus. */
   readonly startedIn: () => 'grid' | 'bar' | null;
   moveTo(row: number, column: number): void;
+  /**
+   * Puts the keyboard back on the sheet.
+   *
+   * The chrome needs this and cannot do it: the grid's node belongs
+   * to the grid, and the menu bar, the find bar and the name box all
+   * have to hand the keyboard back when they are done with it — a
+   * menu that closed and left focus on itself is a menu you have to
+   * Tab out of before you can type a number.
+   *
+   * It lives on the editing handle because that is already the one
+   * thing the grid and the screen around it share, and a second
+   * shared object would be a second thing to keep in step.
+   */
+  focusSheet(): void;
+  /** The grid, saying which node that is. Called once, on mount. */
+  provideFocus(run: () => void): void;
+  /**
+   * Runs an application command.
+   *
+   * The grid answers the accelerators — it is what holds focus while
+   * somebody is using the sheet, so it is where the key arrives — and
+   * the chrome is what knows how to run them. Routed through here for
+   * the reason `focusSheet` is: this handle is already the one thing
+   * the two share.
+   */
+  runCommand(id: CommandId): void;
+  /** The chrome, saying how. Called once, on mount. */
+  provideCommands(run: (id: CommandId) => void): void;
+  /**
+   * Closes whatever the chrome has open. True when something closed.
+   *
+   * Escape has to be routed rather than left to bubble, because a
+   * dialog is in the overlay layer and the grid is not its child, so
+   * a key pressed at the grid never passes through it.
+   *
+   * It would not need routing if the dialog held the keyboard, and
+   * `Dialog` in `gesso-components` means to: it calls `focus.trap` on
+   * its body as that body mounts. But it never calls `focus.focus`,
+   * and its body is not `focusable` — so a dialog opened while focus
+   * was on something else traps a keyboard it does not have, and its
+   * own `Escape` handler is bound to a node no key arrives at. Found
+   * in a browser, by pressing Escape; every spec passed without it,
+   * because a spec that opens a dialog and asserts it is open never
+   * asks what has the keyboard.
+   */
+  dismiss(): boolean;
+  /** The chrome, saying what it has open. Called once, on mount. */
+  provideDismiss(run: () => boolean): void;
 }
 
 /**
@@ -70,6 +119,11 @@ export function editing(
    * cell they were trying to avoid.
    */
   let startedIn: 'grid' | 'bar' | null = null;
+  /** Set by the grid on mount; does nothing until then. */
+  let focusSheet: () => void = () => {};
+  /** Set by the chrome on mount; does nothing until then. */
+  let runCommand: (id: CommandId) => void = () => {};
+  let dismiss: () => boolean = () => false;
 
   // The application worker's selection, when it is not one we caused.
   // Sending `setSelection` echoes the value straight back, which
@@ -226,7 +280,19 @@ export function editing(
     startedIn: () => startedIn,
     extendTo,
     pasteText: text => sheet.send.paste(text),
-    moveTo
+    moveTo,
+    focusSheet: () => focusSheet(),
+    provideFocus: run => {
+      focusSheet = run;
+    },
+    runCommand: id => runCommand(id),
+    provideCommands: run => {
+      runCommand = run;
+    },
+    dismiss: () => dismiss(),
+    provideDismiss: run => {
+      dismiss = run;
+    }
   };
 }
 

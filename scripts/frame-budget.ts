@@ -63,7 +63,21 @@ const BUDGET = {
    * other three catch a regression by its size; this one catches it by
    * its shape — recalculation leaking into the frame at all.
    */
-  costOfRecalculating: 4
+  costOfRecalculating: 4,
+  /**
+   * How much slower a frame is allowed to get with a menu open over
+   * the sheet.
+   *
+   * Phase 8's addition, and the reason it is a budget rather than a
+   * screenshot. The chrome is drawn by the same renderer as the grid,
+   * so an open menu is an overlay of twenty nodes being laid out and
+   * painted on every frame of a scroll happening underneath it. Twenty
+   * nodes should cost nothing measurable; a menu whose items each
+   * subscribed to the selection would cost a great deal, and it would
+   * cost it silently. Stated as a *difference*, like the one above, so
+   * it means the same thing on a slower machine.
+   */
+  costOfAnOpenMenu: 2
 };
 
 const PORT = Number(process.env.PROOF_PORT ?? '4319');
@@ -163,6 +177,42 @@ async function main(): Promise<void> {
       60_000
     );
     console.log(`\n  recalculated ${evaluated.toLocaleString()} cells\n`);
+
+    // --------------------------------------------------------------
+    // The same scroll again, with a menu open on top of it
+    // --------------------------------------------------------------
+    //
+    // Phase 8 put a menu bar, a toolbar, two fields and a status bar
+    // on the same renderer as the grid, and the question that raises
+    // is whether the chrome has made the sheet slower. An open menu is
+    // the worst case of it: an overlay laid out and painted on every
+    // frame, over a sheet that is scrolling underneath.
+    //
+    // The trap it is watching for is not the drawing. It is a toolbar
+    // or a menu whose items bind to the selection — arrow keys move
+    // the selection, so every item would rebuild its bindings on every
+    // keystroke, which is Phase 0's cell-binding bug wearing a hat.
+    await openTheEditMenu(devtools);
+    const withMenu = report(
+      'scrolling with a menu open',
+      await scrollRun(devtools, 'scrolling with a menu open'),
+      failures
+    );
+    check(
+      failures,
+      `scrolling with a menu open: median frame ${withMenu.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms with none`,
+      withMenu.median - idle.median <= BUDGET.costOfAnOpenMenu,
+      BUDGET.costOfAnOpenMenu
+    );
+    // Closed with a press outside it, which is how a person closes
+    // one — and it has to be closed before the section below, or its
+    // first click would be spent dismissing the menu instead of
+    // pressing the button it was aimed at.
+    await devtools.click(SIZE[0] / 2, SIZE[1] - 120);
+    await sleep(120);
+    if ((await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`)) !== 0) {
+      throw new Error('The menu would not close.');
+    }
 
     // --------------------------------------------------------------
     // Five seconds with no main thread at all
@@ -269,6 +319,35 @@ async function main(): Promise<void> {
  * a frame's worth of work in response to a person's worth of input; a
  * burst of a hundred wheel events in one tick measures coalescing.
  */
+/**
+ * Opens the Edit menu, by clicking where the word "Edit" is.
+ *
+ * Through the accessibility tree and a real click, like the
+ * recalculate button above, and for the same reason: a menu opened by
+ * poking the application's own state would prove that the state can
+ * be poked.
+ */
+async function openTheEditMenu(devtools: DevTools): Promise<void> {
+  const title = await devtools.evaluate<{ x: number; y: number } | null>(
+    `(() => {
+       const bar = document.querySelector('[role="menubar"]');
+       if (bar === null) { return null; }
+       const box = bar.getBoundingClientRect();
+       // The first menu title, a few pixels in from the bar's edge.
+       return { x: box.x + 24, y: box.y + box.height / 2 };
+     })()`
+  );
+  if (title === null) {
+    throw new Error('The menu bar is not in the accessibility tree, so it cannot be opened.');
+  }
+  await devtools.click(title.x, title.y);
+  await sleep(120);
+  const open = await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`);
+  if (open === 0) {
+    throw new Error('Clicking the menu bar did not open a menu.');
+  }
+}
+
 async function scrollRun(devtools: DevTools, what: string): Promise<ProofFrame[]> {
   console.log(`  ${what}…`);
   await devtools.evaluate('globalThis.gessosheetProof.reset()');

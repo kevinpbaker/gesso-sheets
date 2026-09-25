@@ -31,6 +31,7 @@ import {
   ROW_HEIGHT
 } from './dimensions';
 import { cellIn, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
+import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
 
@@ -403,6 +404,36 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * move the caret rather than the selection while a cell is open.
    */
   const onKey = (event: UiKeyboardEvent): void => {
+    /**
+     * Accelerators first, and only with no cell open.
+     *
+     * First, because `commandFor` and `keyAction` are two tables and
+     * the one that answers has to be decided somewhere rather than by
+     * which `if` was written above the other — `SheetCommands.spec`
+     * is what guarantees they never both answer the same key.
+     *
+     * And only with no cell open, because a cell being typed into is
+     * a text field: every key in it belongs to the text, which is the
+     * same rule the `editing` argument below encodes.
+     */
+    if (!edit.openNow()) {
+      // Escape closes whatever the chrome has open, before anything
+      // else looks at it. With a cell open it belongs to the cell —
+      // it is what puts back what was there — which is why this is
+      // inside the same guard the accelerators are.
+      if (event.key === 'Escape' && edit.dismiss()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const command = commandFor(event.key, event.modifiers);
+      if (command !== null) {
+        event.preventDefault();
+        event.stopPropagation();
+        edit.runCommand(command);
+        return;
+      }
+    }
     const action = keyAction(event.key, event.modifiers, edit.openNow());
     if (edit.apply(action)) {
       event.preventDefault();
@@ -615,6 +646,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const scrollX = internalState(0);
   const scrollY = internalState(0);
   let gridNode: UiNode | null = null;
+  // The chrome — menus, the find bar, the name box — has to hand the
+  // keyboard back when it is done, and the grid's node is the grid's.
+  edit.provideFocus(() => {
+    if (gridNode !== null) {
+      focus.focus(gridNode);
+    }
+  });
   // How big the viewport is, which is what "already visible" is
   // measured against. Taken from the node rather than tracked here:
   // the window is a flex child and nothing on this side knows its

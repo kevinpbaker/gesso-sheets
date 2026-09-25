@@ -155,6 +155,40 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
 }
 
 /**
+ * The navigation keys, as the shortcut sheet prints them.
+ *
+ * Beside the table that answers them rather than in the help screen
+ * that shows them, so that a key which stops working is a key the
+ * spec below notices. `SheetKeys.spec.ts` presses every one of these
+ * and fails the build if any of them has become a key that does
+ * nothing — which is the failure a hand-written help page hides.
+ *
+ * Only the keys the sheet itself answers. The accelerators live in
+ * `SheetCommands`, where the menus can read their labels too.
+ */
+export interface NavigationKey {
+  /** As the shortcut sheet prints it. */
+  readonly keys: string;
+  readonly label: string;
+  /** One key from `keys`, for the spec that presses them all. */
+  readonly probe: string;
+  /** True when the key only means something with a cell open. */
+  readonly whileEditing?: true;
+}
+
+export const NAVIGATION: readonly NavigationKey[] = [
+  { keys: 'Arrows', label: 'Move one cell', probe: 'ArrowDown' },
+  { keys: 'Shift+Arrows', label: 'Extend the selection', probe: 'ArrowDown' },
+  { keys: 'Enter', label: 'Move down; commit and move down', probe: 'Enter' },
+  { keys: 'Tab', label: 'Move right; commit and move right', probe: 'Tab' },
+  { keys: 'Home / End', label: 'Start or end of the row', probe: 'Home' },
+  { keys: 'Ctrl+Home / Ctrl+End', label: 'Start or end of the sheet', probe: 'Home' },
+  { keys: 'PageUp / PageDown', label: 'Move a screen at a time', probe: 'PageDown' },
+  { keys: 'F2', label: 'Edit the cell you are on', probe: 'F2' },
+  { keys: 'Escape', label: 'Put back what was there', probe: 'Escape', whileEditing: true }
+];
+
+/**
  * Whether a key event carries a character rather than a command.
  *
  * A `key` of one code point is the rule browsers already follow:

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPrintable, keyAction, PAGE_ROWS, type SheetAction } from './SheetKeys';
+import { isPrintable, keyAction, NAVIGATION, PAGE_ROWS, type SheetAction } from './SheetKeys';
 
 function onGrid(key: string, modifiers = {}): SheetAction | null {
   return keyAction(key, modifiers, false);
@@ -135,5 +135,27 @@ describe('isPrintable', () => {
     expect(isPrintable('😀')).toBe(true);
     expect(isPrintable('ArrowUp')).toBe(false);
     expect(isPrintable('')).toBe(false);
+  });
+});
+
+/**
+ * The shortcut sheet advertises `NAVIGATION`, and a help page that
+ * advertises a key which does nothing is worse than no help page:
+ * somebody believes it. Pressing every advertised key here is what
+ * makes the sheet answerable to the table beside it.
+ */
+describe('the keys the shortcut sheet advertises', () => {
+  it('all do something', () => {
+    for (const entry of NAVIGATION) {
+      const action = keyAction(entry.probe, {}, entry.whileEditing === true);
+      expect(action, `${entry.keys} (${entry.label})`).not.toBeNull();
+    }
+  });
+
+  it('says something about every one of them', () => {
+    for (const entry of NAVIGATION) {
+      expect(entry.label.length).toBeGreaterThan(0);
+      expect(entry.keys.length).toBeGreaterThan(0);
+    }
   });
 });

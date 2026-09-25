@@ -12,17 +12,19 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** Part One is done — eight phases, eight exit criteria met.
-[Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration) is the
-plan for turning the proof into a spreadsheet somebody would keep a
-budget in, and none of it has started. Phase
+**Status:** Part One is done — eight phases, eight exit criteria met —
+and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
+which turns the proof into a spreadsheet somebody would keep a budget
+in, is one phase into nine: the top bar is done and the format axis is
+next. `pnpm test` is 398 specs and `pnpm proof` is five budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
-`src/sheet`, the contract, the application worker, the grid and the
-editor in `src/app`, the proof strip in `src/shell`, and `pnpm test` is
-its 279 specs. `pnpm dev` is a spreadsheet you can type into, copy out
-of and paste into, which remembers what you typed. `pnpm proof` is the
-frame budget: it drives the built application in headless Chrome and
-fails the build when scrolling stops being free.
+`src/sheet`, the contract, the application worker, the grid, the
+editor and the chrome in `src/app`, and the proof strip in
+`src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
+of and paste into, find and replace across, fill down, and navigate by
+typing an address — and which remembers what you typed. `pnpm proof`
+is the frame budget: it drives the built application in headless
+Chrome and fails the build when scrolling stops being free.
 
 ---
 
@@ -472,41 +474,88 @@ than a budget that needs raising:
 
 ---
 
-### Phase 8 — The top bar
+### Phase 8 — The top bar — **done**
 
-A menu bar (File, Edit, Insert, Format, Data, View, Help), a toolbar
-beneath it, the name box beside the formula bar, and a status bar
-along the bottom carrying the selection's Sum, Average and Count —
-the readout people check before they trust a column.
-
-The bar is painted in the render worker, like everything else, and
-that is the point of doing it rather than a reason to dread it. The
-grid was one role repeated across a lot of cells; the bar is fifteen
-roles with a traversal model — Alt opens the menu bar, arrows walk
-across the menus and down their items, Escape closes, type-ahead
-jumps, and an item shows its own shortcut. `menubar`, `menuitem`,
-`menuitemcheckbox` and `menuitemradio` are in `UI_ROLES` already, so
-the semantics are available; `Menu` in `gesso-components` is a popup
-that knows nothing about a bar above it, so traversal *between* menus
-is engine work, and probably upstream.
-
-The trap is performance and it is Phase 0's trap wearing a hat. A
-toolbar bound to the selection re-renders on every arrow key, so its
-buttons must be memoized by what they show exactly as Phase 3
-memoized cells by the cell they hold. A bar that reallocates its
-bindings on every keystroke is the cell-binding bug again, in the one
-part of the screen that is on top of everything.
-
-Find and replace lands here too, on `FindBar`, along with the
-distinction between clearing contents and clearing formats, and a
-shortcut sheet that is generated from the keymap rather than written
-beside it.
+A menu bar, a toolbar beneath it, the name box beside the formula
+bar, and a status bar along the bottom carrying the selection's Sum,
+Average and Count — the readout people check before they trust a
+column. Find and replace, fill down and fill right, go-to-cell, and a
+sheet of shortcuts.
 
 **Exit:** the whole bar driven from the keyboard through the semantics
 tree with no pointer event anywhere in the spec — Phase 4's standard,
 applied to the chrome. And `pnpm proof` with the bar mounted, plus a
 fifth budget: the median frame while a menu is open over a scrolling
 sheet.
+
+**Met.** `TopBar.spec.tsx` is thirty-two specs and contains no pointer
+event: F10 reaches the bar, letters open menus, arrows walk them,
+Enter runs what it lands on, Ctrl+G jumps to a typed address, Ctrl+F
+finds and Enter steps through the matches. `pnpm proof` grew the
+fifth budget and holds all five. Measured on this machine:
+
+| | median frame | worst |
+|---|---|---|
+| scrolling an idle sheet | 1.9 ms | 19.7 ms |
+| scrolling while 200,000 cells recalculate | 2.0 ms | 6.1 ms |
+| scrolling with a menu open | 2.2 ms | 5.1 ms |
+
+The whole chrome costs about a tenth of a millisecond of median
+frame, checked against a build of the previous commit rather than
+against Phase 7's recorded numbers — the worst-frame figures moved on
+this machine for reasons that have nothing to do with this code, and
+the same run over the old build says 22.3 ms where the new one says
+19.7 ms.
+
+**Three menus and not seven.** File, Insert and Format would be menus
+of things that do not work yet, and a menu of disabled items is worse
+than no menu: it advertises, and then it refuses. They arrive with
+Phases 16, 10 and 9.
+
+Four things the phase learned by being built and then used.
+
+**It is not `Menu` from the component set, and the reason is focus.**
+`Menu` owns its keyboard and traps focus inside itself, which is
+right for a popup opened by a button and wrong for a bar: with focus
+trapped in the popup, ArrowLeft has nowhere to go, and walking to the
+menu next door with the arrows is most of what makes a bar a bar. So
+the traversal is a table — `MenuBarModel.ts`, nineteen specs, no
+rendering — and the panel is an overlay that draws without taking the
+keyboard. The shape is now known, which is the point at which the
+upstreaming decision can be taken.
+
+**Two tables answer the keyboard, and a spec keeps them honest.**
+`SheetKeys` says what a key press does; `SheetCommands` says what the
+menu advertises. Nothing in the language makes those agree, and the
+failure is the quiet kind — the menu goes on printing `Ctrl+Z` next
+to Undo long after the key has been rebound, and somebody learns the
+wrong thing from the application itself. So every accelerator marked
+`viaKeyTable` is pressed in `SheetCommands.spec.ts`, through the real
+key table, and asserted to mean what the menu says. The shortcut
+sheet is generated from the same table, and the navigation keys it
+advertises are pressed too.
+
+**Paste cannot be a menu item that pastes.** `ShellService` can put
+text *on* the clipboard — that is the path Phase 5's copy takes — and
+has no matching read, because reading the clipboard is gated on a
+gesture inside a document and the render worker has no document. The
+three options were a menu item that silently does nothing, no Paste
+in the Edit menu at all, and a dialog that says which key to press.
+The first is the worst thing software can do and the second sends
+people looking.
+
+**A dialog of plain text takes the keyboard and gives it to nothing.**
+`Dialog` traps focus into itself as it opens, and
+`UiFocusManager.settleScope` *blurs* when the scope it is settling
+into holds nothing focusable — so the shortcut sheet, which is text,
+left focus on no node at all. Escape reached neither the sheet nor
+the dialog and the thing could not be dismissed without a mouse.
+Found by pressing Escape in a browser; every spec passed without it,
+because a spec that opens a dialog and asserts it is open never asks
+what has the keyboard, and `Overlays.spec.ts` upstream gives every
+dialog a button. Both dialogs here now carry a Close button, which is
+better UI anyway and makes the focus settle. Seventh phase running in
+which a real browser found something the suite could not.
 
 ### Phase 9 — The format axis
 
@@ -786,8 +835,22 @@ closes it.
 Carried forward from the head of this file, with what Part Two adds:
 
 - **Menu bar traversal.** `Menu` is a popup with no notion of a bar
-  above it. The roles exist; the arrow-across-the-menus model does
-  not. Phase 8, probably upstream.
+  above it, and it traps focus, so the arrows cannot reach the bar to
+  move along it. *Worked around in Phase 8* by owning the traversal in
+  `MenuBarModel.ts` and drawing the panel in an overlay that does not
+  take the keyboard. The shape is known now, so it can be upstreamed
+  as a peer of `Menu` rather than a second mode on it.
+- **A focus trap with nothing to focus.** `UiFocusManager.settleScope`
+  moves focus into the innermost scope and blurs when that scope holds
+  nothing focusable, so `Dialog` — whose body is not `focusable`,
+  unlike `Menu`'s — hands the keyboard to nothing when its content is
+  plain text. Found in Phase 8. The one-line fix, making the body
+  focusable as `Menu`'s is, puts the dialog container into the Tab
+  cycle and breaks `Overlays.spec.ts`; the real fix is either a
+  `tabStop: false` of the kind `tabindex="-1"` gives the DOM, or a
+  `settleScope` that falls back to the scope root instead of blurring.
+  Both are focus-semantics decisions with a wide blast radius and
+  deserve their own change rather than a drive-by.
 - **A mounted set that depends on the document.** `UiVirtualSheet`
   mounts what the window covers, and a merged cell anchored above the
   window still has to paint into it. Phase 10, and it is the deepest

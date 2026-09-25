@@ -76,9 +76,15 @@ describe('the sheet from the keyboard', () => {
     h?.served.dispose();
   });
 
-  /** The address the formula bar shows, which is where the selection is. */
+  /**
+   * The address the name box shows, which is where the selection is.
+   *
+   * It was `role: status` until Phase 8 made the address a field you
+   * can type into. Still read through the semantics tree, which is
+   * the point of this file.
+   */
   function address(): string | undefined {
-    return textProperty(h.ui.getByRole('status'));
+    return textProperty(h.ui.getByRole('textbox', { name: 'Name box' }));
   }
 
   async function press(key: string, modifiers: Partial<UiKeyModifiers> = {}): Promise<void> {

@@ -1,20 +1,34 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
+import { aggregateOf } from './Aggregate';
 import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
   EMPTY_WINDOW,
+  NO_FIND,
   type SheetClipboard,
   type SheetEditor,
+  type SheetFindView,
   type SheetGeometry,
   type SheetSelection,
   type SheetStatus,
   type SheetWindow
 } from './SheetContract';
+import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
+import { NO_STATS, type SheetStats } from './Statistics';
 import type { SheetDocument } from './SheetDocument';
-import { columnName } from '../sheet/A1';
+import { cellKey, columnName } from '../sheet/A1';
 import { snapshotOf, applySnapshot, type SheetSnapshot } from './SheetFile';
 import type { SheetRepository } from './SheetRepository';
-import { clearRect, copyRect, fillRect, fillTarget, pasteBlock, rectOf, type CopyOrigin } from './SheetRanges';
+import {
+  clearRect,
+  copyRect,
+  fillRect,
+  fillTarget,
+  pasteBlock,
+  rectOf,
+  type CopyOrigin,
+  type Rect
+} from './SheetRanges';
 
 /**
  * Runs a continuation later, as a task rather than a microtask.
@@ -65,6 +79,8 @@ export class SheetService {
   readonly editor: Observable<SheetEditor>;
   readonly status: Observable<SheetStatus>;
   readonly clipboard: Observable<SheetClipboard>;
+  readonly selectionStats: Observable<SheetStats>;
+  readonly findView: Observable<SheetFindView>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -75,6 +91,19 @@ export class SheetService {
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
+  private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
+  private readonly findSubject = new BehaviorSubject<SheetFindView>(NO_FIND);
+  /**
+   * The cells the current search matched, as keys, in reading order.
+   *
+   * Held here and never published. The render worker shows "3 of 412"
+   * and lets this side do the moving, so the list — which can be
+   * tens of thousands of keys — stays on the side that has a use for
+   * it. Recomputed after any edit, because an edit can create a match
+   * or destroy one and a stale list steps somebody to a cell that no
+   * longer says what they searched for.
+   */
+  private found: number[] = [];
   /**
    * What this sheet last copied, and from where.
    *
@@ -132,6 +161,9 @@ export class SheetService {
     this.editor = this.editorSubject;
     this.status = this.statusSubject;
     this.clipboard = this.clipboardSubject;
+    this.selectionStats = this.statsSubject;
+    this.findView = this.findSubject;
+    this.publishStats();
   }
 
   // ---------------------------------------------------------------------
@@ -169,6 +201,11 @@ export class SheetService {
     this.document.setSelection(row, column, anchorRow, anchorColumn);
     this.selectionSubject.next(this.document.selection);
     this.publishEditor();
+    this.publishStats();
+    // Which match the selection is on, not which matches there are.
+    // Moving off a match with the find bar open has to stop saying
+    // "3 of 412", and the only thing that changed is where we are.
+    this.publishFindPosition();
   }
 
   undo(): void {
@@ -272,6 +309,172 @@ export class SheetService {
     this.pump();
   }
 
+
+  // ---------------------------------------------------------------------
+  // Phase 8: fill, find and replace
+  // ---------------------------------------------------------------------
+
+  /**
+   * Ctrl+D, and Ctrl+R for the other axis.
+   *
+   * A selection more than one cell tall repeats its own top row down
+   * itself. A selection one cell tall takes from the cell *above*
+   * instead, which is what every spreadsheet does and what makes the
+   * key usable without selecting a range first — the alternative is a
+   * key that silently does nothing nine times out of ten.
+   */
+  fillDown(): void {
+    const rect = rectOf(this.document.selection);
+    if (rect.lastRow > rect.firstRow) {
+      this.fillWithin({ ...rect, lastRow: rect.firstRow }, rect);
+      return;
+    }
+    if (rect.firstRow === 0) {
+      return;
+    }
+    this.fillWithin({ ...rect, firstRow: rect.firstRow - 1, lastRow: rect.firstRow - 1 }, rect);
+  }
+
+  fillRight(): void {
+    const rect = rectOf(this.document.selection);
+    if (rect.lastColumn > rect.firstColumn) {
+      this.fillWithin({ ...rect, lastColumn: rect.firstColumn }, rect);
+      return;
+    }
+    if (rect.firstColumn === 0) {
+      return;
+    }
+    this.fillWithin({ ...rect, firstColumn: rect.firstColumn - 1, lastColumn: rect.firstColumn - 1 }, rect);
+  }
+
+  /**
+   * The same machinery the fill handle uses, so the two cannot
+   * disagree about what a relative reference does when it moves.
+   */
+  private fillWithin(source: Rect, target: Rect): void {
+    fillRect(this.document, source, fillTarget(source, target.lastRow, target.lastColumn));
+    this.afterEdit();
+  }
+
+  find(query: string, matchCase: boolean, wholeCell: boolean, inFormulas: boolean): void {
+    const options: FindOptions = { matchCase, wholeCell, inFormulas };
+    this.search(query, options);
+    // Offer the cell the selection is already on. Somebody who
+    // selected a cell and then searched for what is in it should not
+    // be thrown to the next one.
+    this.goToMatch(stepTo(this.found, this.currentKey(), false));
+  }
+
+  findStep(forward: boolean): void {
+    const from = this.currentKey();
+    this.goToMatch(forward ? stepTo(this.found, from, true) : stepBack(this.found, from));
+  }
+
+  /**
+   * Replaces the match the selection is on and moves to the next.
+   *
+   * "The match it is on" and not "the first match": a person watching
+   * the highlight move expects Replace to act on what they can see.
+   * When the selection is not on a match this steps to one and
+   * replaces nothing, which is what the button does everywhere.
+   */
+  replaceOne(replacement: string): void {
+    const view = this.findSubject.value;
+    const key = this.currentKey();
+    if (!this.found.includes(key)) {
+      this.findStep(true);
+      return;
+    }
+    const where = at(key);
+    const options = optionsOf(view);
+    const before = this.document.sheet.input(where.row, where.column);
+    this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options));
+    this.afterEdit();
+    this.search(view.query, options);
+    this.goToMatch(stepTo(this.found, key, true));
+  }
+
+  /**
+   * Every match, as one step on the undo stack.
+   *
+   * One step and not one per cell, for the reason `transact` exists:
+   * replacing four hundred cells and then needing four hundred
+   * presses of ctrl-Z to take it back is how people stop trusting
+   * undo.
+   */
+  replaceAll(replacement: string): void {
+    const view = this.findSubject.value;
+    if (view.query === '' || this.found.length === 0) {
+      return;
+    }
+    const options = optionsOf(view);
+    const targets = [...this.found];
+    this.document.transact(() => {
+      for (const key of targets) {
+        const where = at(key);
+        const before = this.document.sheet.input(where.row, where.column);
+        this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options));
+      }
+    });
+    this.afterEdit();
+    this.search(view.query, options);
+  }
+
+  clearFind(): void {
+    this.found = [];
+    this.findSubject.next(NO_FIND);
+  }
+
+  /** Runs the search and publishes what it found. */
+  private search(query: string, options: FindOptions): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    this.found = findMatches(this.document.sheet, query, options, rowCount, columnCount);
+    this.findSubject.next({
+      query,
+      ...options,
+      matches: this.found.length,
+      active: this.activeMatch()
+    });
+  }
+
+  private goToMatch(key: number): void {
+    if (key === -1) {
+      this.publishFindPosition();
+      return;
+    }
+    const where = at(key);
+    this.setSelection(where.row, where.column, where.row, where.column);
+  }
+
+  /** The cell the selection's active corner is on, as a key. */
+  private currentKey(): number {
+    const { row, column } = this.document.selection;
+    return cellKey(row, column);
+  }
+
+  /** Which match the selection is on, from one, or zero for none. */
+  private activeMatch(): number {
+    return this.found.indexOf(this.currentKey()) + 1;
+  }
+
+  /**
+   * The count is unchanged and only the position moved.
+   *
+   * Split out from `search` because moving the selection must not
+   * re-walk the store: arrow keys move the selection, and a find bar
+   * left open would otherwise make every arrow key a full search.
+   */
+  private publishFindPosition(): void {
+    const view = this.findSubject.value;
+    if (view.query === '') {
+      return;
+    }
+    const active = this.activeMatch();
+    if (active !== view.active) {
+      this.findSubject.next({ ...view, active });
+    }
+  }
+
   // ---------------------------------------------------------------------
   // Keeping it
   // ---------------------------------------------------------------------
@@ -299,6 +502,7 @@ export class SheetService {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    this.publishStats();
     if (stored === null) {
       this.persist();
     }
@@ -327,6 +531,7 @@ export class SheetService {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    this.publishStats();
     this.persist();
     this.pump();
   }
@@ -336,6 +541,7 @@ export class SheetService {
     this.publishWindow();
     this.publishEditor();
     this.publishStatus();
+    this.publishStats();
     // An undo is an edit as far as the file is concerned. Left out,
     // taking something back and closing the tab would bring it back on
     // the next open, which is the opposite of what undo promises.
@@ -365,6 +571,7 @@ export class SheetService {
     this.stats.slices++;
     this.publishWindow();
     this.publishStatus();
+    this.publishStats();
     if (result.done) {
       this.pumping = false;
       return;
@@ -414,6 +621,19 @@ export class SheetService {
     this.statusSubject.next(this.statusNow());
   }
 
+  /**
+   * Sum, average and count over the selection.
+   *
+   * Recomputed after an edit as well as after a move, because a cell
+   * that changed inside the selection changes the total — and the
+   * cost is bounded by `aggregateOf` to whichever is smaller, the
+   * selection or the store.
+   */
+  private publishStats(): void {
+    const { rowCount } = this.geometrySubject.value;
+    this.statsSubject.next(aggregateOf(this.document.sheet, rectOf(this.document.selection), rowCount));
+  }
+
   private statusNow(): SheetStatus {
     return {
       pending: this.document.sheet.pending,
@@ -422,4 +642,9 @@ export class SheetService {
       canRedo: this.document.canRedo
     };
   }
+}
+
+/** A published find view read back as the options that produced it. */
+function optionsOf(view: SheetFindView): FindOptions {
+  return { matchCase: view.matchCase, wholeCell: view.wholeCell, inFormulas: view.inFormulas };
 }

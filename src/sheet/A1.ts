@@ -160,3 +160,44 @@ export function rangeSize(range: RangeRef): number {
   const columns = Math.abs(range.end.column - range.start.column) + 1;
   return rows * columns;
 }
+
+/**
+ * An address as somebody types it into the name box: `B7`, `a1:c9`,
+ * `$A$1`.
+ *
+ * Returns a range because a single cell is one — `B7` is `B7:B7` —
+ * which saves every caller a second shape to handle. Null for
+ * anything that is not an address at all, which is how the name box
+ * knows to leave the selection where it is rather than jumping to
+ * somewhere it invented.
+ *
+ * Deliberately separate from `parseRef`: that one is the parser's,
+ * and it answers about a fragment inside a formula. This one is about
+ * a whole string, so `B7 ` with a stray space is an address and
+ * `B7+1` is not.
+ */
+export function parseAddress(text: string): RangeRef | null {
+  const trimmed = text.trim();
+  if (trimmed === '') {
+    return null;
+  }
+  const halves = trimmed.split(':');
+  if (halves.length > 2) {
+    return null;
+  }
+  const start = wholeRef(halves[0]);
+  if (start === null) {
+    return null;
+  }
+  if (halves.length === 1) {
+    return { start, end: start };
+  }
+  const end = wholeRef(halves[1]);
+  return end === null ? null : { start, end };
+}
+
+/** `parseRef`, but the whole string has to be the reference. */
+function wholeRef(text: string): CellRef | null {
+  const ref = parseRef(text.trim());
+  return ref !== null && formatRef(ref).toUpperCase() === text.trim().toUpperCase() ? ref : null;
+}

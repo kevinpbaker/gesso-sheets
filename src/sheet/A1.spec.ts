@@ -9,6 +9,7 @@ import {
   inBounds,
   MAX_COLUMNS,
   MAX_ROWS,
+  parseAddress,
   parseRef,
   rangeKeys,
   rangeSize,
@@ -135,5 +136,52 @@ describe('ranges', () => {
   it('counts without walking', () => {
     expect(rangeSize({ start: relativeRef(0, 0), end: relativeRef(99, 9) })).toBe(1000);
     expect(rangeSize({ start: relativeRef(5, 5), end: relativeRef(5, 5) })).toBe(1);
+  });
+});
+
+describe('an address typed into the name box', () => {
+  it('reads a single cell as the range it is', () => {
+    expect(parseAddress('B7')).toEqual({
+      start: { row: 6, column: 1, rowAbsolute: false, columnAbsolute: false },
+      end: { row: 6, column: 1, rowAbsolute: false, columnAbsolute: false }
+    });
+  });
+
+  it('reads it in either case', () => {
+    expect(parseAddress('b7')).toEqual(parseAddress('B7'));
+  });
+
+  it('reads a range', () => {
+    const range = parseAddress('A1:C9');
+    expect(range?.start.column).toBe(0);
+    expect(range?.end.row).toBe(8);
+    expect(range?.end.column).toBe(2);
+  });
+
+  it('keeps the dollars, so `$A$1` is still absolute', () => {
+    expect(parseAddress('$A$1')?.start).toEqual({
+      row: 0,
+      column: 0,
+      rowAbsolute: true,
+      columnAbsolute: true
+    });
+  });
+
+  it('ignores space around it', () => {
+    expect(parseAddress('  B7  ')).toEqual(parseAddress('B7'));
+  });
+
+  /**
+   * The whole string has to be the address. `B7+1` is a formula
+   * somebody typed in the wrong box, and jumping to B7 would be
+   * reading half of what they wrote and acting on it.
+   */
+  it('refuses anything that is not only an address', () => {
+    expect(parseAddress('B7+1')).toBeNull();
+    expect(parseAddress('SUM')).toBeNull();
+    expect(parseAddress('')).toBeNull();
+    expect(parseAddress('A1:B2:C3')).toBeNull();
+    expect(parseAddress('7B')).toBeNull();
+    expect(parseAddress('A0')).toBeNull();
   });
 });
