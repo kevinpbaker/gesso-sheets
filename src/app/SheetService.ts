@@ -171,7 +171,9 @@ export class SheetService {
       rowHeight: ROW_HEIGHT,
       columnWidth: COLUMN_WIDTH,
       columnWidths: document.columnWidths,
-      hiddenRows: []
+      hiddenRows: [],
+      frozenRows: 0,
+      frozenColumns: 0
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
     this.editorSubject = new BehaviorSubject<SheetEditor>({
@@ -303,7 +305,9 @@ export class SheetService {
     this.geometrySubject.next({
       ...this.geometrySubject.value,
       columnWidths: this.document.columnWidths,
-      hiddenRows: [...this.document.hiddenRows].sort((a, b) => a - b)
+      hiddenRows: [...this.document.hiddenRows].sort((a, b) => a - b),
+      frozenRows: this.document.frozenRows,
+      frozenColumns: this.document.frozenColumns
     });
   }
 
@@ -750,6 +754,27 @@ export class SheetService {
     this.persist();
   }
 
+  /**
+   * Freezes a pane, or unfreezes one with zeroes.
+   *
+   * Clamped to leave something scrolling: a sheet frozen all the way
+   * down is a sheet that cannot be scrolled, and the person who did
+   * it by accident has no way back except the menu they have just
+   * learned not to trust.
+   */
+  freeze(rows: number, columns: number): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    this.document.frozenRows = Math.min(Math.max(0, Math.floor(rows)), Math.max(0, rowCount - 1));
+    this.document.frozenColumns = Math.min(Math.max(0, Math.floor(columns)), Math.max(0, columnCount - 1));
+    this.publishGeometry();
+    // The pane is part of what is on screen, so the cells in it have
+    // to be sent — a frozen column outside the scrolled window is a
+    // column of blanks otherwise.
+    this.publishWindow();
+    this.publishFormats();
+    this.persist();
+  }
+
   showColumns(first: number, last: number): void {
     const widths = [...this.document.columnWidths];
     // Widened by one on each side, so that selecting the columns
@@ -950,16 +975,56 @@ export class SheetService {
    * bookkeeping that has to be right about which cells a recalc
    * touched, which is the same information the differ already has.
    */
+  /**
+   * The rows and columns somebody can see.
+   *
+   * The scrolled window *and the frozen pane*, which is not the same
+   * rectangle: a sheet frozen at column A and scrolled to column E
+   * shows A and E through N, and nothing between. The frozen cells
+   * were drawn empty until this existed — correctly placed, correctly
+   * stuck, and holding nothing, because the window they would have
+   * come from had scrolled past them.
+   *
+   * Listed rather than bounded, so the gap in the middle costs
+   * nothing. The frozen pane is a handful of rows and columns; asking
+   * for everything from row 0 to the window instead would fetch five
+   * thousand rows to show one.
+   */
+  private rowsInView(): number[] {
+    const { firstRow, lastRow } = this.viewport;
+    const rows: number[] = [];
+    for (let row = 0; row < this.document.frozenRows && row < firstRow; row++) {
+      rows.push(row);
+    }
+    for (let row = firstRow; row <= lastRow; row++) {
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  private columnsInView(): number[] {
+    const { firstColumn, lastColumn } = this.viewport;
+    const columns: number[] = [];
+    for (let column = 0; column < this.document.frozenColumns && column < firstColumn; column++) {
+      columns.push(column);
+    }
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      columns.push(column);
+    }
+    return columns;
+  }
+
   private publishWindow(): void {
     const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
     if (lastRow < firstRow || lastColumn < firstColumn) {
       this.windowSubject.next(EMPTY_WINDOW);
       return;
     }
+    const columns = this.columnsInView();
     const cells: Record<string, Record<string, string>> = {};
-    for (let row = firstRow; row <= lastRow; row++) {
+    for (const row of this.rowsInView()) {
       const line: Record<string, string> = {};
-      for (let column = firstColumn; column <= lastColumn; column++) {
+      for (const column of columns) {
         line[column] = this.document.display(row, column);
       }
       cells[row] = line;
@@ -983,10 +1048,11 @@ export class SheetService {
       this.formatsSubject.next(EMPTY_FORMATS);
       return;
     }
+    const columns = this.columnsInView();
     const cells: Record<string, Record<string, number>> = {};
-    for (let row = firstRow; row <= lastRow; row++) {
+    for (const row of this.rowsInView()) {
       const line: Record<string, number> = {};
-      for (let column = firstColumn; column <= lastColumn; column++) {
+      for (const column of columns) {
         const id = this.document.formats.idAt(row, column);
         if (id !== 0) {
           line[column] = id;

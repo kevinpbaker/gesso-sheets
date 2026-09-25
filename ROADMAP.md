@@ -16,17 +16,18 @@ themselves rather than take a benchmark's word for it.
 and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
 in, is two and a half phases into nine: the top bar and the format
-axis are done, and Phase 10 has landed insert, delete, borders, sort and
-hidden rows and columns, with merging and freezing still to build on
-the two engine gaps it closed. `pnpm test` is 560 specs and `pnpm
-proof` is six budgets. Phase
+axis are done, and Phase 10 has landed insert, delete, borders, sort, hidden
+rows and columns and frozen panes, with merging left to build on the
+engine gaps it closed. `pnpm test` is 578 specs and `pnpm proof` is
+six budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
 `src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
 of and paste into, find and replace across, fill down, format, rule
-with borders, sort, insert and delete rows and columns, and navigate
-by typing an address — and which remembers what you typed.
+with borders, sort, insert and delete rows and columns, freeze a
+pane, and navigate by typing an address — and which remembers what
+you typed.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -644,10 +645,8 @@ bugs; the eight named formats cover what people pick.
 ### Phase 10 — Rows, columns, and borders — **partly done**
 
 Insert and delete rows and columns with reference rewriting, per-edge
-cell borders, sorting a range, and hiding rows and columns. **Merged
-cells, freeze panes, autofit and filtering are not done** — but the
-two engine gaps that blocked them are now closed, so what is left is
-application work rather than a wall. See the end of this file.
+cell borders, sorting a range, hiding rows and columns, and freezing
+a pane. **Merged cells, autofit and filtering are not done.**
 
 **Exit:** a rewrite-count spec in Phase 1's style — inserting a row
 above a column of 50,000 formulas rewrites exactly the formulas that
@@ -711,6 +710,32 @@ every row, so a wrapped cell has nowhere to put its second line. The
 property is bound correctly now and the control is out of the
 toolbar, on this file's own rule: a control that silently does
 nothing is worse than one that is missing.
+
+**Freezing a pane took three bugs to finish, and two of them were
+the engine's.** `frozenRows` and `frozenColumns` mount the pane; the
+renderer sticks it there with the `position: 'sticky'` the header row
+and the gutter have always used. Which was the trouble: every sticky
+node in the framework sticks at *zero*, so nobody had noticed that
+`assignBox` offset a sticky node by its inset and
+`resolveStickyOffset` then subtracted the inset again — an inset
+applied twice, cancelling only at zero. A frozen second column, which
+sticks at the width of the gutter, was drawn one gutter too far
+along. An inset is a threshold, not a displacement, and it is fixed
+upstream with specs on both axes.
+
+The third was this application's. The frozen cells were correctly
+placed, correctly stuck, and **empty**: the application worker
+publishes the scrolled window, and a column frozen at A while the
+sheet is scrolled to CL is not in it. The window is a *list* of rows
+and columns now rather than a rectangle, so the pane and the window
+both cross and the gap between them costs nothing — bounding it
+instead would fetch five hundred rows to show one.
+
+And the way all three were found is the phase's own lesson repeating:
+the first specs asserted the frozen cell's `left` *property*, and
+passed. Phase 3 added `toHaveVisibleBox` because a header asserted by
+property passed while it scrolled off the screen; the frozen pane is
+asserted by box now, and that is what caught every one of them.
 
 **The two engine changes, and the first thing built on them.**
 Merged cells and freeze panes needed the mounted set to be able to

@@ -453,3 +453,101 @@ describe('the grid surface', () => {
     });
   });
 });
+
+/**
+ * A frozen pane, asserted as boxes rather than as properties.
+ *
+ * The properties were asserted first and passed while the sheet drew
+ * a frozen column in the wrong place — the same trap Phase 3 fell
+ * into with the header, and the reason `toHaveVisibleBox` exists.
+ * Sticky is the mechanism; where the thing lands is the claim.
+ */
+describe('a frozen pane', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const origin = () => h.ui.getVisibleBox(h.ui.getByRole('grid'));
+
+  beforeEach(async () => {
+    h = await mount(document => {
+      for (let row = 0; row < 200; row++) {
+        for (let column = 0; column < 12; column++) {
+          document.setCell(row, column, `r${row}c${column}`);
+        }
+      }
+    });
+  });
+
+  async function scroll(deltaX: number, deltaY: number): Promise<void> {
+    h.ui.fireEvent.wheel({ x: 300, y: 200, deltaX, deltaY });
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function freeze(rows: number, columns: number): Promise<void> {
+    h.service.freeze(rows, columns);
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  /** Unfrozen, a cell in column A sits right against the gutter. */
+  it('draws the first column against the gutter before anything is frozen', () => {
+    expect(h.ui.getByRole('cell', { name: 'r0c0' })).toHaveVisibleBox({ x: GUTTER_WIDTH, width: COLUMN_WIDTH });
+  });
+
+  it('leaves a frozen column exactly where an unfrozen one was', async () => {
+    await freeze(0, 1);
+    expect(h.ui.getByRole('cell', { name: 'r0c0' })).toHaveVisibleBox({ x: GUTTER_WIDTH, width: COLUMN_WIDTH });
+  });
+
+  it('keeps the column that follows a frozen one in its place', async () => {
+    await freeze(0, 1);
+    expect(h.ui.getByRole('cell', { name: 'r0c1' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH });
+  });
+
+  /** The claim sticky exists to make, on the column axis. */
+  it('holds a frozen column against the gutter while the sheet scrolls sideways', async () => {
+    await freeze(0, 1);
+    await scroll(COLUMN_WIDTH * 6, 0);
+
+    expect(h.ui.getByRole('cell', { name: 'r0c0' })).toHaveVisibleBox({ x: GUTTER_WIDTH, width: COLUMN_WIDTH });
+    // And it really did scroll: the column next to it is long gone.
+    expect(h.ui.queryByRole('cell', { name: 'r0c1' })).toBeNull();
+  });
+
+  it('holds a frozen row under the header while the sheet scrolls down', async () => {
+    await freeze(1, 0);
+    await scroll(0, ROW_HEIGHT * 60);
+
+    expect(h.ui.getByRole('cell', { name: 'r0c0' })).toHaveVisibleBox({
+      y: origin().y + HEADER_HEIGHT,
+      height: ROW_HEIGHT
+    });
+    expect(h.ui.queryByRole('cell', { name: 'r1c0' })).toBeNull();
+  });
+
+  it('holds both at once on a diagonal scroll', async () => {
+    await freeze(1, 1);
+    await scroll(COLUMN_WIDTH * 6, ROW_HEIGHT * 60);
+
+    expect(h.ui.getByRole('cell', { name: 'r0c0' })).toHaveVisibleBox({
+      x: GUTTER_WIDTH,
+      y: origin().y + HEADER_HEIGHT
+    });
+  });
+
+  it('puts the column labels over the columns they label', async () => {
+    await freeze(0, 2);
+    await scroll(COLUMN_WIDTH * 6, 0);
+
+    const a = h.ui.getVisibleBox(h.ui.getByRole('columnheader', { name: 'A' }));
+    const cell = h.ui.getVisibleBox(h.ui.getByRole('cell', { name: 'r0c0' }));
+    expect(a.x).toBe(cell.x);
+    expect(a.width).toBe(cell.width);
+  });
+});

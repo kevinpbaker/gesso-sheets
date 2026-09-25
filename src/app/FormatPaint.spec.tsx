@@ -5,7 +5,7 @@ import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'ges
 import 'gesso-testing/matchers';
 
 import { GENERAL, NO_BORDERS, PLAIN, type CellFormat } from '../sheet/Format';
-import { ROW_HEIGHT } from './dimensions';
+import { GUTTER_WIDTH, HEADER_HEIGHT, ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
@@ -380,5 +380,113 @@ describe('a hidden row', () => {
 
     expect(heightOf('hidden')).toBe(0);
     expect(heightOf('visible')).toBe(ROW_HEIGHT);
+  });
+});
+
+/**
+ * A frozen pane.
+ *
+ * The engine mounts the frozen rows and columns and takes them out of
+ * the scrolled window; making them *stay* is the renderer's, with the
+ * same `position: 'sticky'` the header row and the gutter have always
+ * used. These assert both halves — that the cells exist however far
+ * the sheet has scrolled, and that they are stuck where they belong.
+ */
+describe('a frozen pane', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const filled = (d: SheetDocument) => {
+    for (let row = 0; row < 60; row++) {
+      d.setCell(row, 0, `r${row}`);
+      d.setCell(row, 1, `c1r${row}`);
+    }
+  };
+
+  it('keeps the frozen row mounted when the sheet has scrolled past it', async () => {
+    h = await mount(filled);
+    h.service.freeze(1, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    // Somewhere far below the frozen row.
+    h.ui.fireEvent.wheel({ x: 300, y: 200, deltaY: 600 });
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.queryByRole('cell', { name: 'r0' })).not.toBeNull();
+  });
+
+  it('sticks the frozen row under the header', async () => {
+    h = await mount(filled);
+    h.service.freeze(2, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    const row = h.ui.getByRole('cell', { name: 'r1' }).parent;
+    expect(row?.properties.get('position')).toBe('sticky');
+    expect(row?.properties.get('top')).toBe(HEADER_HEIGHT + ROW_HEIGHT);
+  });
+
+  it('leaves a row outside the pane alone', async () => {
+    h = await mount(filled);
+    h.service.freeze(1, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.getByRole('cell', { name: 'r5' }).parent?.properties.get('position')).toBeUndefined();
+  });
+
+  it('sticks the frozen column at its own offset', async () => {
+    h = await mount(filled);
+    h.service.freeze(0, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    const cell = h.ui.getByRole('cell', { name: 'r3' });
+    expect(cell.properties.get('position')).toBe('sticky');
+    expect(cell.properties.get('left')).toBe(GUTTER_WIDTH);
+  });
+
+  /** Each cell appears once: frozen, or in the window, never both. */
+  it('does not draw a frozen column twice', async () => {
+    h = await mount(filled);
+    h.service.freeze(0, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.getAllByRole('cell', { name: 'r0' })).toHaveLength(1);
+  });
+
+  it('unfreezes', async () => {
+    h = await mount(filled);
+    h.service.freeze(2, 1);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(h.ui.getByRole('cell', { name: 'r0' }).properties.get('position')).toBe('sticky');
+
+    h.service.freeze(0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(h.ui.getByRole('cell', { name: 'r0' }).properties.get('position')).toBeUndefined();
+  });
+
+  /**
+   * A sheet frozen all the way down cannot be scrolled, and whoever
+   * did it by accident has no way back but the menu they have just
+   * learned not to trust.
+   */
+  it('always leaves something scrolling', async () => {
+    h = await mount(filled);
+    h.service.freeze(100_000, 100_000);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.queryByRole('grid')).not.toBeNull();
   });
 });

@@ -409,6 +409,23 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'showRows':
         sheet.send.showRows(rows().first, rows().last);
         break;
+      /**
+       * "Up to here" means everything above and to the left of the
+       * active cell, which is what the phrase means to a person and
+       * saves them counting rows.
+       */
+      case 'freezeHere':
+        sheet.send.freeze(edit.selectionNow().row, edit.selectionNow().column);
+        break;
+      case 'freezeTopRow':
+        sheet.send.freeze(1, 0);
+        break;
+      case 'freezeFirstColumn':
+        sheet.send.freeze(0, 1);
+        break;
+      case 'unfreeze':
+        sheet.send.freeze(0, 0);
+        break;
     }
     edit.focusSheet();
   };

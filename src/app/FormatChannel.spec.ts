@@ -333,3 +333,74 @@ describe('formatting a whole region', () => {
     expect(h.port.patchesFor('formats')).toHaveLength(300);
   });
 });
+
+/**
+ * A frozen pane is part of what is on screen, so its cells have to be
+ * sent — and only its cells.
+ *
+ * The frozen columns were drawn empty until this: correctly placed,
+ * correctly stuck, and holding nothing, because the window they would
+ * have come from had scrolled past them. Found by freezing a column
+ * in a browser and scrolling sideways.
+ */
+describe('the cells a frozen pane needs', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = attach({ rowCount: 1_000, columnCount: 40 });
+  });
+
+  it('sends the frozen column as well as the scrolled window', () => {
+    command(h.port, 'setCell', 0, 0, 'frozen');
+    command(h.port, 'setCell', 0, 20, 'scrolled');
+    h.clock.drain();
+    command(h.port, 'freeze', 0, 1);
+    command(h.port, 'setViewport', 0, 9, 18, 25);
+    h.clock.drain();
+
+    const window = h.window();
+    expect(window.cells[0][0]).toBe('frozen');
+    expect(window.cells[0][20]).toBe('scrolled');
+  });
+
+  it('sends the frozen row as well', () => {
+    command(h.port, 'setCell', 0, 5, 'heading');
+    command(h.port, 'setCell', 500, 5, 'far down');
+    h.clock.drain();
+    command(h.port, 'freeze', 1, 0);
+    command(h.port, 'setViewport', 495, 505, 0, 9);
+    h.clock.drain();
+
+    const window = h.window();
+    expect(window.cells[0][5]).toBe('heading');
+    expect(window.cells[500][5]).toBe('far down');
+  });
+
+  /**
+   * The gap in the middle costs nothing, which is the whole reason
+   * the rows are listed rather than bounded: asking for everything
+   * from row 0 to the window would fetch five hundred rows to show
+   * one.
+   */
+  it('does not send the rows between the pane and the window', () => {
+    command(h.port, 'setCell', 250, 5, 'in between');
+    h.clock.drain();
+    command(h.port, 'freeze', 1, 0);
+    command(h.port, 'setViewport', 495, 505, 0, 9);
+    h.clock.drain();
+
+    expect(h.window().cells[250]).toBeUndefined();
+  });
+
+  it('sends nothing extra when nothing is frozen', () => {
+    command(h.port, 'setViewport', 495, 505, 0, 9);
+    h.clock.drain();
+    h.port.clear();
+
+    command(h.port, 'setViewport', 496, 506, 0, 9);
+
+    // The row that arrived, the row that left, and the two bounds —
+    // the same four patches a scroll has always cost.
+    expect(h.port.patchesFor('window')).toHaveLength(4);
+  });
+});

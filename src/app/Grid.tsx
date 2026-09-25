@@ -258,6 +258,16 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * `UiVirtualSheetOptions.rowHeights` takes, and the reason it is a
    * map rather than the array `columnWidth` is.
    */
+  /**
+   * How many rows and columns stay put while the rest scrolls.
+   *
+   * Read rather than owned: the pane is the document's, so it
+   * survives a reload. Held here as well because a cell has to know
+   * whether it is inside the pane to draw itself stuck, and asking
+   * across the barrier per cell is not a question worth sending.
+   */
+  const frozen = internalState<{ rows: number; columns: number }>({ rows: 0, columns: 0 });
+
   const hidden = internalState<ReadonlySet<number>>(new Set<number>());
   const heightsOf = (rows: ReadonlySet<number>): Map<number, number> =>
     new Map([...rows].map(row => [row, 0] as const));
@@ -269,6 +279,24 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * that is hidden changes the cells in that row and nothing else, so
    * a subject per row is a list a cell can be taken off in a glance.
    */
+  /**
+   * Where a column starts, past the gutter.
+   *
+   * Summed here rather than asked of the window, because a cell is
+   * built *during* the window's construction — the first `renderRow`
+   * runs inside `LazySheet(...)`, before the handle it returns has
+   * been assigned — so reaching for the window from a cell is a
+   * reference to something that does not exist yet. Only the frozen
+   * columns ask, and there are a handful of those.
+   */
+  const columnLeft = (column: number): number => {
+    let left = 0;
+    for (let at = 0; at < column; at++) {
+      left += widths.value[at] ?? COLUMN_WIDTH;
+    }
+    return left;
+  };
+
   const rowHeights = new Map<number, BehaviorSubject<number>>();
   const heightOf = (row: number): Observable<number> => {
     let height = rowHeights.get(row);
@@ -371,8 +399,20 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     paint: Observable<CellPaint>,
     shapes: Observable<readonly DecorationShape[]>
   ): UiElement => {
+    /**
+     * A frozen column's cells are stuck at their own offset.
+     *
+     * The same `position: 'sticky'` the gutter has always used, one
+     * column further along. Read once, at build time, because the
+     * cells are rebuilt when the pane moves — see the effect that
+     * empties `cells` on a freeze.
+     */
+    const stuck = column < frozen.value.columns;
     return Text({
       key: column,
+      position: stuck ? 'sticky' : undefined,
+      left: stuck ? GUTTER_WIDTH + columnLeft(column) : undefined,
+      zIndex: stuck ? 1 : undefined,
       /**
        * Borders follow the paint *and* the column's width, because a
        * right edge is drawn at the far side of a cell and a drag
@@ -744,6 +784,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
 
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
+    // The frozen columns first, which is the order the window's own
+    // leading spacer is placed against: everything that stays put,
+    // then the gap, then the columns that scrolled into view.
+    for (let column = 0; column < frozen.value.columns; column++) {
+      line.push(cell(row, column));
+    }
     for (let column = firstColumn; column <= lastColumn; column++) {
       line.push(cell(row, column));
     }
@@ -767,11 +813,23 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
      * off the fill handle, which deliberately hangs outside the
      * corner cell.
      */
+    /**
+     * A frozen row is stuck under the header, at its own offset.
+     *
+     * The engine mounts it; making it *stay* is this line, which is
+     * the same `position: 'sticky'` the header row and the gutter
+     * have always used. `zIndex` puts it over the rows it covers and
+     * under the header that covers it.
+     */
+    const stuck = row < frozen.value.rows;
     return Row(
       {
         role: 'row',
         posInSet: row + 1,
-        position: corner ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner ? 'relative' : undefined,
+        top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
+        zIndex: stuck ? 1 : undefined,
+        backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
       },
       ...line
@@ -797,6 +855,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         borderWidth: 1
       })
     ];
+    // The frozen columns first, in the same order a row puts them,
+    // so a column label sits over the column it labels whichever of
+    // the two is stuck.
+    for (let column = 0; column < frozen.value.columns; column++) {
+      line.push(columnHeader(column));
+    }
     for (let column = firstColumn; column <= lastColumn; column++) {
       line.push(columnHeader(column));
     }
@@ -815,8 +879,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * one-pixel target is the scrollbar mistake again — Phase 3 of the
    * engine widened a six-pixel thumb for exactly this reason.
    */
-  const columnHeader = (column: number): UiElement =>
-    Box(
+  const columnHeader = (column: number): UiElement => {
+    const stuck = column < frozen.value.columns;
+    return Box(
       {
         key: column,
         width: widthOf(column),
@@ -827,8 +892,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // The grip is absolute, and an absolute child is placed
         // against its nearest *positioned* ancestor — without this it
         // would walk past the header to the layout root and be drawn
-        // in the corner of the screen.
-        position: 'relative',
+        // in the corner of the screen. A frozen column's label is
+        // stuck instead, which positions it just the same.
+        position: stuck ? 'sticky' : 'relative',
+        left: stuck ? GUTTER_WIDTH + columnLeft(column) : undefined,
+        zIndex: stuck ? 1 : undefined,
         backgroundColor: 'surface',
         borderColor: GRID_LINE,
         borderWidth: 1,
@@ -879,6 +947,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         }
       })
     );
+  };
 
   let resizing: { column: number; width: number; from: number } | null = null;
 
@@ -920,6 +989,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       rowHeight: ROW_HEIGHT,
       rowHeights: heightsOf(hidden.value),
       columnWidth: widths.value,
+      frozenRows: frozen.value.rows,
+      frozenColumns: frozen.value.columns,
       gutterWidth: GUTTER_WIDTH,
       headerHeight: HEADER_HEIGHT,
       // Two rows and one column: the partial cells at the edges. The
@@ -998,6 +1069,20 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   ctx.effect(hidden, rows => sheetWindow.setRowHeights(heightsOf(rows)));
 
   /**
+   * A pane that moved, reaching the window and the cells.
+   *
+   * Every mounted cell is dropped, because whether a cell is stuck is
+   * decided when it is built and a cell that used to be frozen is now
+   * an ordinary one. Freezing is rare and a full rebuild is the
+   * honest price; the alternative is a binding per cell for something
+   * that changes once a session.
+   */
+  ctx.effect(frozen, pane => {
+    cells.clear();
+    sheetWindow.setFrozen(pane.rows, pane.columns);
+  });
+
+  /**
    * The geometry the application worker publishes, adopted.
    *
    * The widths *lead* on this side while a drag is happening — that
@@ -1014,6 +1099,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const rows = geometry.hiddenRows;
     if (rows.length !== hidden.value.size || rows.some(row => !hidden.value.has(row))) {
       hidden.value = new Set(rows);
+    }
+    if (geometry.frozenRows !== frozen.value.rows || geometry.frozenColumns !== frozen.value.columns) {
+      frozen.value = { rows: geometry.frozenRows, columns: geometry.frozenColumns };
     }
   });
 

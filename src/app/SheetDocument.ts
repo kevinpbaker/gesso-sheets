@@ -130,6 +130,9 @@ export class SheetDocument {
    * thousand rows tall and all but a handful are the same.
    */
   readonly hiddenRows = new Set<number>();
+  /** How many rows and columns stay put while the rest scrolls. */
+  frozenRows = 0;
+  frozenColumns = 0;
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];

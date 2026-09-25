@@ -58,7 +58,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       hideColumns: (first, last) => service.hideColumns(first, last),
       showColumns: (first, last) => service.showColumns(first, last),
       hideRows: (first, last) => service.hideRows(first, last),
-      showRows: (first, last) => service.showRows(first, last)
+      showRows: (first, last) => service.showRows(first, last),
+      freeze: (rows, columns) => service.freeze(rows, columns)
     }
   });
 }

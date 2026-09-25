@@ -86,6 +86,15 @@ export interface SheetGeometry {
    * takes, and for the same reason.
    */
   readonly hiddenRows: readonly number[];
+  /**
+   * How many rows and columns stay put while the rest scrolls.
+   *
+   * The document's, not the screen's, for the reason the column
+   * widths are: it survives a reload, and a sheet whose panes came
+   * back unfrozen would have lost something somebody set up.
+   */
+  readonly frozenRows: number;
+  readonly frozenColumns: number;
 }
 
 /** The active cell, and the rectangle anchored from it. */
@@ -323,6 +332,15 @@ export interface SheetCommands {
   showColumns(first: number, last: number): void;
   hideRows(first: number, last: number): void;
   showRows(first: number, last: number): void;
+  /**
+   * Keeps the first `rows` rows and `columns` columns on screen.
+   *
+   * Counted from the top-left rather than given as a cell, because
+   * that is what it means — "everything above and to the left of
+   * here" — and a screen that sent a cell would be sending a
+   * coordinate to describe a quantity.
+   */
+  freeze(rows: number, columns: number): void;
 }
 
 /** What a border command draws. */
@@ -464,7 +482,16 @@ export function cellIn(window: SheetWindow, row: number, column: number): string
 
 export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   window: EMPTY_WINDOW,
-  geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104, columnWidths: [], hiddenRows: [] },
+  geometry: {
+    rowCount: 0,
+    columnCount: 0,
+    rowHeight: 24,
+    columnWidth: 104,
+    columnWidths: [],
+    hiddenRows: [],
+    frozenRows: 0,
+    frozenColumns: 0
+  },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },

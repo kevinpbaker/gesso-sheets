@@ -70,7 +70,11 @@ export type CommandId =
   | 'hideColumns'
   | 'showColumns'
   | 'hideRows'
-  | 'showRows';
+  | 'showRows'
+  | 'freezeHere'
+  | 'freezeTopRow'
+  | 'freezeFirstColumn'
+  | 'unfreeze';
 
 /**
  * How long a chain the proof command builds.
@@ -227,6 +231,10 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     label: 'Show columns',
     accelerator: { key: '0', ctrl: true, alt: true, shift: true, shifted: ')' }
   },
+  freezeHere: { id: 'freezeHere', label: 'Freeze up to here' },
+  freezeTopRow: { id: 'freezeTopRow', label: 'Freeze the top row' },
+  freezeFirstColumn: { id: 'freezeFirstColumn', label: 'Freeze the first column' },
+  unfreeze: { id: 'unfreeze', label: 'Unfreeze' },
   hideRows: { id: 'hideRows', label: 'Hide rows', accelerator: { key: '9', ctrl: true, alt: true } },
   showRows: {
     id: 'showRows',
@@ -324,10 +332,9 @@ export interface MenuDefinition {
 /**
  * The bar, as it stands after Phase 8.
  *
- * Five menus and not the six a spreadsheet ends up with: File
- * arrives with Phase 16, which is when there is a file to open. A
- * menu of disabled items is a worse answer than no menu — it
- * advertises, and then it refuses.
+ * Six menus, and the last one missing is File — which arrives with
+ * Phase 16, when there is a file to open. A menu of disabled items is
+ * a worse answer than no menu: it advertises, and then it refuses.
  *
  * Format's mnemonic is `o` rather than `f`, because File is coming
  * and will want `f` — and a mnemonic that moves once people have
@@ -403,6 +410,12 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'clearFormat'
     ]
+  },
+  {
+    id: 'view',
+    label: 'View',
+    mnemonic: 'v',
+    entries: ['freezeHere', 'freezeTopRow', 'freezeFirstColumn', SEPARATOR, 'unfreeze']
   },
   {
     id: 'data',
