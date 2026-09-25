@@ -1,5 +1,5 @@
 import { arity, checked, scalar, type Argument, type SheetFunction } from './FunctionKit';
-import { isError, NA, toBoolean, VALUE, type CellError, type CellValue } from './Values';
+import { isError, NA, toBoolean, VALUE, type CellError } from './Values';
 
 /**
  * Logic, minus the three that have to be lazy.

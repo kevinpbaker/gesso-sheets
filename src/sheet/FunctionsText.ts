@@ -1,5 +1,5 @@
 import { formatWith, type NumberFormat } from './Format';
-import { arity, checked, integerAt, scalar, textAt, valuesOf, type SheetFunction } from './FunctionKit';
+import { checked, integerAt, scalar, textAt, valuesOf, type SheetFunction } from './FunctionKit';
 import { isError, toBoolean, toText, VALUE } from './Values';
 
 /**

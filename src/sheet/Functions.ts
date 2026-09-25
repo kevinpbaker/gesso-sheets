@@ -3,16 +3,16 @@ import {
   firstError,
   numberAt,
   numbersOf,
-  scalar,
   valuesOf,
   type Argument,
   type FunctionContext,
   type SheetFunction
 } from './FunctionKit';
+import { DAY_MS, serialOfDate } from './Dates';
 import { CONDITIONAL_FUNCTIONS } from './FunctionsConditional';
 import { DATE_FUNCTIONS } from './FunctionsDate';
 import { LOGIC_FUNCTIONS } from './FunctionsLogic';
-import { LOOKUP_FUNCTIONS, } from './FunctionsLookup';
+import { LOOKUP_FUNCTIONS } from './FunctionsLookup';
 import { MATH_FUNCTIONS, roundHalfAway } from './FunctionsMath';
 import { STATS_FUNCTIONS } from './FunctionsStats';
 import { TEXT_FUNCTIONS } from './FunctionsText';
@@ -217,21 +217,21 @@ export function liveContext(): FunctionContext {
 /**
  * The moment, as a serial.
  *
- * Local rather than UTC, deliberately and unlike everything else in
- * `Dates.ts`: `TODAY()` has to be the date on the wall of the person
- * looking at the screen. A UTC `TODAY()` is yesterday all evening in
- * Auckland, which is the one thing it must never be. Stored dates
- * stay UTC — they are the same day for everybody — and only the
- * reading of *now* is local, because only *now* is a question about
- * where you are standing.
+ * **Which day it is, is a local question.** This is the one place
+ * that departs from the UTC rule `Dates.ts` holds everywhere else,
+ * and it departs on purpose: `TODAY()` has to be the date on the wall
+ * of the person looking at the screen, and a UTC one is yesterday all
+ * evening in Auckland. A *stored* date stays UTC because it is the
+ * same day for everybody; only the reading of *now* is local, because
+ * only *now* is a question about where you are standing.
+ *
+ * The serial itself still comes from `serialOfDate`, so the epoch and
+ * the phantom day of 1900 are defined once. This function grew its
+ * own copy of that arithmetic when it was written, which is precisely
+ * the thing `Dates.ts` exists to stop.
  */
 export function nowSerial(): number {
   const at = new Date();
   const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
-  const days = Math.round((Date.UTC(at.getFullYear(), at.getMonth(), at.getDate()) - Date.UTC(1899, 11, 30)) / 86_400_000);
-  return days + (at.getTime() - midnight) / 86_400_000;
+  return serialOfDate(at.getFullYear(), at.getMonth() + 1, at.getDate()) + (at.getTime() - midnight) / DAY_MS;
 }
-
-/** Re-exported so the evaluator can build arguments without a cycle. */
-export { scalar };
-export type { CellValue };

@@ -49,6 +49,7 @@ export type CommandId =
   | 'formatScientific'
   | 'formatDate'
   | 'formatTime'
+  | 'formatDateTime'
   | 'formatText'
   | 'moreDecimals'
   | 'fewerDecimals'
@@ -314,6 +315,18 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     label: 'Time',
     accelerator: { key: '2', ctrl: true, shift: true, shifted: '@' }
   },
+  /**
+   * No accelerator, and that is the decision rather than an omission.
+   *
+   * Date and Time have had ctrl-shift-3 and ctrl-shift-2 since they
+   * were spreadsheet keys, and there is no third one anybody knows.
+   * Inventing a chord for the rarer format would put something
+   * unguessable on a key somebody is used to reaching past.
+   */
+  formatDateTime: {
+    id: 'formatDateTime',
+    label: 'Date and time'
+  },
   formatText: {
     id: 'formatText',
     label: 'Plain text',
@@ -410,6 +423,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'formatScientific',
       'formatDate',
       'formatTime',
+      'formatDateTime',
       'formatText',
       SEPARATOR,
       'moreDecimals',

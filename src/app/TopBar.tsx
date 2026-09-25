@@ -337,6 +337,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'formatTime':
         format({ number: { kind: 'time', pattern: 'hm' } });
         break;
+      case 'formatDateTime':
+        format({ number: { kind: 'datetime', date: 'ymd', time: 'hm' } });
+        break;
       case 'formatText':
         format({ number: { kind: 'text' } });
         break;

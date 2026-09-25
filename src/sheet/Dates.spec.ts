@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { dateOfSerial, parseTypedDate, serialOfDate, serialOfTime, timeOfSerial, weekdayOf } from './Dates';
+import { nowSerial } from './Functions';
 
 /**
  * The serial numbers, against Excel.
@@ -188,4 +189,41 @@ describe('typing a date', () => {
       expect(parseTypedDate(text)).toBeNull();
     }
   );
+});
+
+/**
+ * The clock the application actually runs on.
+ *
+ * Every other spec injects a clock, which is what makes `TODAY()`
+ * assertable — and leaves the real one, the one that ships, with
+ * nothing asserting it at all. These are the two claims worth making
+ * about it: that it agrees with the rest of the date arithmetic, and
+ * that the day it reports is the local one.
+ */
+describe('the clock that ships', () => {
+  it('agrees with the serial arithmetic about what day it is', () => {
+    const at = new Date();
+    expect(Math.floor(nowSerial())).toBe(serialOfDate(at.getFullYear(), at.getMonth() + 1, at.getDate()));
+  });
+
+  /**
+   * Local, not UTC, and this is the one place in the file that is.
+   * A UTC `TODAY()` is yesterday all evening for anybody east of
+   * Greenwich enough to notice.
+   */
+  it('reports the day on the local wall, not in UTC', () => {
+    const at = new Date();
+    const { year, month, day } = dateOfSerial(nowSerial());
+    expect({ year, month, day }).toEqual({
+      year: at.getFullYear(),
+      month: at.getMonth() + 1,
+      day: at.getDate()
+    });
+  });
+
+  it('carries the time of day in the fraction', () => {
+    const fraction = nowSerial() - Math.floor(nowSerial());
+    expect(fraction).toBeGreaterThanOrEqual(0);
+    expect(fraction).toBeLessThan(1);
+  });
 });

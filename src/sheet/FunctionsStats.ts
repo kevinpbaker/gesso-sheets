@@ -1,4 +1,4 @@
-import { checked, integerAt, numberAt, numbersOf, scalar, valuesOf, type SheetFunction } from './FunctionKit';
+import { checked, integerAt, numberAt, numbersOf, valuesOf, type SheetFunction } from './FunctionKit';
 import { DIV0, isError, NA, VALUE, type CellError } from './Values';
 
 /**
