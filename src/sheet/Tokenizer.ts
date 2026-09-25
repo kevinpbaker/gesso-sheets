@@ -35,6 +35,18 @@ export type Token = Span &
     | { readonly kind: 'number'; readonly value: number }
     | { readonly kind: 'text'; readonly value: string }
     | { readonly kind: 'word'; readonly value: string }
+    /**
+     * A sheet named in front of a reference: the `Sheet2` of
+     * `Sheet2!A1`, and the `Q3 Budget` of `'Q3 Budget'!A1:B9`.
+     *
+     * Read here rather than in the parser because the `!` is what
+     * makes it one. Without the `!` a quoted name is not a token this
+     * grammar has at all, and `Q3 Budget` is two words — so the
+     * decision needs the character after the name, which is exactly
+     * what a scanner has and a parser of already-scanned tokens does
+     * not.
+     */
+    | { readonly kind: 'sheet'; readonly value: string }
     | { readonly kind: 'error'; readonly code: ErrorCode }
     | { readonly kind: 'operator'; readonly value: string }
     | { readonly kind: 'open' }
@@ -91,6 +103,13 @@ export function tokenize(source: string): Token[] {
       continue;
     }
 
+    if (character === "'") {
+      const { value, next } = readQuotedSheet(source, at);
+      tokens.push({ kind: 'sheet', value, start: at, end: next });
+      at = next;
+      continue;
+    }
+
     if (character === '#') {
       const literal = ERROR_LITERALS.find(code => source.startsWith(code, at));
       if (literal === undefined) {
@@ -112,6 +131,14 @@ export function tokenize(source: string): Token[] {
       let end = at;
       while (end < source.length && isWordPart(source[end])) {
         end++;
+      }
+      // A word with a `!` against it names a sheet. Nothing else in
+      // this grammar uses the character, so there is nothing for it
+      // to be mistaken for.
+      if (source[end] === '!') {
+        tokens.push({ kind: 'sheet', value: source.slice(at, end), start: at, end: end + 1 });
+        at = end + 1;
+        continue;
       }
       tokens.push({ kind: 'word', value: source.slice(at, end), start: at, end });
       at = end;
@@ -154,6 +181,37 @@ function readText(source: string, start: number): { value: string; next: number 
     at++;
   }
   throw new FormulaSyntaxError('A quoted string was never closed.');
+}
+
+/**
+ * `'Q3 Budget'!`, in which `''` is one quote.
+ *
+ * The `!` is required and consumed. A quoted name with nothing after
+ * it is not a sheet and not anything else, and saying so here is
+ * better than handing the parser a token it cannot place.
+ */
+function readQuotedSheet(source: string, start: number): { value: string; next: number } {
+  let at = start + 1;
+  let value = '';
+  while (at < source.length) {
+    if (source[at] === "'") {
+      if (source[at + 1] === "'") {
+        value += "'";
+        at += 2;
+        continue;
+      }
+      if (source[at + 1] !== '!') {
+        throw new FormulaSyntaxError(`A sheet name has to be followed by '!' at ${at + 1}.`);
+      }
+      if (value === '') {
+        throw new FormulaSyntaxError(`A sheet name cannot be empty at ${start}.`);
+      }
+      return { value, next: at + 2 };
+    }
+    value += source[at];
+    at++;
+  }
+  throw new FormulaSyntaxError('A quoted sheet name was never closed.');
 }
 
 function readNumber(source: string, start: number): { value: number; next: number } {

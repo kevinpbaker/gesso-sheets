@@ -30,6 +30,33 @@ export interface Shift {
   readonly at: number;
   /** How many were inserted (positive) or deleted (negative). */
   readonly by: number;
+  /**
+   * The sheet whose shape changed, when there is more than one.
+   *
+   * A shift is positional, and a position on Sheet 2 is not a
+   * position on Sheet 1: rows inserted on Sheet 2 move every
+   * reference *to* Sheet 2, wherever the formula lives, and move no
+   * reference to anywhere else. Left undefined the shift applies to
+   * every reference it sees, which is a workbook of one sheet and is
+   * what every caller before Phase 13 meant.
+   */
+  readonly sheet?: string;
+}
+
+/**
+ * Whether a reference is one this shift moves.
+ *
+ * Two facts decide it and neither is on the reference alone: which
+ * sheet is changing shape, and which sheet the formula sits on —
+ * because an unqualified `A5` means "A5 on my own sheet", and whether
+ * that is the sheet being reshaped is not something `A5` can say.
+ */
+function shifts(ref: CellRef, shift: Shift, onSheet: string | undefined): boolean {
+  if (shift.sheet === undefined) {
+    return true;
+  }
+  const named = ref.sheet ?? onSheet;
+  return named !== undefined && named.toUpperCase() === shift.sheet.toUpperCase();
 }
 
 /**
@@ -39,7 +66,7 @@ export interface Shift {
  * lets the caller count how many formulas an insert actually touched
  * rather than how many it looked at.
  */
-export function shiftFormula(input: string, shift: Shift): string {
+export function shiftFormula(input: string, shift: Shift, onSheet?: string): string {
   if (!input.startsWith('=') || shift.by === 0) {
     return input;
   }
@@ -54,7 +81,7 @@ export function shiftFormula(input: string, shift: Shift): string {
     // error, and mangling it further would lose what somebody wrote.
     return input;
   }
-  const moved = shiftAst(formula, shift);
+  const moved = shiftAst(formula, shift, onSheet);
   if (moved === formula) {
     return input;
   }
@@ -69,32 +96,38 @@ export function shiftFormula(input: string, shift: Shift): string {
  * from "this formula referenced it and came back the same". A deep
  * equality check would answer the second question and not the first.
  */
-function shiftAst(node: Ast, shift: Shift): Ast {
+function shiftAst(node: Ast, shift: Shift, onSheet: string | undefined): Ast {
   switch (node.kind) {
     case 'ref': {
+      if (!shifts(node.ref, shift, onSheet)) {
+        return node;
+      }
       const moved = shiftRef(node.ref, shift);
       return moved === node.ref ? node : { kind: 'ref', ref: moved };
     }
     case 'range': {
+      if (!shifts(node.range.start, shift, onSheet)) {
+        return node;
+      }
       const moved = shiftRange(node.range, shift);
       return moved === node.range ? node : { kind: 'range', range: moved };
     }
     case 'call': {
       let changed = false;
       const args = node.args.map(arg => {
-        const moved = shiftAst(arg, shift);
+        const moved = shiftAst(arg, shift, onSheet);
         changed = changed || moved !== arg;
         return moved;
       });
       return changed ? { kind: 'call', name: node.name, args } : node;
     }
     case 'unary': {
-      const operand = shiftAst(node.operand, shift);
+      const operand = shiftAst(node.operand, shift, onSheet);
       return operand === node.operand ? node : { kind: 'unary', op: node.op, operand };
     }
     case 'binary': {
-      const left = shiftAst(node.left, shift);
-      const right = shiftAst(node.right, shift);
+      const left = shiftAst(node.left, shift, onSheet);
+      const right = shiftAst(node.right, shift, onSheet);
       return left === node.left && right === node.right ? node : { kind: 'binary', op: node.op, left, right };
     }
     default:
@@ -175,7 +208,7 @@ export function shiftRange(range: RangeRef, shift: Shift): RangeRef {
     const lastRemoved = shift.at + removed - 1;
     if (first >= shift.at && last <= lastRemoved) {
       // Every cell it named is gone.
-      return { start: offSheetRef(range.start, shift.axis), end: offSheetRef(range.end, shift.axis) };
+      return { ...range, start: offSheetRef(range.start, shift.axis), end: offSheetRef(range.end, shift.axis) };
     }
     movedFirst = first < shift.at ? first : Math.max(shift.at, first - removed);
     movedLast = last <= lastRemoved ? shift.at - 1 : last - removed;
@@ -185,6 +218,7 @@ export function shiftRange(range: RangeRef, shift: Shift): RangeRef {
   }
   const startIsFirst = indexOf(range.start, shift.axis) <= indexOf(range.end, shift.axis);
   return {
+    ...range,
     start: withIndex(range.start, shift.axis, startIsFirst ? movedFirst : movedLast),
     end: withIndex(range.end, shift.axis, startIsFirst ? movedLast : movedFirst)
   };

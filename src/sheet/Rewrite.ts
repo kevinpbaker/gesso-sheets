@@ -47,6 +47,7 @@ function shift(node: Ast, rowDelta: number, columnDelta: number): Ast {
       return {
         kind: 'range',
         range: {
+          ...node.range,
           start: shiftRef(node.range.start, rowDelta, columnDelta),
           end: shiftRef(node.range.end, rowDelta, columnDelta)
         }
@@ -67,12 +68,18 @@ function shift(node: Ast, rowDelta: number, columnDelta: number): Ast {
   }
 }
 
-/** Only the halves that were written without a `$` move. */
+/**
+ * Only the halves that were written without a `$` move.
+ *
+ * The sheet is carried through rather than moved: filling
+ * `=Sheet2!A1` down gives `=Sheet2!A2`, because a fill moves where a
+ * reference points and not which sheet it points at. There is no
+ * third delta and there is not meant to be one.
+ */
 function shiftRef(ref: CellRef, rowDelta: number, columnDelta: number): CellRef {
   return {
+    ...ref,
     row: ref.rowAbsolute ? ref.row : ref.row + rowDelta,
-    column: ref.columnAbsolute ? ref.column : ref.column + columnDelta,
-    rowAbsolute: ref.rowAbsolute,
-    columnAbsolute: ref.columnAbsolute
+    column: ref.columnAbsolute ? ref.column : ref.column + columnDelta
   };
 }

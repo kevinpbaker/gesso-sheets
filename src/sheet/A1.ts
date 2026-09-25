@@ -48,6 +48,38 @@ export interface CellRef {
   readonly column: number;
   readonly rowAbsolute: boolean;
   readonly columnAbsolute: boolean;
+  /**
+   * The sheet written in front of it, as it was typed, or undefined
+   * for a reference to the sheet the formula is on.
+   *
+   * The **name** and not an id, which is the decision this field is.
+   * An id would make renaming free and deleting obvious, and would
+   * make the stored formula disagree with what the cell puts back in
+   * the editor — because `Cell.input` is exactly what somebody typed
+   * and nothing regenerates it. So the name travels in the text, and
+   * a rename rewrites the formulas that use it, the way an inserted
+   * row rewrites the references past it.
+   *
+   * Compared case-insensitively, because sheet names are.
+   */
+  readonly sheet?: string;
+}
+
+/**
+ * A sheet's name as it is written in front of a reference.
+ *
+ * Quoted when it is not a plain word, because `Q3 Budget!A1` would
+ * tokenize as two words with a space between them and the second half
+ * would be read as a reference to a sheet called `Budget`. Inside the
+ * quotes a quote doubles, which is the rule the tokenizer reads back.
+ */
+export function quoteSheetName(name: string): string {
+  return /^[A-Za-z_][A-Za-z0-9_.]*$/.test(name) ? name : `'${name.replace(/'/g, "''")}'`;
+}
+
+/** `Sheet2!`, or nothing at all when the reference stays home. */
+function sheetPrefix(ref: CellRef): string {
+  return ref.sheet === undefined ? '' : `${quoteSheetName(ref.sheet)}!`;
 }
 
 export interface RangeRef {
@@ -145,13 +177,38 @@ export function parseRef(text: string): CellRef | null {
 }
 
 export function formatRef(ref: CellRef): string {
+  return `${sheetPrefix(ref)}${bareRef(ref)}`;
+}
+
+/** The address without the sheet in front of it. */
+function bareRef(ref: CellRef): string {
   const column = `${ref.columnAbsolute ? '$' : ''}${columnName(ref.column)}`;
   const row = `${ref.rowAbsolute ? '$' : ''}${ref.row + 1}`;
   return `${column}${row}`;
 }
 
+/**
+ * A range, with its sheet written once.
+ *
+ * `Sheet2!A1:B9` rather than `Sheet2!A1:Sheet2!B9`. Both parse, and
+ * the second is what a printer built out of two `formatRef` calls
+ * would produce — which is how a fill of a cross-sheet formula would
+ * have slowly filled the text with repetitions of the sheet name.
+ */
 export function formatRange(range: RangeRef): string {
-  return `${formatRef(range.start)}:${formatRef(range.end)}`;
+  const prefix = sheetPrefix(range.start);
+  /**
+   * `A:A` goes back as `A:A`.
+   *
+   * Spelled out it is `A$1:A$1048576`, which is a different claim —
+   * a rectangle somebody drew rather than the column — and it is what
+   * a fill used to turn `=SUM(A:A)` into the moment it was dragged
+   * one cell sideways.
+   */
+  if (range.wholeColumn === true) {
+    return `${prefix}${columnName(range.start.column)}:${columnName(range.end.column)}`;
+  }
+  return `${prefix}${bareRef(range.start)}:${bareRef(range.end)}`;
 }
 
 /** A reference with no `$`, which is what a bare address means. */

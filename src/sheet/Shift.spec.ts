@@ -183,3 +183,52 @@ describe('what shifting does not touch', () => {
     expect(shiftFormula('=A10', { axis: 'row', at: 0, by: 0 })).toBe('=A10');
   });
 });
+
+/**
+ * A shift is positional, and a position on Sheet 2 is not a position
+ * on Sheet 1.
+ *
+ * Two facts decide whether a reference moves, and the reference only
+ * holds one of them: an unqualified `A5` means A5 on the formula's
+ * own sheet, so which sheet the formula sits on is part of the
+ * question. A workbook of one sheet leaves the shift unqualified and
+ * everything moves, which is every caller before Phase 13.
+ */
+describe('an insert on one sheet of several', () => {
+  const rows = (at: number, by: number, sheet?: string) => ({ axis: 'row' as const, at, by, sheet });
+
+  it('moves a reference to the sheet that changed, from anywhere', () => {
+    expect(shiftFormula('=Sheet2!A5', rows(0, 1, 'Sheet2'), 'Sheet1')).toBe('=Sheet2!A6');
+    expect(shiftFormula('=Sheet2!A5', rows(0, 1, 'Sheet2'), 'Sheet2')).toBe('=Sheet2!A6');
+  });
+
+  it('leaves a reference to any other sheet alone', () => {
+    expect(shiftFormula('=Sheet3!A5', rows(0, 1, 'Sheet2'), 'Sheet1')).toBe('=Sheet3!A5');
+    expect(shiftFormula('=Sheet3!A5', rows(0, 1, 'Sheet2'), 'Sheet2')).toBe('=Sheet3!A5');
+  });
+
+  /** Unqualified means "my own sheet", so where the formula lives decides. */
+  it('reads a bare reference as one to the formula\u2019s own sheet', () => {
+    expect(shiftFormula('=A5', rows(0, 1, 'Sheet2'), 'Sheet2')).toBe('=A6');
+    expect(shiftFormula('=A5', rows(0, 1, 'Sheet2'), 'Sheet1')).toBe('=A5');
+  });
+
+  it('does not care what case the name was written in', () => {
+    expect(shiftFormula('=sheet2!A5', rows(0, 1, 'SHEET2'), 'Sheet1')).toBe('=sheet2!A6');
+  });
+
+  it('moves the ones that point at it and no others, in one formula', () => {
+    expect(shiftFormula('=A5+Sheet2!A5+Sheet3!A5', rows(0, 1, 'Sheet2'), 'Sheet1')).toBe(
+      '=((A5+Sheet2!A6)+Sheet3!A5)'
+    );
+  });
+
+  it('deletes across sheets the same way', () => {
+    expect(shiftFormula('=Sheet2!A5', rows(4, -1, 'Sheet2'), 'Sheet1')).toBe('=#REF!');
+    expect(shiftFormula('=Sheet3!A5', rows(4, -1, 'Sheet2'), 'Sheet1')).toBe('=Sheet3!A5');
+  });
+
+  it('moves everything when the workbook has one sheet', () => {
+    expect(shiftFormula('=A5+Sheet2!A5', rows(0, 1))).toBe('=(A6+Sheet2!A6)');
+  });
+});

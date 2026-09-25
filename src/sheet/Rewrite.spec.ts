@@ -63,4 +63,32 @@ describe('moving a formula', () => {
   it('keeps a quoted string intact', () => {
     expect(rewriteFormula('=A1&" says ""hi"""', 1, 0)).toBe('=(A2&" says ""hi""")');
   });
+
+  /**
+   * A fill moves where a reference points, never which sheet it
+   * points at. There is no third delta and there is not meant to be
+   * one: `Sheet2!A1` dragged down is `Sheet2!A2`, on Sheet 2.
+   */
+  it('carries the sheet a reference names', () => {
+    expect(rewriteFormula('=Sheet2!A1', 1, 0)).toBe('=Sheet2!A2');
+    expect(rewriteFormula('=Sheet2!A1:B2', 1, 0)).toBe('=Sheet2!A2:B3');
+    expect(rewriteFormula('=Sheet2!$A$1+A1', 1, 0)).toBe('=(Sheet2!$A$1+A2)');
+  });
+
+  it('quotes a sheet name that needs it, and only then', () => {
+    expect(rewriteFormula("='Q3 Budget'!A1", 1, 0)).toBe("='Q3 Budget'!A2");
+    expect(rewriteFormula("='Kevin''s'!A1", 1, 0)).toBe("='Kevin''s'!A2");
+  });
+
+  /**
+   * `A:A` means the column and has to go on meaning it. Spelled out
+   * as `A$1:A$1048576` it is a rectangle somebody drew, which stops
+   * covering the sheet the moment a row is added at the bottom —
+   * and spelling it out is what a fill used to do to it.
+   */
+  it('keeps a whole column whole', () => {
+    expect(rewriteFormula('=SUM(A:A)', 0, 1)).toBe('=SUM(B:B)');
+    expect(rewriteFormula('=SUM(A:C)', 0, 2)).toBe('=SUM(C:E)');
+    expect(rewriteFormula('=SUM(Sheet2!A:A)', 0, 1)).toBe('=SUM(Sheet2!B:B)');
+  });
 });

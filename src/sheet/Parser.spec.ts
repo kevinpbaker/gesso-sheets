@@ -201,3 +201,104 @@ describe('the references a formula reads', () => {
     expect(references('1+2*3')).toEqual([]);
   });
 });
+
+/**
+ * `Sheet2!A1` — the third axis, in the text.
+ *
+ * The sheet travels as the **name** somebody typed rather than as an
+ * id, so a formula prints back as what was written and a rename has
+ * something to rewrite. What it never becomes is a range through the
+ * workbook: `Sheet1!A1:Sheet2!B9` is refused rather than quietly
+ * resolved to one sheet or the other.
+ */
+describe('a reference that names its sheet', () => {
+  const parse = (text: string) => parseFormula(text);
+  const sheetOf = (text: string): string | undefined => {
+    const node = parse(text);
+    if (node.kind === 'ref') {
+      return node.ref.sheet;
+    }
+    if (node.kind === 'range') {
+      return node.range.start.sheet;
+    }
+    throw new Error(`${text} is not a reference`);
+  };
+
+  it('reads a bare sheet name', () => {
+    expect(sheetOf('Sheet2!A1')).toBe('Sheet2');
+    expect(show(parse('Sheet2!A1'))).toBe('0:0');
+  });
+
+  it('reads a quoted one, spaces and all', () => {
+    expect(sheetOf("'Q3 Budget'!A1")).toBe('Q3 Budget');
+  });
+
+  it('reads a quote inside a quoted one', () => {
+    expect(sheetOf("'Kevin''s'!A1")).toBe("Kevin's");
+  });
+
+  it('qualifies both ends of a range from one name', () => {
+    const node = parse('Sheet2!A1:B9');
+    if (node.kind !== 'range') {
+      throw new Error('not a range');
+    }
+    expect(node.range.start.sheet).toBe('Sheet2');
+    expect(node.range.end.sheet).toBe('Sheet2');
+  });
+
+  it('takes the name written on both ends', () => {
+    expect(sheetOf('Sheet2!A1:Sheet2!B9')).toBe('Sheet2');
+  });
+
+  it('takes a whole column on another sheet', () => {
+    const node = parse('Sheet2!C:D');
+    if (node.kind !== 'range') {
+      throw new Error('not a range');
+    }
+    expect(node.range.wholeColumn).toBe(true);
+    expect(node.range.start.sheet).toBe('Sheet2');
+  });
+
+  it('leaves a plain reference with no sheet at all', () => {
+    expect(sheetOf('A1')).toBeUndefined();
+    expect('sheet' in (parse('A1') as { ref: object }).ref).toBe(false);
+  });
+
+  /** The qualifier belongs to the reference, not to the formula. */
+  it('works through calls and operators, and only where it was written', () => {
+    const node = parse('SUM(Sheet2!A1:A9)+B1');
+    expect(show(node)).toBe('(SUM(range(0:0,0:8)) + 1:0)');
+
+    const sheets: (string | undefined)[] = [];
+    referencesOf(node, {
+      ref: ref => sheets.push(ref.sheet),
+      range: range => sheets.push(range.start.sheet)
+    });
+    expect(sheets).toEqual(['Sheet2', undefined]);
+  });
+
+  it('refuses a range that runs from one sheet to another', () => {
+    expect(() => parse('Sheet1!A1:Sheet2!B9')).toThrow(FormulaSyntaxError);
+  });
+
+  it('refuses a sheet in front of a function', () => {
+    expect(() => parse('Sheet2!SUM(A1:A9)')).toThrow(FormulaSyntaxError);
+  });
+
+  it('refuses a sheet in front of a name', () => {
+    expect(() => parse('Sheet2!Sales')).toThrow(FormulaSyntaxError);
+  });
+
+  it('refuses a quoted name with no reference after it', () => {
+    expect(() => parse("'Q3 Budget'")).toThrow(FormulaSyntaxError);
+    expect(() => parse("'Q3 Budget'+1")).toThrow(FormulaSyntaxError);
+  });
+
+  it('refuses an empty name', () => {
+    expect(() => parse("''!A1")).toThrow(FormulaSyntaxError);
+  });
+
+  it('refuses a quoted name that is never closed', () => {
+    expect(() => parse("'Q3!A1")).toThrow(FormulaSyntaxError);
+  });
+});

@@ -120,6 +120,25 @@ class Parser {
       case 'word':
         this.at++;
         return this.word(token.value);
+      /**
+       * `Sheet2!A1` — a sheet, and then something on it.
+       *
+       * Only a cell or a range may follow. `Sheet2!SUM(A1:A9)` is not
+       * a call on another sheet, it is a misunderstanding of what the
+       * qualifier does, and `Sheet2!Sales` would be a sheet-scoped
+       * name, which this workbook does not have. Both are refused
+       * here rather than parsed into something that would print back
+       * as a different formula.
+       */
+      case 'sheet': {
+        this.at++;
+        const next = this.peek();
+        if (next.kind !== 'word') {
+          throw new FormulaSyntaxError(`A sheet name has to be followed by a cell, found ${describe(next)}.`);
+        }
+        this.at++;
+        return this.word(next.value, token.value);
+      }
       default:
         throw new FormulaSyntaxError(`Expected a value, found ${describe(token)}.`);
     }
@@ -132,8 +151,11 @@ class Parser {
    * not: `LOG10(2)` is a call and `LOG10` on its own is the cell in
    * column LOG, row 10, and both are things somebody writes.
    */
-  private word(text: string): Ast {
+  private word(text: string, sheet?: string): Ast {
     if (this.peek().kind === 'open') {
+      if (sheet !== undefined) {
+        throw new FormulaSyntaxError(`${text} is a function, so it cannot be qualified by a sheet.`);
+      }
       this.at++;
       return { kind: 'call', name: text.toUpperCase(), args: this.arguments() };
     }
@@ -143,9 +165,12 @@ class Parser {
     }
     const ref = parseRef(text);
     if (ref === null) {
-      const whole = this.maybeWholeColumns(text);
+      const whole = this.maybeWholeColumns(text, sheet);
       if (whole !== null) {
         return whole;
+      }
+      if (sheet !== undefined) {
+        throw new FormulaSyntaxError(`${text} is not a cell, so ${sheet}! has nothing to qualify.`);
       }
       // A name the sheet has no meaning for. It parses — the formula is
       // well formed — and fails at evaluation, which is where Excel
@@ -153,7 +178,7 @@ class Parser {
       // refusal to accept what was typed.
       return { kind: 'call', name: upper, args: [] };
     }
-    return this.maybeRange(ref);
+    return this.maybeRange(on(ref, sheet), sheet);
   }
 
   /**
@@ -169,7 +194,7 @@ class Parser {
    * second shape for a case nobody in this application has asked for;
    * `A1:Z1` says the same thing and says which columns it means.
    */
-  private maybeWholeColumns(text: string): Ast | null {
+  private maybeWholeColumns(text: string, sheet?: string): Ast | null {
     if (this.peek().kind !== 'colon') {
       return null;
     }
@@ -183,17 +208,32 @@ class Parser {
       return null;
     }
     this.at += 2;
+    const range = wholeColumnRange(Math.min(first, last), Math.max(first, last));
     return {
       kind: 'range',
-      range: wholeColumnRange(Math.min(first, last), Math.max(first, last))
+      range: { ...range, start: on(range.start, sheet), end: on(range.end, sheet) }
     };
   }
 
-  private maybeRange(start: CellRef): Ast {
+  private maybeRange(start: CellRef, sheet?: string): Ast {
     if (this.peek().kind !== 'colon') {
       return { kind: 'ref', ref: start };
     }
     this.at++;
+    /**
+     * `Sheet2!A1:Sheet2!B9` is allowed and says the same thing as
+     * `Sheet2!A1:B9`. `Sheet2!A1:Sheet3!B9` is a range through the
+     * third dimension, which this workbook does not have — and a
+     * range that silently used one of the two sheets would be the
+     * worst way to not have it.
+     */
+    const qualifier = this.peek();
+    if (qualifier.kind === 'sheet') {
+      if (qualifier.value.toUpperCase() !== (sheet ?? '').toUpperCase()) {
+        throw new FormulaSyntaxError(`A range cannot run from one sheet to another.`);
+      }
+      this.at++;
+    }
     const token = this.peek();
     if (token.kind !== 'word') {
       throw new FormulaSyntaxError(`A range needs a cell after the colon, found ${describe(token)}.`);
@@ -203,7 +243,7 @@ class Parser {
       throw new FormulaSyntaxError(`${token.value} is not a cell reference.`);
     }
     this.at++;
-    return { kind: 'range', range: { start, end } };
+    return { kind: 'range', range: { start, end: on(end, sheet) } };
   }
 
   private arguments(): Ast[] {
@@ -240,6 +280,19 @@ class Parser {
     }
     this.at++;
   }
+}
+
+/**
+ * A reference with the sheet it was qualified by, or unchanged.
+ *
+ * The field is left off rather than set to undefined so that a
+ * reference to this sheet is the same object shape it has always
+ * been — which matters because references are compared and stored,
+ * and `{ …, sheet: undefined }` is not the same key as `{ … }` to
+ * anything that stringifies one.
+ */
+function on(ref: CellRef, sheet?: string): CellRef {
+  return sheet === undefined ? ref : { ...ref, sheet };
 }
 
 function describe(token: Token): string {
