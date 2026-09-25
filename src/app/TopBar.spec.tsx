@@ -132,7 +132,7 @@ describe('the top bar from the keyboard', () => {
 
       await press('ArrowRight');
       expect(h.ui.queryByRole('menu', { name: 'Edit' })).toBeNull();
-      expect(h.ui.getByRole('menu', { name: 'Format' })).toBeDefined();
+      expect(h.ui.getByRole('menu', { name: 'Insert' })).toBeDefined();
 
       await press('ArrowLeft');
       expect(h.ui.getByRole('menu', { name: 'Edit' })).toBeDefined();

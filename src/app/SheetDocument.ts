@@ -1,6 +1,7 @@
 import { formatWith, type CellFormat } from '../sheet/Format';
 import { Formats } from '../sheet/Formats';
 import { Sheet } from '../sheet/Sheet';
+import { shiftIndex, type Shift } from '../sheet/Shift';
 
 /**
  * One change to one cell, and what it replaced.
@@ -10,7 +11,7 @@ import { Sheet } from '../sheet/Sheet';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit;
 
 interface TextEdit {
   readonly kind: 'text';
@@ -29,6 +30,36 @@ interface FormatEdit {
   readonly column: number;
   readonly before: number;
   readonly after: number;
+}
+
+/**
+ * A row or column inserted or deleted.
+ *
+ * Recorded as the shift plus what the shift destroyed, because a
+ * shift is not reversible on its own: deleting a row takes the cells
+ * in it away and turns every reference to them into `#REF!`, and
+ * neither comes back from applying the opposite shift. So the cells
+ * that were removed and the formulas that were rewritten are kept, at
+ * the positions they had *before* — which is where the inverse shift
+ * puts everything back.
+ *
+ * `rewritten` is proportional to the formulas that actually mentioned
+ * the line, not to the sheet. On a normal sheet that is tens; on a
+ * column of fifty thousand chained formulas it is fifty thousand,
+ * which is how much information the edit really changed and the price
+ * of being able to take it back.
+ */
+interface StructureEdit {
+  readonly kind: 'structure';
+  readonly row: number;
+  readonly column: number;
+  readonly shift: Shift;
+  /** Cells the shift removed, at the positions they had. */
+  readonly removed: readonly { readonly row: number; readonly column: number; readonly input: string }[];
+  /** Formulas the shift changed, as they read before it. */
+  readonly rewritten: readonly { readonly row: number; readonly column: number; readonly input: string }[];
+  /** Column widths as they were, so undo puts them back. */
+  readonly widths: readonly number[];
 }
 
 /**
@@ -80,6 +111,17 @@ type Step = readonly Edit[];
 export class SheetDocument {
   readonly sheet = new Sheet();
   readonly formats = new Formats();
+  /**
+   * How wide each column is drawn.
+   *
+   * Here rather than on the service's geometry since Phase 10, and
+   * the reason is undo. A column insert moves the widths along with
+   * the columns they describe, and taking that back has to move them
+   * back — so the widths have to be somewhere the undo stack can
+   * reach. Phase 6 had already made them the document's as far as the
+   * *file* was concerned; this finishes the move.
+   */
+  columnWidths: number[] = [];
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
@@ -304,6 +346,8 @@ export class SheetDocument {
           edit.before,
           edit.overrides.map(entry => ({ key: entry.key, id: entry.before }))
         );
+      } else if (edit.kind === 'structure') {
+        this.undoShift(edit);
       } else {
         this.applyFormat(edit.row, edit.column, edit.before);
       }
@@ -328,6 +372,10 @@ export class SheetDocument {
           edit.after,
           edit.overrides.map(entry => ({ key: entry.key, id: entry.after }))
         );
+      } else if (edit.kind === 'structure') {
+        this.sheet.shift(edit.shift);
+        this.formats.shift(edit.shift);
+        this.columnWidths = shiftWidths(edit.widths, edit.shift);
       } else {
         this.applyFormat(edit.row, edit.column, edit.after);
       }
@@ -335,6 +383,27 @@ export class SheetDocument {
     this.undoStack.push(step);
     this.selectStep(step);
     return true;
+  }
+
+  /**
+   * Puts a structural change back.
+   *
+   * The opposite shift first, which restores every position, and then
+   * the two things a shift destroys: the cells that were in a deleted
+   * row, and the formulas it turned into `#REF!`. Both are written at
+   * the positions they had before, which is where the opposite shift
+   * has just put everything else.
+   */
+  private undoShift(edit: StructureEdit): void {
+    this.sheet.shift({ ...edit.shift, by: -edit.shift.by });
+    this.formats.shift({ ...edit.shift, by: -edit.shift.by });
+    this.columnWidths = [...edit.widths];
+    for (const cell of edit.removed) {
+      this.writeCell(cell.row, cell.column, cell.input);
+    }
+    for (const cell of edit.rewritten) {
+      this.writeCell(cell.row, cell.column, cell.input);
+    }
   }
 
   /** Takes the selection to what a step changed, so it is seen. */
@@ -356,6 +425,48 @@ export class SheetDocument {
     this.selection = { row, column, anchorRow, anchorColumn };
   }
 
+  /**
+   * Inserts or deletes rows or columns, as one step.
+   *
+   * The whole of it is one entry on the undo stack, because it is one
+   * action to the person doing it however far it reached — the same
+   * rule `transact` exists for.
+   *
+   * The column widths move with the columns they describe: inserting
+   * a column in front of a wide one and leaving the widths alone
+   * makes the wrong column wide.
+   */
+  applyShift(shift: Shift): void {
+    const removed: { row: number; column: number; input: string }[] = [];
+    const rewritten: { row: number; column: number; input: string }[] = [];
+    for (const cell of this.sheet.entries()) {
+      const index = shift.axis === 'row' ? cell.row : cell.column;
+      if (shiftIndex(index, shift) === -1) {
+        removed.push({ ...cell });
+      } else if (cell.input.startsWith('=')) {
+        // Kept whether or not it changes. Deciding here would mean
+        // shifting every formula twice, and the list is dropped by
+        // `record` if the step turns out to be empty anyway.
+        rewritten.push({ ...cell });
+      }
+    }
+
+    const widths = [...this.columnWidths];
+    this.sheet.shift(shift);
+    this.formats.shift(shift);
+    this.columnWidths = shiftWidths(this.columnWidths, shift);
+
+    this.record({
+      kind: 'structure',
+      row: shift.axis === 'row' ? shift.at : 0,
+      column: shift.axis === 'column' ? shift.at : 0,
+      shift,
+      removed,
+      rewritten,
+      widths
+    });
+  }
+
   /** Every non-empty cell, for a repository or a search. */
   *entries(): Generator<{ row: number; column: number; input: string }> {
     yield* this.sheet.entries();
@@ -365,4 +476,34 @@ export class SheetDocument {
   get activeInput(): string {
     return this.sheet.input(this.selection.row, this.selection.column);
   }
+}
+
+/**
+ * Column widths, moved by a column insert or delete.
+ *
+ * The array stays the same length — the sheet is as wide as it was —
+ * so an insert pushes widths off the end and a delete pulls the last
+ * one along at it. An inserted column takes the width of the one it
+ * pushed aside, which is the only answer that does not make a
+ * carefully-widened column suddenly narrow while its neighbour is
+ * wide. It is the same arithmetic the cells get, on an array instead
+ * of a map.
+ */
+function shiftWidths(widths: readonly number[], shift: Shift): number[] {
+  if (shift.axis !== 'column') {
+    return [...widths];
+  }
+  const next = [...widths];
+  const removed = -shift.by;
+  if (shift.by > 0) {
+    for (let column = widths.length - 1; column >= shift.at; column--) {
+      const from = column - shift.by;
+      next[column] = from >= shift.at ? widths[from] : widths[shift.at];
+    }
+  } else {
+    for (let column = shift.at; column < widths.length; column++) {
+      next[column] = widths[column + removed] ?? widths[widths.length - 1];
+    }
+  }
+  return next;
 }

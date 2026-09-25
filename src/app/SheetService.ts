@@ -20,6 +20,7 @@ import {
   type SheetWindow
 } from './SheetContract';
 import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
+import type { Shift } from '../sheet/Shift';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 import { NO_STATS, type SheetStats } from './Statistics';
 import type { SheetDocument } from './SheetDocument';
@@ -156,12 +157,13 @@ export class SheetService {
     this.schedule = options.schedule ?? defaultSchedule;
     const columnCount = options.columnCount ?? 100;
     this.repository = options.repository;
+    document.columnWidths = Array.from({ length: columnCount }, () => COLUMN_WIDTH);
     this.geometrySubject = new BehaviorSubject<SheetGeometry>({
       rowCount: options.rowCount ?? 10_000,
       columnCount,
       rowHeight: ROW_HEIGHT,
       columnWidth: COLUMN_WIDTH,
-      columnWidths: Array.from({ length: columnCount }, () => COLUMN_WIDTH)
+      columnWidths: document.columnWidths
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
     this.editorSubject = new BehaviorSubject<SheetEditor>({
@@ -281,10 +283,16 @@ export class SheetService {
     if (column < 0 || column >= geometry.columnCount) {
       return;
     }
-    const columnWidths = [...geometry.columnWidths];
+    const columnWidths = [...this.document.columnWidths];
     columnWidths[column] = Math.max(MIN_COLUMN_WIDTH, Math.round(width));
-    this.geometrySubject.next({ ...geometry, columnWidths });
+    this.document.columnWidths = columnWidths;
+    this.publishGeometry();
     this.persist();
+  }
+
+  /** The geometry, with the widths as the document now holds them. */
+  private publishGeometry(): void {
+    this.geometrySubject.next({ ...this.geometrySubject.value, columnWidths: this.document.columnWidths });
   }
 
   /**
@@ -593,6 +601,60 @@ export class SheetService {
   }
 
   // ---------------------------------------------------------------------
+  // Phase 10: rows and columns
+  // ---------------------------------------------------------------------
+
+  insertRows(at: number, count: number): void {
+    this.structural({ axis: 'row', at, by: Math.max(1, count) });
+  }
+
+  deleteRows(at: number, count: number): void {
+    this.structural({ axis: 'row', at, by: -Math.max(1, count) });
+  }
+
+  insertColumns(at: number, count: number): void {
+    this.structural({ axis: 'column', at, by: Math.max(1, count) });
+  }
+
+  deleteColumns(at: number, count: number): void {
+    this.structural({ axis: 'column', at, by: -Math.max(1, count) });
+  }
+
+  /**
+   * A structural change, and everything that has to follow it.
+   *
+   * Nearly every published key moves: the window because cells moved,
+   * the formats because they moved with them, the geometry because a
+   * column insert moves the widths, and the editor because the cell
+   * the formula bar is showing may now be a different one.
+   *
+   * It is *not* sliced. An insert rewrites the formulas that mention
+   * the line and rebuilds the graph, which on a normal sheet is
+   * instant and on the fifty-thousand-formula chain is not — and the
+   * recalculation it causes goes through the pump as every other edit
+   * does, so what is left unsliced is the rewrite itself. `pnpm proof`
+   * is what says whether that is affordable; see the phase's notes.
+   */
+  private structural(shift: Shift): void {
+    this.document.applyShift(shift);
+    this.publishGeometry();
+    this.publishWindow();
+    this.publishFormats();
+    this.publishPalette();
+    this.publishEditor();
+    this.publishStatus();
+    this.publishStats();
+    this.publishActiveFormat();
+    // A search's matches are cell keys, and every one of them past
+    // the line is now the wrong cell.
+    if (this.findSubject.value.query !== '') {
+      this.search(this.findSubject.value.query, optionsOf(this.findSubject.value));
+    }
+    this.persist();
+    this.pump();
+  }
+
+  // ---------------------------------------------------------------------
   // Keeping it
   // ---------------------------------------------------------------------
 
@@ -612,7 +674,8 @@ export class SheetService {
       this.document.sheet.recalculate();
     } else {
       applySnapshot(this.document, stored);
-      this.geometrySubject.next({ ...this.geometrySubject.value, columnWidths: [...stored.columnWidths] });
+      this.document.columnWidths = [...stored.columnWidths];
+      this.publishGeometry();
     }
     this.restored = true;
     this.selectionSubject.next(this.document.selection);
@@ -636,8 +699,7 @@ export class SheetService {
 
   /** The snapshot as it stands, for a spec or a worker shutting down. */
   snapshot(): SheetSnapshot {
-    const { columnWidths, rowCount } = this.geometrySubject.value;
-    return snapshotOf(this.document, columnWidths, rowCount);
+    return snapshotOf(this.document, this.document.columnWidths, this.geometrySubject.value.rowCount);
   }
 
   /** Writes anything outstanding now. */
@@ -665,7 +727,12 @@ export class SheetService {
 
   private afterHistory(): void {
     this.selectionSubject.next(this.document.selection);
+    // An undone column insert puts the widths back where they were,
+    // and the geometry is where the render worker reads them.
+    this.publishGeometry();
     this.publishWindow();
+    this.publishFormats();
+    this.publishPalette();
     this.publishEditor();
     this.publishStatus();
     this.publishStats();

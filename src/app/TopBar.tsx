@@ -198,6 +198,20 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   /** The active cell's paint, read without a round trip. */
   const paint = () => sheet.view.activeFormat.value.paint;
 
+  /** The rows and columns the selection covers, corners normalised. */
+  const rows = () => {
+    const at = edit.selectionNow();
+    const first = Math.min(at.row, at.anchorRow);
+    const last = Math.max(at.row, at.anchorRow);
+    return { first, last, count: last - first + 1 };
+  };
+  const columns = () => {
+    const at = edit.selectionNow();
+    const first = Math.min(at.column, at.anchorColumn);
+    const last = Math.max(at.column, at.anchorColumn);
+    return { first, last, count: last - first + 1 };
+  };
+
   const format = (change: SheetFormatChange): void => sheet.send.format(change);
 
   const run = (id: CommandId): void => {
@@ -320,6 +334,30 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'clearFormat':
         sheet.send.clearFormat();
+        break;
+      /**
+       * How many rows the selection covers is how many go in.
+       * Selecting three rows and asking for a row gives three, which
+       * is what every spreadsheet does and saves the press-it-again
+       * that people otherwise do anyway.
+       */
+      case 'insertRowAbove':
+        sheet.send.insertRows(rows().first, rows().count);
+        break;
+      case 'insertRowBelow':
+        sheet.send.insertRows(rows().last + 1, rows().count);
+        break;
+      case 'insertColumnLeft':
+        sheet.send.insertColumns(columns().first, columns().count);
+        break;
+      case 'insertColumnRight':
+        sheet.send.insertColumns(columns().last + 1, columns().count);
+        break;
+      case 'deleteRows':
+        sheet.send.deleteRows(rows().first, rows().count);
+        break;
+      case 'deleteColumns':
+        sheet.send.deleteColumns(columns().first, columns().count);
         break;
     }
     edit.focusSheet();

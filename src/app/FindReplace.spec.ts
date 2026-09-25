@@ -4,6 +4,7 @@ import type { SheetFindView, SheetSelection } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
 import { SheetService, type Schedule } from './SheetService';
 import type { SheetStats } from './Statistics';
+import { PLAIN } from '../sheet/Format';
 
 /**
  * Fill, find and replace, driven as commands through the service.
@@ -290,5 +291,149 @@ describe('the status bar totals', () => {
     service.setCell(0, 0, '5');
     drain();
     expect(latest<SheetStats>(service.selectionStats).sum).toBe(55);
+  });
+});
+
+/**
+ * Inserting and deleting rows and columns, through the service.
+ *
+ * `Structure.budget.spec.ts` counts what a shift rewrites;
+ * `Shift.spec.ts` says what each reference does. This is the layer
+ * those two are wired into: what the selection covers, what the undo
+ * stack holds, and what the geometry does with the column widths.
+ */
+describe('inserting and deleting rows', () => {
+  it('pushes the rows below down, and takes their formulas with them', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 0, '10');
+      d.setCell(1, 0, '20');
+      d.setCell(2, 0, '=SUM(A1:A2)');
+    });
+    service.insertRows(1, 1);
+    drain();
+
+    expect(document.sheet.input(0, 0)).toBe('10');
+    expect(document.sheet.input(1, 0)).toBe('');
+    expect(document.sheet.input(2, 0)).toBe('20');
+    expect(document.sheet.input(3, 0)).toBe('=SUM(A1:A3)');
+    expect(document.sheet.value(3, 0)).toBe(30);
+  });
+
+  it('inserts as many rows as the selection covers', () => {
+    const { service, document, drain } = harness(d => d.setCell(0, 0, 'a'));
+    service.insertRows(0, 3);
+    drain();
+    expect(document.sheet.input(3, 0)).toBe('a');
+  });
+
+  it('deletes rows, breaking only what pointed into them', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 0, '10');
+      d.setCell(1, 0, '20');
+      d.setCell(2, 0, '=A1');
+      d.setCell(3, 0, '=A2');
+    });
+    service.deleteRows(1, 1);
+    drain();
+
+    expect(document.sheet.input(1, 0)).toBe('=A1');
+    expect(document.sheet.value(1, 0)).toBe(10);
+    expect(document.sheet.input(2, 0)).toBe('=#REF!');
+  });
+
+  /** One action, one press of ctrl-Z, however far it reached. */
+  it('is one step on the undo stack', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 0, '10');
+      d.setCell(1, 0, '=A1*2');
+    });
+    service.insertRows(0, 1);
+    drain();
+    expect(document.sheet.input(1, 0)).toBe('10');
+
+    service.undo();
+    drain();
+    expect(document.sheet.input(0, 0)).toBe('10');
+    // Exactly as it was typed: undo puts back the text it recorded
+    // rather than shifting the shifted version back, so a formula
+    // that went out and came home is not quietly reprinted.
+    expect(document.sheet.input(1, 0)).toBe('=A1*2');
+    expect(document.sheet.value(1, 0)).toBe(20);
+  });
+
+  /**
+   * The hard direction. A delete destroys two things an opposite
+   * shift cannot bring back: the cells that were in the row, and the
+   * formulas it turned into `#REF!`.
+   */
+  it('puts back what a delete destroyed', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 0, '10');
+      d.setCell(1, 0, 'gone');
+      d.setCell(2, 0, '=A2&"!"');
+    });
+    service.deleteRows(1, 1);
+    drain();
+    expect(document.sheet.input(1, 0)).toBe('=(#REF!&"!")');
+
+    service.undo();
+    drain();
+
+    expect(document.sheet.input(1, 0)).toBe('gone');
+    expect(document.sheet.input(2, 0)).toBe('=A2&"!"');
+    expect(document.sheet.value(2, 0)).toBe('gone!');
+  });
+
+  it('moves the formats with the rows', () => {
+    const { service, document, drain } = harness(d => d.setCell(0, 0, '1'));
+    document.setFormat(0, 0, { number: { kind: 'percent', places: 0 }, paint: PLAIN });
+    service.insertRows(0, 1);
+    drain();
+
+    expect(document.formatAt(1, 0).number.kind).toBe('percent');
+    expect(document.formatAt(0, 0).number.kind).toBe('general');
+  });
+});
+
+describe('inserting and deleting columns', () => {
+  it('moves the cells and their references sideways', () => {
+    const { service, document, drain } = harness(d => {
+      d.setCell(0, 1, '5');
+      d.setCell(0, 2, '=B1*2');
+    });
+    service.insertColumns(0, 1);
+    drain();
+
+    expect(document.sheet.input(0, 2)).toBe('5');
+    expect(document.sheet.input(0, 3)).toBe('=(C1*2)');
+    expect(document.sheet.value(0, 3)).toBe(10);
+  });
+
+  /**
+   * Widths belong to the columns they describe. Inserting in front of
+   * a wide column and leaving the widths alone makes the wrong column
+   * wide.
+   */
+  it('moves the column widths too', () => {
+    const { service, drain } = harness();
+    service.setColumnWidth(2, 240);
+    service.insertColumns(0, 1);
+    drain();
+
+    const geometry = latest<{ columnWidths: readonly number[] }>(service.geometry);
+    expect(geometry.columnWidths[3]).toBe(240);
+    expect(geometry.columnWidths[2]).not.toBe(240);
+  });
+
+  it('brings the widths back when the insert is undone', () => {
+    const { service, drain } = harness();
+    service.setColumnWidth(2, 240);
+    service.insertColumns(0, 1);
+    drain();
+    service.undo();
+    drain();
+
+    const geometry = latest<{ columnWidths: readonly number[] }>(service.geometry);
+    expect(geometry.columnWidths[2]).toBe(240);
   });
 });

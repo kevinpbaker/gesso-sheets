@@ -52,7 +52,13 @@ export type CommandId =
   | 'formatText'
   | 'moreDecimals'
   | 'fewerDecimals'
-  | 'clearFormat';
+  | 'clearFormat'
+  | 'insertRowAbove'
+  | 'insertRowBelow'
+  | 'insertColumnLeft'
+  | 'insertColumnRight'
+  | 'deleteRows'
+  | 'deleteColumns';
 
 /**
  * How long a chain the proof command builds.
@@ -78,6 +84,7 @@ export interface Accelerator {
   readonly key: string;
   readonly ctrl?: boolean;
   readonly shift?: boolean;
+  readonly alt?: boolean;
   /**
    * What the browser actually reports for this key with shift held.
    *
@@ -121,6 +128,18 @@ export interface Command {
   readonly hidden?: true;
 }
 
+/**
+ * Whether a command can be reached at all.
+ *
+ * A menu item or a key is enough; a command with neither is one
+ * nobody can run and one the shortcut sheet would not list. Checked
+ * by the spec rather than by the type, because "in a menu" is a fact
+ * about `MENUS` and not about this row.
+ */
+export function isReachable(command: Command, inAMenu: boolean): boolean {
+  return inAMenu || command.accelerator !== undefined;
+}
+
 export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   undo: { id: 'undo', label: 'Undo', accelerator: { key: 'z', ctrl: true }, viaKeyTable: true },
   redo: { id: 'redo', label: 'Redo', accelerator: { key: 'y', ctrl: true }, viaKeyTable: true },
@@ -141,6 +160,36 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
   menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
+
+  /**
+   * Alt, and not the Ctrl+Shift+= and Ctrl+- a desktop spreadsheet
+   * uses.
+   *
+   * Those are Chrome's zoom shortcuts, and a page cannot prevent
+   * them: the browser takes Ctrl+Plus and Ctrl+Minus before the
+   * document sees them, so an insert bound there is an insert that
+   * zooms the page instead. Google Sheets moved to Ctrl+Alt for the
+   * same reason and this follows it — there is no cleverness
+   * available, only somebody else's key or nobody's.
+   *
+   * `=` and not `+`: `+` is what the key *produces* with shift held,
+   * which is the trap the number formats fell into. The label prints
+   * the key somebody presses.
+   */
+  insertRowAbove: { id: 'insertRowAbove', label: 'Row above', accelerator: { key: '=', ctrl: true, alt: true } },
+  insertRowBelow: { id: 'insertRowBelow', label: 'Row below' },
+  insertColumnLeft: {
+    id: 'insertColumnLeft',
+    label: 'Column left',
+    accelerator: { key: '=', ctrl: true, alt: true, shift: true, shifted: '+' }
+  },
+  insertColumnRight: { id: 'insertColumnRight', label: 'Column right' },
+  deleteRows: { id: 'deleteRows', label: 'Delete rows', accelerator: { key: '-', ctrl: true, alt: true } },
+  deleteColumns: {
+    id: 'deleteColumns',
+    label: 'Delete columns',
+    accelerator: { key: '-', ctrl: true, alt: true, shift: true, shifted: '_' }
+  },
 
   bold: { id: 'bold', label: 'Bold', accelerator: { key: 'b', ctrl: true } },
   italic: { id: 'italic', label: 'Italic', accelerator: { key: 'i', ctrl: true } },
@@ -221,11 +270,10 @@ export interface MenuDefinition {
 /**
  * The bar, as it stands after Phase 8.
  *
- * Four menus and not the seven a spreadsheet ends up with, because
- * the other three would be menus of things that do not work yet.
- * File arrives with Phase 16, which is when there is a file to open,
- * and Insert with Phase 10. A menu of disabled items is a worse
- * answer than no menu: it advertises, and then it refuses.
+ * Five menus and not the six a spreadsheet ends up with: File
+ * arrives with Phase 16, which is when there is a file to open. A
+ * menu of disabled items is a worse answer than no menu — it
+ * advertises, and then it refuses.
  *
  * Format's mnemonic is `o` rather than `f`, because File is coming
  * and will want `f` — and a mnemonic that moves once people have
@@ -250,6 +298,21 @@ export const MENUS: readonly MenuDefinition[] = [
       'find',
       'replace',
       'gotoCell'
+    ]
+  },
+  {
+    id: 'insert',
+    label: 'Insert',
+    mnemonic: 'i',
+    entries: [
+      'insertRowAbove',
+      'insertRowBelow',
+      SEPARATOR,
+      'insertColumnLeft',
+      'insertColumnRight',
+      SEPARATOR,
+      'deleteRows',
+      'deleteColumns'
     ]
   },
   {
@@ -310,6 +373,9 @@ export function acceleratorLabel(accelerator: Accelerator): string {
   if (accelerator.shift === true) {
     parts.push('Shift');
   }
+  if (accelerator.alt === true) {
+    parts.push('Alt');
+  }
   parts.push(accelerator.key.length === 1 ? accelerator.key.toUpperCase() : accelerator.key);
   return parts.join('+');
 }
@@ -324,6 +390,7 @@ export function acceleratorLabel(accelerator: Accelerator): string {
 export function commandFor(key: string, modifiers: KeyModifiers): CommandId | null {
   const accel = modifiers.ctrl === true || modifiers.meta === true;
   const shift = modifiers.shift === true;
+  const alt = modifiers.alt === true;
   for (const command of Object.values(COMMANDS)) {
     const wanted = command.accelerator;
     if (wanted === undefined || command.viaKeyTable === true) {
@@ -332,7 +399,8 @@ export function commandFor(key: string, modifiers: KeyModifiers): CommandId | nu
     if (
       (matchesKey(wanted.key, key) || (wanted.shifted !== undefined && wanted.shifted === key)) &&
       (wanted.ctrl === true) === accel &&
-      (wanted.shift === true) === shift
+      (wanted.shift === true) === shift &&
+      (wanted.alt === true) === alt
     ) {
       return command.id;
     }

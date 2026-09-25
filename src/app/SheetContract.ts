@@ -269,6 +269,19 @@ export interface SheetCommands {
   format(change: SheetFormatChange): void;
   /** Puts the selection back to the default format. */
   clearFormat(): void;
+  /**
+   * Inserts or deletes whole rows or columns at the selection.
+   *
+   * `count` is how many, taken from how many the selection covers, so
+   * selecting three rows and inserting gives three. The sheet keeps
+   * its size: an insert pushes the last rows off the end and a delete
+   * brings empty ones in at it, which is what a sheet of a fixed
+   * extent means.
+   */
+  insertRows(at: number, count: number): void;
+  deleteRows(at: number, count: number): void;
+  insertColumns(at: number, count: number): void;
+  deleteColumns(at: number, count: number): void;
 }
 
 /**

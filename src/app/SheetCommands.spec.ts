@@ -7,6 +7,7 @@ import {
   keyTableAction,
   MENUS,
   menuForMnemonic,
+  isReachable,
   SEPARATOR,
   type CommandId
 } from './SheetCommands';
@@ -73,6 +74,9 @@ describe('the command table', () => {
     expect(commandFor('F9', {})).toBe('recalculate');
     expect(commandFor('/', { ctrl: true })).toBe('shortcuts');
     expect(commandFor('F10', {})).toBe('menuBar');
+    expect(commandFor('-', { ctrl: true, alt: true })).toBe('deleteRows');
+    expect(commandFor('_', { ctrl: true, alt: true, shift: true })).toBe('deleteColumns');
+    expect(commandFor('=', { ctrl: true, alt: true })).toBe('insertRowAbove');
   });
 
   it('takes meta for ctrl, so one table covers both keyboards', () => {
@@ -95,6 +99,7 @@ describe('the command table', () => {
 
   it('does not fire when an extra modifier is held', () => {
     expect(commandFor('d', { ctrl: true, shift: true })).toBeNull();
+    expect(commandFor('d', { ctrl: true, alt: true })).toBeNull();
   });
 
   it('prints an accelerator the way an application prints one', () => {
@@ -139,13 +144,15 @@ describe('the menus', () => {
   });
 
   /**
-   * The shortcut sheet reads `COMMANDS` rather than `MENUS`, so a
-   * hidden command is still advertised. A key that works and is
-   * documented nowhere is a key nobody presses.
+   * Every command is reachable: from a menu, or by a key, or both. A
+   * command with neither is one nobody can run — and a *hidden* one
+   * has no menu to be in, so for those the key is the only way and
+   * the check is that it has one.
    */
-  it('gives every command an accelerator, so the sheet can advertise it', () => {
+  it('gives every command a way to be run', () => {
+    const inAMenu = new Set(MENUS.flatMap(menu => menu.entries).filter(entry => entry !== SEPARATOR));
     for (const command of Object.values(COMMANDS)) {
-      expect(command.accelerator, command.id).toBeDefined();
+      expect(isReachable(command, inAMenu.has(command.id)), command.id).toBe(true);
     }
   });
 
@@ -203,6 +210,24 @@ describe('the shifted number row', () => {
         continue;
       }
       expect(accelerator.shifted, `${command.id} (${accelerator.key})`).toBeDefined();
+    }
+  });
+});
+
+/**
+ * Chrome takes Ctrl+Plus and Ctrl+Minus for zoom before the document
+ * sees them, so an insert bound there zooms the page instead. Nothing
+ * in the application can prevent that, which is why these are on Alt.
+ */
+describe('the keys the browser has already taken', () => {
+  it('binds no accelerator to the browser\u2019s zoom keys', () => {
+    for (const command of Object.values(COMMANDS)) {
+      const accelerator = command.accelerator;
+      if (accelerator === undefined || accelerator.ctrl !== true || accelerator.alt === true) {
+        continue;
+      }
+      const taken = ['=', '+', '-', '_', '0'];
+      expect(taken, `${command.id} is on a key Chrome keeps for zoom`).not.toContain(accelerator.key);
     }
   });
 });

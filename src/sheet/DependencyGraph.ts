@@ -42,6 +42,20 @@ export class DependencyGraph {
     }
   }
 
+  /**
+   * Forgets the whole graph.
+   *
+   * For a structural change — an insert or a delete — where every
+   * edge on the moved side of the line points at the wrong key.
+   * Rebuilding from the formulas is the only version that cannot be
+   * half-right, and patching a key at a time would leave the two
+   * adjacency maps disagreeing the moment one of them was half done.
+   */
+  clear(): void {
+    this.precedents.clear();
+    this.dependents.clear();
+  }
+
   /** Forgets that `key` reads anything. Its readers are untouched. */
   clearPrecedents(key: number): void {
     const existing = this.precedents.get(key);

@@ -48,7 +48,11 @@ export function sheetChannel(service: SheetService): ServedChannel {
       replaceAll: replacement => service.replaceAll(replacement),
       clearFind: () => service.clearFind(),
       format: change => service.format(change),
-      clearFormat: () => service.clearFormat()
+      clearFormat: () => service.clearFormat(),
+      insertRows: (at, count) => service.insertRows(at, count),
+      deleteRows: (at, count) => service.deleteRows(at, count),
+      insertColumns: (at, count) => service.insertColumns(at, count),
+      deleteColumns: (at, count) => service.deleteColumns(at, count)
     }
   });
 }

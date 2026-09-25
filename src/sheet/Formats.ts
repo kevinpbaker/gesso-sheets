@@ -1,5 +1,6 @@
 import { cellKey, columnOf, rowOf } from './A1';
 import { DEFAULT_FORMAT, keyOf, type CellFormat } from './Format';
+import { shiftIndex, type Shift } from './Shift';
 
 /**
  * Which format each cell has, and the table of formats themselves.
@@ -242,6 +243,47 @@ export class Formats {
       cells.push({ row: cell.row, column: cell.column, id: renumber(cell.id) });
     }
     return { palette, cells, regions };
+  }
+
+  /**
+   * Moves every format because the sheet changed shape.
+   *
+   * Three maps to carry rather than one, and the region maps are the
+   * reason this is cheap: a column formatted as currency is one entry
+   * that moves one place, not ten thousand cells that each move.
+   *
+   * A region whose index was deleted is dropped — there is no column
+   * left to be currency — and so is a cell override in a deleted row.
+   */
+  shift(shift: Shift): void {
+    const cells = new Map<number, number>();
+    for (const [key, id] of this.cells) {
+      const row = rowOf(key);
+      const column = columnOf(key);
+      const index = shift.axis === 'row' ? row : column;
+      const moved = shiftIndex(index, shift);
+      if (moved === -1) {
+        continue;
+      }
+      cells.set(moved === index ? key : shift.axis === 'row' ? cellKey(moved, column) : cellKey(row, moved), id);
+    }
+    this.cells.clear();
+    for (const [key, id] of cells) {
+      this.cells.set(key, id);
+    }
+
+    const along = shift.axis === 'row' ? this.rows : this.columns;
+    const moved = new Map<number, number>();
+    for (const [index, id] of along) {
+      const next = shiftIndex(index, shift);
+      if (next !== -1) {
+        moved.set(next, id);
+      }
+    }
+    along.clear();
+    for (const [index, id] of moved) {
+      along.set(index, id);
+    }
   }
 
   /** Replaces everything, for a load. */

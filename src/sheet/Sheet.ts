@@ -3,6 +3,7 @@ import { referencesOf, type Ast } from './Ast';
 import { DependencyGraph } from './DependencyGraph';
 import { evaluate } from './Evaluator';
 import { FormulaSyntaxError, parseFormula } from './Parser';
+import { shiftFormula, shiftIndex, type Shift } from './Shift';
 import { CIRC, formatValue, VALUE, type CellValue } from './Values';
 
 interface Cell {
@@ -90,6 +91,79 @@ export class Sheet {
       this.cells.set(key, { input, formula: null, value: asText ? input : literalValue(input) });
     }
     this.markDependentsDirty(key);
+  }
+
+  /**
+   * Inserts or deletes whole rows or columns.
+   *
+   * Two things happen, and only one of them is obvious. The cells on
+   * the moved side of the line are **carried** to their new keys —
+   * that is the obvious half, and it is a rebuild of the store rather
+   * than an in-place shuffle, because moving a cell to a key that
+   * another cell has not vacated yet is how an in-place version
+   * corrupts itself.
+   *
+   * The other half is that **every formula in the sheet is offered
+   * the shift**, wherever it lives. A reference is a position, not an
+   * offset: a formula in row 1 reading `=A900` names the cell at
+   * A900, and after a row is inserted at 500 that cell is A901. So
+   * the walk is over the whole store and the rewrites are the
+   * formulas that actually mention the line — which is the number
+   * `Structure.budget.spec.ts` counts.
+   *
+   * Returns how many formulas were rewritten, for that spec and for
+   * nobody else.
+   */
+  shift(shift: Shift): number {
+    const carried = new Map<number, Cell>();
+    let rewrites = 0;
+
+    for (const [key, cell] of this.cells) {
+      const row = rowOf(key);
+      const column = columnOf(key);
+      const index = shift.axis === 'row' ? row : column;
+      const moved = shiftIndex(index, shift);
+      if (moved === -1) {
+        // The cell was in a deleted row. It goes, and everything that
+        // referenced it will say `#REF!` after the rewrite below.
+        continue;
+      }
+      const input = shiftFormula(cell.input, shift);
+      if (input !== cell.input) {
+        rewrites++;
+      }
+      const at = moved === index ? key : shift.axis === 'row' ? cellKey(moved, column) : cellKey(row, moved);
+      carried.set(at, input === cell.input ? cell : { input, formula: null, value: null });
+    }
+
+    // Rebuilt rather than patched. The graph's edges are keys, and
+    // after a shift every key on the moved side is wrong; re-reading
+    // each formula is the only version that cannot be half-right.
+    this.cells.clear();
+    this.graph.clear();
+    this.dirty.clear();
+    this.plan = null;
+    for (const [key, cell] of carried) {
+      if (cell.formula === null && cell.value === null) {
+        // Rewritten above, so it has to be parsed again.
+        this.writeFormula(key, cell.input);
+      } else {
+        this.cells.set(key, cell);
+        if (cell.formula !== null) {
+          this.graph.setPrecedents(key, precedentsOf(cell.formula));
+          this.dirty.add(key);
+        }
+      }
+    }
+    // Everything that reads a moved cell has to be redone, and after
+    // a shift that is anything with a formula at all: the cheap
+    // closure is the right one here.
+    for (const [key, cell] of this.cells) {
+      if (cell.formula !== null) {
+        this.dirty.add(key);
+      }
+    }
+    return rewrites;
   }
 
   clearCell(row: number, column: number): void {

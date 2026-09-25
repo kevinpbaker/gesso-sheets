@@ -1,7 +1,7 @@
-import { formatRef, formatRange, inBounds, type CellRef, type RangeRef } from './A1';
+import type { CellRef } from './A1';
 import type { Ast } from './Ast';
 import { FormulaSyntaxError, parseFormula } from './Parser';
-import { formatNumber } from './Values';
+import { printFormula } from './Print';
 
 /**
  * Moving a formula, with its relative references adjusted and its
@@ -36,7 +36,7 @@ export function rewriteFormula(input: string, rowDelta: number, columnDelta: num
     // error; mangling it further would lose what somebody typed.
     return input;
   }
-  return `=${write(shift(formula, rowDelta, columnDelta))}`;
+  return `=${printFormula(shift(formula, rowDelta, columnDelta))}`;
 }
 
 function shift(node: Ast, rowDelta: number, columnDelta: number): Ast {
@@ -75,41 +75,4 @@ function shiftRef(ref: CellRef, rowDelta: number, columnDelta: number): CellRef 
     rowAbsolute: ref.rowAbsolute,
     columnAbsolute: ref.columnAbsolute
   };
-}
-
-/**
- * The tree back as text.
- *
- * Fully parenthesised rather than minimally: a writer that dropped
- * brackets would have to know the precedence table as exactly as the
- * parser does, and the one place the two could disagree is the place a
- * fill silently changes what a formula means. Extra brackets are ugly
- * and cannot be wrong.
- */
-function write(node: Ast): string {
-  switch (node.kind) {
-    case 'number':
-      return formatNumber(node.value);
-    case 'text':
-      return `"${node.value.replace(/"/g, '""')}"`;
-    case 'boolean':
-      return node.value ? 'TRUE' : 'FALSE';
-    case 'error':
-      return node.code;
-    case 'ref':
-      return inBounds(node.ref.row, node.ref.column) ? formatRef(node.ref) : '#REF!';
-    case 'range':
-      return writeRange(node.range);
-    case 'call':
-      return `${node.name}(${node.args.map(write).join(',')})`;
-    case 'unary':
-      return `${node.op}${write(node.operand)}`;
-    case 'binary':
-      return `(${write(node.left)}${node.op}${write(node.right)})`;
-  }
-}
-
-function writeRange(range: RangeRef): string {
-  const off = !inBounds(range.start.row, range.start.column) || !inBounds(range.end.row, range.end.column);
-  return off ? '#REF!' : formatRange(range);
 }
