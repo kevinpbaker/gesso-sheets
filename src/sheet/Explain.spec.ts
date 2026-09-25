@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { addressOf, explainCell } from './Explain';
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 
 /**
  * Why a cell is showing an error.
@@ -11,7 +12,7 @@ import { Sheet } from './Sheet';
  * and finding it is a mechanical walk backwards through the formulas.
  */
 function sheetOf(cells: Readonly<Record<string, string>>): Sheet {
-  const sheet = new Sheet();
+  const sheet = new Workbook().sheet(0);
   for (const [address, input] of Object.entries(cells)) {
     const match = /^([A-Z])(\d+)$/.exec(address)!;
     sheet.setCell(Number(match[2]) - 1, match[1].charCodeAt(0) - 65, input);

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 import { CIRC, DIV0, NAME, REF, VALUE } from './Values';
 
 /** A sheet built from a grid literal, recalculated once. */
 function sheetOf(grid: Record<string, string>): Sheet {
-  const sheet = new Sheet();
+  const sheet = new Workbook().sheet(0);
   for (const [address, input] of Object.entries(grid)) {
     const column = address.charCodeAt(0) - 65;
     sheet.setCell(Number(address.slice(1)) - 1, column, input);
@@ -170,7 +171,7 @@ describe('cycles', () => {
   });
 
   it('does not leave a cycle pending forever', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '=B1');
     sheet.setCell(0, 1, '=A1');
     const result = sheet.recalculate();

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { serialOfDate } from './Dates';
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 import { formatValue } from './Values';
 
 /**
@@ -20,7 +21,7 @@ const ROWS = 5_000;
 
 /** A column of numbers with a lookup table beside it. */
 function bigSheet(): Sheet {
-  const sheet = new Sheet();
+  const sheet = new Workbook().sheet(0);
   for (let row = 0; row < ROWS; row++) {
     sheet.setCell(row, 0, String(row));
     sheet.setCell(row, 1, `name-${row}`);
@@ -74,7 +75,7 @@ describe('a full-column reference', () => {
   });
 
   it('reads only as far as the sheet has ever been written', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '5');
     sheet.setCell(1, 0, '7');
     sheet.setCell(0, 5, '=COUNT(A:A)');
@@ -85,7 +86,7 @@ describe('a full-column reference', () => {
   });
 
   it('is empty in a column of a sheet with nothing in it', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 5, '=COUNT(B:B)');
     sheet.recalculate();
     expect(sheet.value(0, 5)).toBe(0);
@@ -135,7 +136,7 @@ describe('the budget a lookup down a full column has', () => {
  */
 describe('a volatile formula', () => {
   function sheetAt(day: number): Sheet {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.clock = () => day;
     return sheet;
   }
@@ -183,7 +184,7 @@ describe('a volatile formula', () => {
 
   /** A sheet with no volatile cell pays nothing for the mechanism. */
   it('costs nothing when there is none', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '=1+1');
     sheet.recalculate();
 
@@ -196,7 +197,7 @@ describe('a volatile formula', () => {
   /** Two `NOW()`s in one pass must not disagree about the time. */
   it('gives the same answer to every cell in one recalculation', () => {
     let ticks = 0;
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.clock = () => 46_289 + ticks++ / 1000;
     sheet.setCell(0, 0, '=NOW()');
     sheet.setCell(1, 0, '=NOW()');
@@ -215,7 +216,7 @@ describe('a volatile formula', () => {
  */
 describe('a formula whose references are computed', () => {
   it('reads the cell its text never names', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '3');
     sheet.setCell(2, 0, '30');
     sheet.setCell(0, 5, '=INDIRECT("A" & A1)');
@@ -226,7 +227,7 @@ describe('a formula whose references are computed', () => {
 
   /** The whole point: editing the cell it landed on wakes it. */
   it('is woken by an edit to the cell it landed on', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '3');
     sheet.setCell(2, 0, '30');
     sheet.setCell(0, 5, '=INDIRECT("A" & A1)');
@@ -240,7 +241,7 @@ describe('a formula whose references are computed', () => {
 
   /** And moving it re-points the edge, rather than keeping the old one. */
   it('follows when the reference it computes moves', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '3');
     sheet.setCell(2, 0, '30');
     sheet.setCell(3, 0, '40');
@@ -265,7 +266,7 @@ describe('a formula whose references are computed', () => {
   });
 
   it('does the same for OFFSET', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     sheet.setCell(1, 0, '2');
     sheet.setCell(2, 0, '3');
@@ -283,7 +284,7 @@ describe('a formula whose references are computed', () => {
    * itself waiting to be recalculated.
    */
   it('is correct when it reads a cell that is itself dirty', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '3');
     sheet.setCell(1, 0, '10');
     // A3 is a formula, and the INDIRECT lands on it.
@@ -301,7 +302,7 @@ describe('a formula whose references are computed', () => {
 
   /** Two of them pointing at each other must settle rather than spin. */
   it('settles when two of them point at each other', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '2');
     sheet.setCell(1, 0, '1');
     sheet.setCell(0, 5, '=INDIRECT("F" & A1)');
@@ -313,7 +314,7 @@ describe('a formula whose references are computed', () => {
   });
 
   it('stops being dynamic when the formula is replaced', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '3');
     sheet.setCell(2, 0, '30');
     sheet.setCell(0, 5, '=INDIRECT("A" & A1)');

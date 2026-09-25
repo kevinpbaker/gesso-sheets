@@ -1,4 +1,4 @@
-import { cellKey, columnIndex, inBounds, parseRef, rangeKeys, type CellRef, type RangeRef } from './A1';
+import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, type CellRef, type RangeRef } from './A1';
 import type { Ast, BinaryOperator } from './Ast';
 import { FUNCTIONS, isSheetFunction, liveContext, type Argument, type FunctionContext } from './Functions';
 import {
@@ -44,6 +44,50 @@ export interface EvaluationContext {
    * evaluator's own specs have always done.
    */
   rangeForName?(name: string): RangeRef | null;
+  /**
+   * The workbook around this sheet, when there is one.
+   *
+   * Absent means a workbook of one sheet — which is what every spec
+   * that evaluates an expression against a bare `Map` means, and what
+   * the application meant for twelve phases. A reference that names a
+   * sheet then has nowhere to resolve to and reads `#REF!`, which is
+   * the same answer it gets for a sheet that was deleted.
+   */
+  book?: WorkbookContext;
+  /**
+   * Which sheet the formula being evaluated lives on.
+   *
+   * An unqualified `A1` means A1 *here*, so this is half of what a
+   * reference resolves through. Defaults to the first sheet.
+   */
+  onSheet?: number;
+}
+
+/** What the evaluator needs to know about the sheets around it. */
+export interface WorkbookContext {
+  /** The index of a sheet by name, case-insensitively, or null. */
+  sheetFor(name: string): number | null;
+  /** How far down a given sheet has been written; see `usedRows`. */
+  usedRowsOf(sheet: number): number;
+}
+
+/**
+ * The key a reference points at, or null when it points nowhere.
+ *
+ * Null is `#REF!`: a reference naming a sheet the workbook does not
+ * have. That is what a formula holds after the sheet it read was
+ * deleted, and Excel answers it the same way.
+ */
+function keyFor(ref: CellRef, context: EvaluationContext): number | null {
+  const sheet = sheetIndex(ref.sheet, context);
+  return sheet === null ? null : keyOn(sheet, ref.row, ref.column);
+}
+
+function sheetIndex(name: string | undefined, context: EvaluationContext): number | null {
+  if (name === undefined) {
+    return context.onSheet ?? 0;
+  }
+  return context.book?.sheetFor(name) ?? null;
 }
 
 /**
@@ -92,7 +136,8 @@ function readRef(ref: CellRef, context: EvaluationContext): CellValue {
   if (!inBounds(ref.row, ref.column)) {
     return REF;
   }
-  return context.valueAt(cellKey(ref.row, ref.column));
+  const key = keyFor(ref, context);
+  return key === null ? REF : context.valueAt(key);
 }
 
 /** A range's values and its shape, which the lookups need. */
@@ -100,14 +145,18 @@ function readRange(range: RangeRef, context: EvaluationContext): Extract<Argumen
   if (!inBounds(range.start.row, range.start.column) || !inBounds(range.end.row, range.end.column)) {
     return { kind: 'range', values: [REF], rows: 1, columns: 1 };
   }
-  const read = range.wholeColumn === true ? usedPartOf(range, context) : range;
+  const sheet = sheetIndex(range.start.sheet, context);
+  if (sheet === null) {
+    return { kind: 'range', values: [REF], rows: 1, columns: 1 };
+  }
+  const read = range.wholeColumn === true ? usedPartOf(range, sheet, context) : range;
   if (read === null) {
     // A whole column of a sheet nothing has been written to.
     const columns = Math.abs(range.end.column - range.start.column) + 1;
     return { kind: 'range', values: [], rows: 0, columns };
   }
   const values: CellValue[] = [];
-  for (const key of rangeKeys(read)) {
+  for (const key of rangeKeys(read, sheet)) {
     values.push(context.valueAt(key));
   }
   return {
@@ -119,8 +168,8 @@ function readRange(range: RangeRef, context: EvaluationContext): Extract<Argumen
 }
 
 /** A whole-column reference cut down to the rows that can hold anything. */
-function usedPartOf(range: RangeRef, context: EvaluationContext): RangeRef | null {
-  const used = context.usedRows ?? 0;
+function usedPartOf(range: RangeRef, sheet: number, context: EvaluationContext): RangeRef | null {
+  const used = context.book?.usedRowsOf(sheet) ?? context.usedRows ?? 0;
   if (used <= 0) {
     return null;
   }

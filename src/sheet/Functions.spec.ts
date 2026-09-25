@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { serialOfDate, serialOfTime } from './Dates';
 import { functionNames } from './Functions';
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 import { formatValue, type CellValue } from './Values';
 
 /**
@@ -25,7 +26,7 @@ import { formatValue, type CellValue } from './Values';
 
 /** A sheet with a small table in it, which the cases refer to. */
 function sheetWith(cells: Readonly<Record<string, string>>): Sheet {
-  const sheet = new Sheet();
+  const sheet = new Workbook().sheet(0);
   for (const [address, input] of Object.entries(cells)) {
     const match = /^([A-Z]+)(\d+)$/.exec(address)!;
     const column = match[1].split('').reduce((at, letter) => at * 26 + (letter.charCodeAt(0) - 64), 0) - 1;

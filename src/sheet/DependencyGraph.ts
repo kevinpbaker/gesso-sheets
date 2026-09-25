@@ -1,4 +1,4 @@
-import { columnOf } from './A1';
+import { columnKeyOf } from './A1';
 
 /**
  * Who reads whom.
@@ -148,7 +148,7 @@ export class DependencyGraph {
    */
   dependentsOf(key: number): ReadonlySet<number> {
     const direct = this.dependents.get(key) ?? EMPTY;
-    const watchers = this.columnWatchers.get(columnOf(key)) ?? EMPTY;
+    const watchers = this.columnWatchers.get(columnKeyOf(key)) ?? EMPTY;
     if (watchers.size === 0) {
       return direct;
     }

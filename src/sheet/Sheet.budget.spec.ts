@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 
 /**
  * Recalculation budgets — the exit criterion for Phase 1.
@@ -28,7 +29,7 @@ describe('recalculation budgets', () => {
    * there is exactly one valid order.
    */
   function chain(length: number): Sheet {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     for (let row = 1; row < length; row++) {
       sheet.setCell(row, 0, `=A${row}+1`);
@@ -73,7 +74,7 @@ describe('recalculation budgets', () => {
   });
 
   it('evaluates one cell when one cell reads the edit', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     sheet.setCell(0, 1, '=A1*2');
     sheet.recalculate();
@@ -92,7 +93,7 @@ describe('recalculation budgets', () => {
    * both of its precedents, not once per path to it.
    */
   it('evaluates a shared dependent once, not once per path', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     sheet.setCell(1, 0, '=A1+1');
     sheet.setCell(2, 0, '=A1+2');
@@ -109,7 +110,7 @@ describe('recalculation budgets', () => {
   });
 
   it('does not re-evaluate a cell the edit did not reach, in a wide sheet', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     // Two hundred independent chains of ten. Editing the head of one
     // must cost nine, not one thousand nine hundred and ninety.
     for (let column = 0; column < 200; column++) {
@@ -132,7 +133,7 @@ describe('recalculation budgets', () => {
    * evaluation of the formula over it — not a hundred.
    */
   it('evaluates a formula over a range once per edit, not once per cell', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     for (let row = 0; row < 100; row++) {
       sheet.setCell(row, 0, String(row));
     }

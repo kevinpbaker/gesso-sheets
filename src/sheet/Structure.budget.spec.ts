@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { columnName } from './A1';
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 
 /**
  * Structural budgets — the exit criterion for Phase 10.
@@ -20,7 +21,7 @@ import { Sheet } from './Sheet';
 describe('what an insert rewrites', () => {
   /** A column of `count` formulas, each reading the cell above it. */
   function chain(count: number): Sheet {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     for (let row = 1; row < count; row++) {
       sheet.setCell(row, 0, `=A${row}`);
@@ -82,7 +83,7 @@ describe('what an insert rewrites', () => {
    * the formula once and not once per cell".
    */
   it('counts a range as one formula, not one per cell', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     for (let row = 0; row < 10_000; row++) {
       sheet.setCell(row, 0, String(row));
     }
@@ -94,7 +95,7 @@ describe('what an insert rewrites', () => {
 
   /** The sheet still agrees with itself afterwards. */
   it('leaves a sheet that recalculates to the same answers', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '10');
     sheet.setCell(1, 0, '20');
     sheet.setCell(2, 0, '=SUM(A1:A2)');
@@ -113,7 +114,7 @@ describe('what an insert rewrites', () => {
   });
 
   it('breaks what pointed at a row it deleted, and only that', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '10');
     sheet.setCell(1, 0, '20');
     sheet.setCell(2, 0, '=A1');
@@ -132,7 +133,7 @@ describe('what an insert rewrites', () => {
 
   /** Nothing is left pointing at a cell that used to be somewhere else. */
   it('leaves no stale edges behind', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(0, 0, '1');
     sheet.setCell(1, 0, '=A1*2');
     sheet.recalculate();
@@ -152,7 +153,7 @@ describe('what an insert rewrites', () => {
 /** The proof surface's chain, for a sense of what an insert costs. */
 describe('how far an insert reaches', () => {
   it('walks the cells that exist, not the cells that could', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     // Four cells in a sheet a million rows tall.
     sheet.setCell(0, 0, '1');
     sheet.setCell(500_000, 0, '=A1');

@@ -17,17 +17,59 @@ export const MAX_COLUMNS = 16_384;
 /** Rows 1 through 1,048,576. */
 export const MAX_ROWS = 1_048_576;
 
-/** A cell's identity: one integer, from a zero-based row and column. */
+/**
+ * How many keys one sheet takes up.
+ *
+ * 1.7e10 of them, so a workbook of 256 sheets ends at 4.4e12 — still
+ * two and a half orders of magnitude inside the safe integer range,
+ * and still one unboxed integer per cell. That is the whole reason
+ * the third axis is a multiplier rather than a second map: a `Map` of
+ * sheets to maps of cells would cost a lookup per sheet per edge, and
+ * the dependency graph does a lookup per edge.
+ */
+const SHEET_STRIDE = MAX_ROWS * MAX_COLUMNS;
+
+/** As many sheets as a workbook may hold. */
+export const MAX_SHEETS = 256;
+
+/** A cell's identity on the first sheet, which is the only one for most callers. */
 export function cellKey(row: number, column: number): number {
   return row * MAX_COLUMNS + column;
 }
 
+/** A cell's identity on a named sheet of the workbook. */
+export function keyOn(sheet: number, row: number, column: number): number {
+  return sheet * SHEET_STRIDE + row * MAX_COLUMNS + column;
+}
+
+/** Which sheet a key is on. */
+export function sheetOf(key: number): number {
+  return Math.floor(key / SHEET_STRIDE);
+}
+
 export function rowOf(key: number): number {
-  return Math.floor(key / MAX_COLUMNS);
+  return Math.floor((key % SHEET_STRIDE) / MAX_COLUMNS);
 }
 
 export function columnOf(key: number): number {
   return key % MAX_COLUMNS;
+}
+
+/**
+ * The identity of a *column* of a sheet, for the watchers a whole-
+ * column reference leaves behind.
+ *
+ * Column C of Sheet 2 is not column C of Sheet 1, and a graph that
+ * keyed both as `2` would wake every `=SUM(C:C)` in the workbook
+ * whenever anybody wrote into a C.
+ */
+export function columnKeyOf(key: number): number {
+  return sheetOf(key) * MAX_COLUMNS + columnOf(key);
+}
+
+/** The same, from the parts rather than from a cell's key. */
+export function columnKey(sheet: number, column: number): number {
+  return sheet * MAX_COLUMNS + column;
 }
 
 export function inBounds(row: number, column: number): boolean {
@@ -223,7 +265,7 @@ export function relativeRef(row: number, column: number): CellRef {
  * dragging a selection upwards produces the first and means the
  * second.
  */
-export function* rangeKeys(range: RangeRef): Generator<number> {
+export function* rangeKeys(range: RangeRef, sheet = 0): Generator<number> {
   if (range.wholeColumn === true) {
     // A million keys, and every caller that could reach here has a
     // better answer available. Throwing is louder than a hang.
@@ -235,7 +277,7 @@ export function* rangeKeys(range: RangeRef): Generator<number> {
   const lastColumn = Math.max(range.start.column, range.end.column);
   for (let row = firstRow; row <= lastRow; row++) {
     for (let column = firstColumn; column <= lastColumn; column++) {
-      yield cellKey(row, column);
+      yield keyOn(sheet, row, column);
     }
   }
 }

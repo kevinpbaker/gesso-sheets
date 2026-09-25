@@ -5,6 +5,7 @@ import { Merges } from '../sheet/Merges';
 import type { RangeRef } from '../sheet/A1';
 import type { NamedRange, NameProblem } from '../sheet/Names';
 import { Sheet } from '../sheet/Sheet';
+import { Workbook } from '../sheet/Workbook';
 import { shiftIndex, type Shift } from '../sheet/Shift';
 
 /**
@@ -131,7 +132,7 @@ type Step = readonly Edit[];
  * unit a person means when they press ctrl-Z in a spreadsheet.
  */
 export class SheetDocument {
-  readonly sheet = new Sheet();
+  readonly sheet = new Workbook().sheet(0);
   readonly formats = new Formats();
   /**
    * How wide each column is drawn.

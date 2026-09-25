@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { relativeRef } from './A1';
 import { Names, nameProblem, nameProblemText } from './Names';
 import { Sheet } from './Sheet';
+import { Workbook } from './Workbook';
 
 const area = (row: number, column: number, lastRow: number, lastColumn: number) => ({
   start: relativeRef(row, column),
@@ -82,7 +83,7 @@ describe('the table of names', () => {
  */
 describe('a named range in a formula', () => {
   function sheetWith(): Sheet {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     sheet.setCell(1, 1, '10');
     sheet.setCell(2, 1, '20');
     sheet.setCell(3, 1, '30');

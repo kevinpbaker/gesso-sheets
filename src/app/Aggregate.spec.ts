@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { Sheet } from '../sheet/Sheet';
+import { Workbook } from '../sheet/Workbook';
 import { aggregateOf } from './Aggregate';
 import { describeStats, NO_STATS } from './Statistics';
 
 function sheetOf(values: readonly (string | null)[][]): Sheet {
-  const sheet = new Sheet();
+  const sheet = new Workbook().sheet(0);
   values.forEach((line, row) =>
     line.forEach((input, column) => {
       if (input !== null) {
@@ -65,7 +66,7 @@ describe('what the status bar says about a selection', () => {
   });
 
   it('says nothing about an empty selection', () => {
-    expect(aggregateOf(new Sheet(), rect(0, 5, 0, 5), 100)).toEqual(NO_STATS);
+    expect(aggregateOf(new Workbook().sheet(0), rect(0, 5, 0, 5), 100)).toEqual(NO_STATS);
   });
 
   it('ignores cells outside the rectangle', () => {
@@ -116,7 +117,7 @@ describe('what the status bar says about a selection', () => {
 
   /** And the other way round: a small selection walks itself. */
   it('costs the selection when the selection is smaller', () => {
-    const sheet = new Sheet();
+    const sheet = new Workbook().sheet(0);
     for (let row = 0; row < 500; row++) {
       sheet.setCell(row, 0, String(row));
     }
