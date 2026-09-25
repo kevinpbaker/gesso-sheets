@@ -7,6 +7,7 @@ import 'gesso-testing/matchers';
 import type { UiKeyModifiers } from 'gesso-core';
 
 import { SheetApp } from './SheetApp';
+import { MENUS } from './SheetCommands';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
@@ -149,6 +150,38 @@ describe('the top bar from the keyboard', () => {
       await press('Enter');
 
       expect(h.document.sheet.input(0, 0)).toBe('');
+    });
+
+    /**
+     * The panel is as big as what it draws.
+     *
+     * A menu row is a label that takes the space and a shortcut beside
+     * it, and the label is the flexible one — which the engine used to
+     * read as a label asking for nothing, so the panel came out the
+     * width of its shortcuts. The labels wrapped inside it, each row
+     * grew a line taller than the panel had been measured for, and the
+     * bottom of the Data menu was drawn outside its own background.
+     * Every menu is checked, because which one overflows depends on
+     * nothing more than how long somebody's label is.
+     */
+    it('draws every command inside its own panel', async () => {
+      for (const menu of MENUS) {
+        await press('F10');
+        await press(menu.mnemonic);
+        const panel = h.ui.getLayout(h.ui.getByRole('menu', { name: menu.label }));
+        for (const item of h.ui.getAllByRole('menuitem')) {
+          const box = h.ui.getLayout(item);
+          const name = textProperty(item) ?? '';
+          expect.soft(box.y + box.height, `${menu.label}: '${name}' below its panel`).toBeLessThanOrEqual(
+            panel.y + panel.height
+          );
+          expect.soft(box.x + box.width, `${menu.label}: '${name}' past its panel`).toBeLessThanOrEqual(
+            panel.x + panel.width
+          );
+        }
+        await press('Escape');
+        await press('Escape');
+      }
     });
 
     it('shows the accelerator beside the command', async () => {
