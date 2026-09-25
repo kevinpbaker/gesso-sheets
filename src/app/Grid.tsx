@@ -15,6 +15,7 @@ import {
   type UiKeyboardEvent,
   type UiNode,
   type UiPasteEvent,
+  type UiModifier,
   type UiPointerEvent,
   type UiTextChangeEvent,
   type SheetRange,
@@ -47,6 +48,7 @@ import {
 } from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import { cellIn, PLAIN_PAINT, Sheet, type SheetMerge, type SheetSelection, type SheetWindow } from './SheetContract';
+import { colouredReferences, formulaSpans } from './FormulaColours';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
@@ -439,6 +441,133 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     return shapes;
   };
 
+  /**
+   * The boxes drawn round the cells a formula being typed refers to.
+   *
+   * Kept per row and *pushed*, on the rule this file has followed
+   * since Phase 0: a row subscribes to a subject of its own, and one
+   * writer fills it. Piping the draft into every mounted row would
+   * put every row on the draft's observer list and pay for it on
+   * every keystroke, which is the shape the profile in this file's
+   * header was written about.
+   *
+   * Drawn with `decorated`, so an outlined range costs **no extra
+   * nodes at all** — four coloured rectangles in the row's own paint
+   * pass, the same mechanism per-edge cell borders use.
+   */
+  interface RowOutline {
+    readonly shapes: BehaviorSubject<readonly DecorationShape[]>;
+    /**
+     * The modifier list, built once per row and handed back every
+     * render.
+     *
+     * **Hoisted, and it has to be.** A modifier's argument is compared
+     * by identity and the list is static per element, so a fresh
+     * `[decorated(...)]` in the render body is a fresh modifier that
+     * detaches and re-attaches. Re-attaching subscribes again, a
+     * `BehaviorSubject` replays to a new subscriber, replaying
+     * decorates the node, decorating dirties it, and dirtying it
+     * renders the row again: a loop with nothing in it that looks like
+     * a loop. It froze the render worker on the first formula typed in
+     * a browser, with every spec passing — the specs settle a finite
+     * number of frames and never ask whether the frames stop.
+     */
+    readonly modifiers: readonly UiModifier<unknown>[];
+  }
+
+  const outlines = new Map<number, RowOutline>();
+
+  const outlineFor = (row: number): RowOutline => {
+    let entry = outlines.get(row);
+    if (entry === undefined) {
+      const shapes = new BehaviorSubject<readonly DecorationShape[]>(NO_SHAPES);
+      entry = { shapes, modifiers: [decorated(shapes)] as readonly UiModifier<unknown>[] };
+      outlines.set(row, entry);
+    }
+    return entry;
+  };
+
+  /**
+   * The segments of one reference's box that fall on one row.
+   *
+   * A range crossing five rows is drawn by five rows, each
+   * contributing the pieces that cross it: the two sides always, the
+   * top only on the first row and the bottom only on the last. Done
+   * this way rather than as one tall box hanging off the first row so
+   * that a range reaching into the viewport from above is still
+   * outlined — the same problem merges solved with `extendRange`, and
+   * a cheaper answer to it.
+   */
+  const outlineSegments = (
+    range: { start: { row: number; column: number }; end: { row: number; column: number } },
+    color: string,
+    row: number,
+    into: DecorationShape[]
+  ): void => {
+    const firstRow = Math.min(range.start.row, range.end.row);
+    const lastRow = Math.max(range.start.row, range.end.row);
+    if (row < firstRow || row > lastRow) {
+      return;
+    }
+    const firstColumn = Math.min(range.start.column, range.end.column);
+    const lastColumn = Math.max(range.start.column, range.end.column);
+    const left = GUTTER_WIDTH + sheetWindow.offsetOf(firstColumn);
+    const right = GUTTER_WIDTH + sheetWindow.offsetOf(lastColumn) + sheetWindow.widthOf(lastColumn);
+    const width = Math.max(0, right - left);
+    if (width === 0) {
+      return;
+    }
+    const box = (x: number, y: number, w: number, h: number): void => {
+      into.push({ kind: 'fill', x, y, width: w, height: h, radius: 0, color, after: 'children' });
+    };
+    box(left, 0, OUTLINE, ROW_HEIGHT);
+    box(right - OUTLINE, 0, OUTLINE, ROW_HEIGHT);
+    if (row === firstRow) {
+      box(left, 0, width, OUTLINE);
+    }
+    if (row === lastRow) {
+      box(left, ROW_HEIGHT - OUTLINE, width, OUTLINE);
+    }
+  };
+
+  /** Which rows currently carry an outline, so they can be cleared. */
+  let outlinedRows: readonly number[] = [];
+
+  /**
+   * Recomputes the outlines from the draft.
+   *
+   * Only the rows that have them or had them are touched, so a
+   * keystroke in a formula naming two cells writes to two subjects
+   * and not to every row on the screen.
+   */
+  const paintOutlines = (draft: string | null): void => {
+    const references = draft === null ? [] : colouredReferences(draft);
+    const rows = new Map<number, DecorationShape[]>();
+    for (const reference of references) {
+      const firstRow = Math.min(reference.range.start.row, reference.range.end.row);
+      const lastRow = Math.max(reference.range.start.row, reference.range.end.row);
+      for (let row = firstRow; row <= lastRow; row++) {
+        let shapes = rows.get(row);
+        if (shapes === undefined) {
+          shapes = [];
+          rows.set(row, shapes);
+        }
+        outlineSegments(reference.range, reference.color, row, shapes);
+      }
+    }
+    for (const row of outlinedRows) {
+      if (!rows.has(row)) {
+        outlineFor(row).shapes.next(NO_SHAPES);
+      }
+    }
+    for (const [row, shapes] of rows) {
+      outlineFor(row).shapes.next(shapes);
+    }
+    outlinedRows = [...rows.keys()];
+  };
+
+  ctx.effect(edit.draft, paintOutlines);
+
   const buildCell = (
     row: number,
     column: number,
@@ -720,6 +849,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       },
       value: edit.draft.pipe(map(text => text ?? '')),
       /**
+       * The references, in the colours their boxes are drawn in.
+       *
+       * Derived from the same draft the value is, one `map` further
+       * along, so the runs and the text can never be a frame apart —
+       * which matters because the engine checks they describe the same
+       * string and draws plainly when they do not. A cell holding
+       * anything that is not a formula gets `undefined` and costs
+       * nothing.
+       */
+      spans: edit.draft.pipe(map(text => formulaSpans(text ?? ''))),
+      /**
        * The editor is the merged cell, not the cell under its corner.
        *
        * This is a cell in the row like any other, so its width is what
@@ -966,6 +1106,10 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       {
         role: 'row',
         posInSet: row + 1,
+        // Four coloured rectangles in the row's own paint pass when a
+        // formula being typed names something on this row, and an
+        // empty array the rest of the time.
+        modifiers: outlineFor(row).modifiers,
         position: stuck ? 'sticky' : corner || spans ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
         zIndex: stuck || spans ? 1 : undefined,
@@ -1514,6 +1658,15 @@ export type { SheetWindow };
 
 /** Shared, because the overwhelming majority of cells have no border. */
 const NO_SHAPES: DecorationShape[] = [];
+
+/**
+ * How thick a reference's outline is.
+ *
+ * Two pixels rather than one: it has to read as a deliberate mark
+ * against the grid's own one-pixel rules, which are the same colour
+ * family and everywhere.
+ */
+const OUTLINE = 2;
 
 function sameWidths(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((width, index) => width === b[index]);

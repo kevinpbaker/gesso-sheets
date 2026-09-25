@@ -4,6 +4,7 @@ import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'ges
 import 'gesso-testing/matchers';
 import { createComponent } from 'gesso-framework';
 
+import { formulaSpans } from './FormulaColours';
 import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, MIN_COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
 import { Sheet } from './SheetContract';
@@ -773,5 +774,209 @@ describe('merged cells', () => {
     // pointer is literally over.
     expect(h.document.selection.row).toBe(1);
     expect(h.document.selection.column).toBe(1);
+  });
+});
+
+/**
+ * A formula's references, coloured while it is being typed.
+ *
+ * The runs are asserted rather than the pixels: that an
+ * `EditableText` given runs draws them is the engine's claim, with
+ * its own spec in `EditableRendering.spec.ts`. What is this
+ * application's claim is that the field is handed runs describing
+ * exactly the text it holds — because runs describing anything else
+ * are thrown away by the engine, and the colour would simply never
+ * appear.
+ */
+describe('colouring a formula as it is typed', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount(document => {
+      document.setCell(0, 0, '10');
+      document.setCell(1, 0, '20');
+      document.setCell(4, 4, '=A1+A2');
+    });
+  });
+
+  async function open(row: number, column: number): Promise<void> {
+    h.service.setSelection(row, column, row, column);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  const runs = () =>
+    h.ui.getByRole('textbox', { name: 'Cell' }).properties.get('spans') as
+      | readonly { text: string; color?: string }[]
+      | undefined;
+
+  it('hands the field the formula cut at its references', async () => {
+    await open(4, 4);
+    expect(runs()?.map(run => run.text)).toEqual(['=', 'A1', '+', 'A2']);
+  });
+
+  /** The invariant the engine checks, asserted where it is produced. */
+  it('hands it runs that spell the draft exactly', async () => {
+    await open(4, 4);
+    expect(runs()?.map(run => run.text).join('')).toBe('=A1+A2');
+  });
+
+  it('colours the references and nothing else', async () => {
+    await open(4, 4);
+    const coloured = runs()!.filter(run => run.color !== undefined);
+    expect(coloured.map(run => run.text)).toEqual(['A1', 'A2']);
+    expect(coloured[0].color).not.toBe(coloured[1].color);
+  });
+
+  it('gives a cell holding no formula no runs at all', async () => {
+    await open(0, 0);
+    expect(runs()).toBeUndefined();
+  });
+
+  it('follows the draft as it is typed', async () => {
+    await open(2, 2);
+    h.ui.fireEvent.type('=B1');
+    await h.ui.settle();
+    expect(runs()?.map(run => run.text)).toEqual(['=', 'B1']);
+
+    h.ui.fireEvent.type('+C3');
+    await h.ui.settle();
+    expect(runs()?.map(run => run.text)).toEqual(['=', 'B1', '+', 'C3']);
+    expect(runs()?.map(run => run.text).join('')).toBe('=B1+C3');
+  });
+});
+
+/**
+ * The boxes drawn round the cells a formula names, while it is typed.
+ *
+ * The other half of colouring the text, and they have to agree: the
+ * `A1` in the formula and the box round A1 on the sheet are the same
+ * colour or the feature is worse than not having it.
+ *
+ * Asserted through the decoration shapes the row carries, which is
+ * what the renderer paints — there is no node to find with
+ * `getByRole`, deliberately, because an outlined range costs no nodes
+ * at all.
+ */
+describe('outlining the cells a formula names', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount();
+  });
+
+  /** The decoration rectangles a row carries, which is what is painted. */
+  const decorationsOf = (node: { decorations?: unknown }) =>
+    (node.decorations ?? []) as readonly { x: number; width: number; color: string }[];
+
+  function shapesOn(row: number): readonly { x: number; width: number; color: string }[] {
+    const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
+    return found === undefined ? [] : decorationsOf(found);
+  }
+
+  async function typeInto(row: number, column: number, text: string): Promise<void> {
+    h.service.setSelection(row, column, row, column);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    // F2 first: the character that *opens* a cell is consumed doing
+    // it, so typing straight at the grid loses the leading `=`.
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  it('draws a box on the row the reference names', async () => {
+    await typeInto(5, 5, '=B2');
+    // B2 is row 1: two sides, a top and a bottom, all on one row.
+    expect(shapesOn(1)).toHaveLength(4);
+    expect(shapesOn(0)).toHaveLength(0);
+    expect(shapesOn(2)).toHaveLength(0);
+  });
+
+  it('puts it over the columns the reference covers', async () => {
+    await typeInto(5, 5, '=B2');
+    const left = GUTTER_WIDTH + COLUMN_WIDTH;
+    expect(shapesOn(1).map(shape => shape.x).sort((a, b) => a - b)[0]).toBe(left);
+  });
+
+  /**
+   * A range crossing rows is drawn by each of them, so one reaching
+   * into the viewport from above is still outlined.
+   */
+  it('draws a tall range on every row it crosses', async () => {
+    await typeInto(9, 5, '=SUM(B2:B4)');
+    // The first and last rows carry a horizontal edge as well as the
+    // two sides; the row between carries only the sides.
+    expect(shapesOn(1)).toHaveLength(3);
+    expect(shapesOn(2)).toHaveLength(2);
+    expect(shapesOn(3)).toHaveLength(3);
+    expect(shapesOn(4)).toHaveLength(0);
+  });
+
+  it('gives each reference the colour its text is drawn in', async () => {
+    await typeInto(9, 5, '=B2+C4');
+    const first = shapesOn(1)[0].color;
+    const second = shapesOn(3)[0].color;
+    expect(first).not.toBe(second);
+    // The same two colours the text is drawn in, in the same order.
+    expect([first, second]).toEqual(
+      formulaSpans('=B2+C4')!
+        .filter(run => run.color !== undefined)
+        .map(run => run.color)
+    );
+  });
+
+  it('takes them away when the edit is finished', async () => {
+    await typeInto(5, 5, '=B2');
+    expect(shapesOn(1)).toHaveLength(4);
+
+    h.ui.fireEvent.press('Escape');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(shapesOn(1)).toHaveLength(0);
+  });
+
+  it('draws nothing for a cell that is not a formula', async () => {
+    await typeInto(5, 5, 'North');
+    expect(h.ui.getAllByRole('row').flatMap(row => decorationsOf(row))).toHaveLength(0);
   });
 });
