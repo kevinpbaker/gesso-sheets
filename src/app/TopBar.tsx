@@ -14,9 +14,10 @@ import { FindBar } from './FindBar';
 import { MenuBar } from './MenuBar';
 import { NameBox } from './NameBox';
 import { Sheet } from './SheetContract';
-import { COMMANDS, STRESS_CELLS, type CommandId } from './SheetCommands';
+import { acceleratorLabel, COMMANDS, STRESS_CELLS, type CommandId } from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
 import type { CellPaint } from '../sheet/Format';
+import { ICONS } from './icons';
 import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
@@ -55,6 +56,27 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     sheet.view.activeFormat.pipe(map(current => read(current.paint)));
 
   /**
+   * What a toolbar button is called, what its tooltip says, and what
+   * pressing it does — all three from the command table.
+   *
+   * Every button on this row is one command, so none of the three is
+   * worth writing out beside the icon: a label typed here is a label
+   * that can drift from the menu's, and a tooltip is the one place in
+   * this application where somebody finds out that Bold has a
+   * shortcut. The accelerator comes from the same entry the menu
+   * prints it from, so it is right or they are both wrong.
+   */
+  const runs = (id: CommandId): { label: string; tip: string; onRun: () => void } => {
+    const accelerator = COMMANDS[id].accelerator;
+    const label = COMMANDS[id].label;
+    return {
+      label,
+      tip: accelerator === undefined ? label : `${label} (${acceleratorLabel(accelerator)})`,
+      onRun: () => run(id)
+    };
+  };
+
+  /**
    * The toolbar, as data.
    *
    * A list rather than a row of elements so the toolbar can own its
@@ -63,38 +85,25 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * Three ways to reach a command and one place that performs it.
    */
   const tools: readonly ToolbarItem[] = [
-    { id: 'undo', text: 'Undo', onRun: () => run('undo'), enabled: status.pipe(map(s => s.canUndo)) },
-    { id: 'redo', text: 'Redo', onRun: () => run('redo'), enabled: status.pipe(map(s => s.canRedo)) },
-    { id: 'bold', text: 'B', label: 'Bold', weight: 'bold', startsGroup: true, pressed: on(p => p.bold), onRun: () => run('bold') },
-    { id: 'italic', text: 'I', label: 'Italic', pressed: on(p => p.italic), onRun: () => run('italic') },
-    { id: 'underline', text: 'U', label: 'Underline', pressed: on(p => p.underline), onRun: () => run('underline') },
+    { id: 'undo', icon: ICONS.undo, ...runs('undo'), enabled: status.pipe(map(s => s.canUndo)) },
+    { id: 'redo', icon: ICONS.redo, ...runs('redo'), enabled: status.pipe(map(s => s.canRedo)) },
+    { id: 'bold', icon: ICONS.bold, ...runs('bold'), startsGroup: true, pressed: on(p => p.bold) },
+    { id: 'italic', icon: ICONS.italic, ...runs('italic'), pressed: on(p => p.italic) },
+    { id: 'underline', icon: ICONS.underline, ...runs('underline'), pressed: on(p => p.underline) },
     {
       id: 'alignLeft',
-      text: '\u258f\u2261',
-      label: 'Align left',
+      icon: ICONS.alignLeft,
+      ...runs('alignLeft'),
       startsGroup: true,
-      pressed: on(p => p.align === 'start'),
-      onRun: () => run('alignLeft')
+      pressed: on(p => p.align === 'start')
     },
-    {
-      id: 'alignCenter',
-      text: '\u2263',
-      label: 'Align centre',
-      pressed: on(p => p.align === 'center'),
-      onRun: () => run('alignCenter')
-    },
-    {
-      id: 'alignRight',
-      text: '\u2261\u2595',
-      label: 'Align right',
-      pressed: on(p => p.align === 'end'),
-      onRun: () => run('alignRight')
-    },
-    { id: 'currency', text: '$', label: 'Currency', startsGroup: true, onRun: () => run('formatCurrency') },
-    { id: 'percent', text: '%', label: 'Percent', onRun: () => run('formatPercent') },
-    { id: 'fewerDecimals', text: '.0\u2190', label: 'Fewer decimal places', onRun: () => run('fewerDecimals') },
-    { id: 'moreDecimals', text: '.00\u2192', label: 'More decimal places', onRun: () => run('moreDecimals') },
-    { id: 'recalculate', text: COMMANDS.recalculate.label, startsGroup: true, onRun: () => run('recalculate') }
+    { id: 'alignCenter', icon: ICONS.alignCenter, ...runs('alignCenter'), pressed: on(p => p.align === 'center') },
+    { id: 'alignRight', icon: ICONS.alignRight, ...runs('alignRight'), pressed: on(p => p.align === 'end') },
+    { id: 'currency', icon: ICONS.currency, ...runs('formatCurrency'), startsGroup: true },
+    { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
+    { id: 'fewerDecimals', text: '.0\u2190', ...runs('fewerDecimals') },
+    { id: 'moreDecimals', text: '.00\u2192', ...runs('moreDecimals') },
+    { id: 'recalculate', icon: ICONS.recalculate, ...runs('recalculate'), startsGroup: true }
   ];
 
   const finding = internalState<Finding>('closed');

@@ -59,6 +59,29 @@ compiles onto the element factories and produces the identical tree, so
 `Row({ gap: 8 }, Text({ text: 'Ready' }))` is the same thing written the
 other way.
 
+## Icons
+
+[Heroicons](https://heroicons.com/) is this project's icon set — the
+24×24 outline half of it. It is MIT licensed, and the licence travels
+with the path data in `src/app/heroicons.ts`.
+
+Nothing in that package is imported at runtime. There is no DOM under
+this interface, so an `<svg>` has nowhere to go; what Gesso's `Icon`
+draws is the path itself, and `pnpm icons` lifts the paths this
+application uses out of the package into `src/app/heroicons.ts`:
+
+```bash
+pnpm add -D heroicons@latest && pnpm icons
+```
+
+`scripts/icons.ts` holds the list of glyphs — add a line there and run
+it again. `src/app/icons.ts` is the layer above, where a glyph gets an
+application's name for it (`undo`, not `arrowUturnLeft`), and it is the
+file to read to see which picture each button is wearing. A spec checks
+the lifted data against the installed package, so an upgrade that skips
+`pnpm icons` fails the build rather than quietly drawing last year's
+glyph.
+
 ## Reporting errors from a production build
 
 The overlay is a development tool and a production build carries no
