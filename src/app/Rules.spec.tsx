@@ -277,3 +277,110 @@ describe('rules over a selection', () => {
     });
   });
 });
+
+/**
+ * The dropdown, which only a list has.
+ *
+ * It is the one kind of rule where the acceptable values are few and
+ * known — which is also what makes it the kind worth enforcing.
+ */
+describe('the list a cell may choose from', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  async function press(key: string): Promise<void> {
+    h.ui.fireEvent.press(key);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function type(text: string): Promise<void> {
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function openCell(): Promise<void> {
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 12) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    await press('F2');
+  }
+
+  /**
+   * Every option on screen, or none.
+   *
+   * `getAllByRole` throws when nothing matches, and "nothing matches"
+   * is half of what this describe block asserts.
+   */
+  const options = (): string[] =>
+    h.ui
+      .allNodes()
+      .filter(node => node.properties.get('role') === 'option')
+      .map(node => String(node.properties.get('label') ?? ''));
+
+  beforeEach(async () => {
+    const document = new SheetDocument();
+    document.addValidation({
+      range: { start: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false },
+               end: { row: 9, column: 0, rowAbsolute: false, columnAbsolute: false } },
+      rule: { kind: 'list', values: ['North', 'South', 'East'] }
+    });
+    const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
+    const served = serveForTest([sheetChannel(service)]);
+    const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 900, height: 420 });
+    await ui.settle();
+    await served.settle();
+    await ui.settle();
+    h = { ui, served, document, service };
+    service.setSelection(0, 0, 0, 0);
+    await served.settle();
+    await ui.settle();
+  });
+
+  it('offers the values when the cell is opened', async () => {
+    await openCell();
+    expect(options()).toEqual(['North', 'South', 'East']);
+  });
+
+  it('narrows to what has been typed', async () => {
+    await openCell();
+    await type('S');
+    expect(options()).toEqual(['South']);
+  });
+
+  /** An empty box over the sheet says less than no box at all. */
+  it('closes when nothing matches', async () => {
+    await openCell();
+    await type('Q');
+    expect(options()).toEqual([]);
+  });
+
+  it('takes the one the arrows landed on', async () => {
+    await openCell();
+    await press('ArrowDown');
+    await press('Enter');
+    await h.served.settle();
+    expect(h.document.sheet.input(0, 0)).toBe('South');
+  });
+
+  it('says nothing over a cell with no list', async () => {
+    h.service.setSelection(0, 5, 0, 5);
+    await h.served.settle();
+    await h.ui.settle();
+    await openCell();
+    expect(options()).toEqual([]);
+  });
+});

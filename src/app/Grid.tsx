@@ -292,10 +292,94 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const isFlagged = (row: number, column: number): boolean =>
     latestValidation[row]?.[column] !== undefined;
 
+  /**
+   * The values the open cell may take, when its rule is a list.
+   *
+   * The one kind of validation with a dropdown, because it is the
+   * only kind where the acceptable values are few and known — which
+   * is also what makes it the kind worth enforcing.
+   */
+  let allowedValues: readonly string[] = [];
+  const choices = internalState<readonly string[]>([]);
+  const choice = internalState(0);
+
   ctx.effect(sheet.view.validation, current => {
     latestValidation = current.cells;
+    allowedValues = current.list;
     repaint();
   });
+
+  /**
+   * The list, narrowed to what has been typed so far.
+   *
+   * Narrowed rather than filtered away: a draft matching nothing
+   * closes the list instead of showing an empty box, because an empty
+   * box over the sheet says less than no box at all.
+   */
+  const refreshChoices = (): void => {
+    const draft = edit.draftNow();
+    if (draft === null || allowedValues.length === 0 || draft.startsWith('=')) {
+      if (choices.value.length > 0) {
+        choices.value = [];
+        sheetWindow.invalidate();
+      }
+      return;
+    }
+    const typed = draft.trim().toUpperCase();
+    const shown = allowedValues.filter(value => typed === '' || value.toUpperCase().startsWith(typed));
+    const same = shown.length === choices.value.length && shown.every((value, at) => value === choices.value[at]);
+    if (same) {
+      return;
+    }
+    choices.value = shown;
+    choice.value = 0;
+    // The popup is a child of a row and the list is read while the
+    // row is built, so changing it has to rebuild the row.
+    sheetWindow.invalidate();
+  };
+
+  /** The arrows and Enter, while a list is open. */
+  const onChoiceKey = (event: UiKeyboardEvent): boolean => {
+    const shown = choices.value;
+    if (shown.length === 0) {
+      return false;
+    }
+    switch (event.key) {
+      case 'ArrowDown':
+        choice.value = (choice.value + 1) % shown.length;
+        sheetWindow.invalidate();
+        return true;
+      case 'ArrowUp':
+        choice.value = (choice.value + shown.length - 1) % shown.length;
+        sheetWindow.invalidate();
+        return true;
+      case 'Enter':
+      case 'Tab': {
+        const picked = shown[Math.min(choice.value, shown.length - 1)];
+        if (editorNode !== null) {
+          const model = editorFor(editorNode);
+          model.replaceText(picked);
+          model.select(picked.length);
+        }
+        edit.write(picked);
+        choices.value = [];
+        sheetWindow.invalidate();
+        // Not handled: Enter still commits the cell, which is what
+        // somebody pressing it after choosing means. Taking the key
+        // here would make choosing and committing two presses of the
+        // same key for no reason anybody could see.
+        return false;
+      }
+      case 'Escape':
+        // The list goes and the edit stays, which is what Escape
+        // means with a list open — the same as the function hints.
+        choices.value = [];
+        sheetWindow.invalidate();
+        return true;
+      default:
+        return false;
+    }
+  };
 
   ctx.effect(sheet.view.palette, current => {
     latestPalette = current.entries;
@@ -903,6 +987,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       pickedText = null;
     }
     refreshSpans();
+    refreshChoices();
   });
 
   /**
@@ -1226,6 +1311,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
      * it exists only while a list is on screen, it takes five keys,
      * and everything else still goes to the text.
      */
+    if (choices.value.length > 0 && onChoiceKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (hint.value?.kind === 'completions' && onHintKey(event)) {
       event.preventDefault();
       event.stopPropagation();
@@ -1558,6 +1648,50 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     );
   };
 
+  /**
+   * The values a cell may take, under it.
+   *
+   * The same shape the function hints use — a listbox hanging off the
+   * row that holds the open cell, so it travels with a scroll and
+   * needs nothing kept in step.
+   */
+  const choicePopup = (column: number): UiElement => {
+    const shown = choices.value.slice(0, 8);
+    const picked = Math.min(choice.value, shown.length - 1);
+    return Box(
+      {
+        key: 'choices',
+        position: 'absolute',
+        left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
+        top: ROW_HEIGHT,
+        zIndex: 4,
+        backgroundColor: 'surface',
+        borderColor: 'border',
+        borderWidth: 1,
+        paddingTop: 2,
+        paddingBottom: 2,
+        pointerEvents: 'none',
+        role: 'listbox',
+        label: 'Allowed values'
+      },
+      ...shown.map((value, at) =>
+        Text({
+          key: value,
+          text: value,
+          role: 'option',
+          label: value,
+          states: at === picked ? ['selected'] : [],
+          fontSize: 12,
+          paddingLeft: 6,
+          paddingRight: 12,
+          color: 'text',
+          backgroundColor: at === picked ? 'selectionBackground' : undefined,
+          textWrap: 'none'
+        })
+      )
+    );
+  };
+
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
     // The frozen columns first, which is the order the window's own
@@ -1579,6 +1713,10 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const hinting = openAt !== null && openAt.row === row && hint.value !== null;
     if (hinting && openAt !== null) {
       line.push(hintPopup(openAt.column));
+    }
+    const choosing = openAt !== null && openAt.row === row && choices.value.length > 0;
+    if (choosing && openAt !== null) {
+      line.push(choicePopup(openAt.column));
     }
     // And the error's explanation, which belongs to the selected cell
     // rather than to an open one: a cell being typed into is a cell

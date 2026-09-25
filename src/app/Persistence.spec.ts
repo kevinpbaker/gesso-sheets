@@ -76,6 +76,8 @@ describe('what is written down', () => {
           formats: [],
           regions: { sheet: 0, rows: [], columns: [] },
           merges: [],
+          conditional: [],
+          validations: [],
           frozenRows: 0,
           frozenColumns: 0,
           hiddenRows: [],
@@ -212,6 +214,8 @@ describe('a sheet that is opened again', () => {
           formats: [],
           regions: { sheet: 0, rows: [], columns: [] },
           merges: [],
+          conditional: [],
+          validations: [],
           frozenRows: 0,
           frozenColumns: 0,
           hiddenRows: [],
@@ -670,5 +674,102 @@ describe('a workbook of three sheets, reloaded through the service', () => {
     let tabs: readonly { name: string }[] = [];
     second.service.sheets.subscribe(view => (tabs = view.entries)).unsubscribe();
     expect(tabs.map(tab => tab.name)).toEqual(['Input', 'Working', 'Report']);
+  });
+});
+
+/**
+ * The rules, written down and read back.
+ *
+ * A file is untrusted input in exactly the way a keystroke is, so
+ * every rule is rebuilt field by field and one that is
+ * half-understood is dropped — half a rule paints the wrong cells
+ * rather than none.
+ */
+describe('formats that think, in a file', () => {
+  function withRules(): SheetDocument {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '1');
+    document.setCell(1, 0, '9');
+    document.addConditional({
+      range: { start: relativeRef(0, 0), end: relativeRef(4, 0) },
+      test: { kind: 'greaterThan', value: 5 },
+      paint: { fill: '#fce8e6', color: '#c5221f' }
+    });
+    document.addConditional({
+      range: { start: relativeRef(0, 1), end: relativeRef(4, 1) },
+      test: null,
+      scale: { from: '#ffffff', middle: '#cccccc', to: '#000000' }
+    });
+    document.addValidation({
+      range: { start: relativeRef(0, 2), end: relativeRef(4, 2) },
+      rule: { kind: 'list', values: ['North', 'South'] },
+      strict: true,
+      message: 'A region, please.'
+    });
+    return document;
+  }
+
+  const reopened = (): SheetDocument => {
+    const read = parseSnapshot(JSON.stringify(snapshotOf(withRules(), 1_000)), 4);
+    expect(read).not.toBeNull();
+    const after = new SheetDocument();
+    applySnapshot(after, read!);
+    return after;
+  };
+
+  it('brings the conditional formats back', () => {
+    const after = reopened();
+    expect(after.conditional).toHaveLength(2);
+    expect(after.conditional[0].test).toEqual({ kind: 'greaterThan', value: 5 });
+    expect(after.conditional[0].paint).toEqual({ fill: '#fce8e6', color: '#c5221f' });
+  });
+
+  it('brings a colour scale back, middle stop and all', () => {
+    expect(reopened().conditional[1].scale).toEqual({
+      from: '#ffffff',
+      middle: '#cccccc',
+      to: '#000000'
+    });
+  });
+
+  it('brings the validations back, and whether they refuse', () => {
+    const after = reopened();
+    expect(after.validations).toHaveLength(1);
+    expect(after.validations[0].rule).toEqual({ kind: 'list', values: ['North', 'South'] });
+    expect(after.validations[0].strict).toBe(true);
+    expect(after.validations[0].message).toBe('A region, please.');
+  });
+
+  it('is absent from a file written before they existed', () => {
+    const stored = JSON.parse(JSON.stringify(snapshotOf(withRules()))) as {
+      sheets: Record<string, unknown>[];
+    };
+    delete stored.sheets[0].conditional;
+    delete stored.sheets[0].validations;
+    const read = parseSnapshot(JSON.stringify(stored), 4);
+    expect(read?.sheets[0].conditional).toEqual([]);
+    expect(read?.sheets[0].validations).toEqual([]);
+  });
+
+  it('drops a rule a file should not have held', () => {
+    const stored = JSON.parse(JSON.stringify(snapshotOf(withRules()))) as {
+      sheets: Record<string, unknown>[];
+    };
+    stored.sheets[0].conditional = [
+      { range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, test: { kind: 'nonsense' } },
+      { test: { kind: 'notEmpty' } },
+      {
+        range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } },
+        test: { kind: 'notEmpty' },
+        paint: { fill: '#eeeeee' }
+      }
+    ];
+    stored.sheets[0].validations = [
+      { range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, rule: { kind: 'list', values: [] } },
+      { range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, rule: { kind: 'number', min: 3 } }
+    ];
+    const read = parseSnapshot(JSON.stringify(stored), 4);
+    expect(read?.sheets[0].conditional.map(rule => rule.test?.kind)).toEqual(['notEmpty']);
+    expect(read?.sheets[0].validations.map(rule => rule.rule.kind)).toEqual(['number']);
   });
 });

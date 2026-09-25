@@ -1,4 +1,6 @@
-import { relativeRef } from '../sheet/A1';
+import { relativeRef, type RangeRef } from '../sheet/A1';
+import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } from '../sheet/Conditional';
+import type { Validation, ValidationRule } from '../sheet/Validation';
 import { nameProblem } from '../sheet/Names';
 import type { MergeRect } from '../sheet/Merges';
 import {
@@ -94,6 +96,17 @@ export interface StoredSheet {
   readonly regions: StoredRegions;
   /** The merged rectangles. */
   readonly merges: readonly MergeRect[];
+  /**
+   * The formats that think, and what cells are allowed to hold.
+   *
+   * Absent in a file written before they existed, which reads as no
+   * rules — so no version bump, on the rule the merges and the names
+   * were added under: the field's absence already means the right
+   * thing, and a version is for a change that would be read *wrongly*
+   * rather than not at all.
+   */
+  readonly conditional: readonly ConditionalRule[];
+  readonly validations: readonly Validation[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
@@ -168,6 +181,8 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
         columns: formats.regions.columns
       },
       merges: page.merges.all.filter(rect => rect.lastRow < rowCount),
+      conditional: [...page.conditional],
+      validations: [...page.validations],
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
@@ -220,6 +235,10 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     // leading zeros somebody saved would be gone by the time the
     // format said to keep them.
     page.merges.restore(stored.merges);
+    page.conditional.length = 0;
+    page.conditional.push(...stored.conditional);
+    page.validations.length = 0;
+    page.validations.push(...stored.validations);
     page.frozenRows = stored.frozenRows;
     page.frozenColumns = stored.frozenColumns;
     page.hiddenRows.clear();
@@ -365,6 +384,8 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     formats: formatsFrom(source.formats, palette.length),
     regions: regionsFrom(source.regions, palette.length),
     merges: mergesFrom(source.merges),
+    conditional: rulesFrom(source.conditional),
+    validations: validationsFrom(source.validations),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     hiddenRows: Array.isArray(source.hiddenRows)
@@ -569,6 +590,200 @@ function widthsFrom(stored: unknown, columnCount: number): number[] {
     }
   }
   return widths;
+}
+
+/**
+ * Conditional rules read back out of a file, with the bad ones
+ * dropped.
+ *
+ * A file is untrusted input in exactly the way a keystroke is, and a
+ * rule is a shape with a range in it — so each is rebuilt field by
+ * field rather than spread. A rule that is half-understood is
+ * dropped, because half a rule paints the wrong cells rather than
+ * none.
+ */
+function rulesFrom(stored: unknown): ConditionalRule[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  const found: ConditionalRule[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const held = entry as Partial<ConditionalRule>;
+    const range = rangeFrom(held.range);
+    if (range === null) {
+      continue;
+    }
+    const test = testFrom(held.test);
+    const scale = scaleFrom(held.scale);
+    if (test === null && scale === null) {
+      continue;
+    }
+    found.push({
+      range,
+      test,
+      ...(scale === null ? {} : { scale }),
+      ...(test === null ? {} : { paint: paintOverlayFrom((held as { paint?: unknown }).paint) })
+    });
+  }
+  return found;
+}
+
+function rangeFrom(stored: unknown): RangeRef | null {
+  if (typeof stored !== 'object' || stored === null) {
+    return null;
+  }
+  const held = stored as Partial<RangeRef>;
+  const corner = (ref: unknown): { row: number; column: number } | null => {
+    if (typeof ref !== 'object' || ref === null) {
+      return null;
+    }
+    const at = ref as { row?: unknown; column?: unknown };
+    return Number.isInteger(at.row) && (at.row as number) >= 0 && Number.isInteger(at.column) && (at.column as number) >= 0
+      ? { row: at.row as number, column: at.column as number }
+      : null;
+  };
+  const start = corner(held.start);
+  const end = corner(held.end);
+  return start === null || end === null
+    ? null
+    : { start: relativeRef(start.row, start.column), end: relativeRef(end.row, end.column) };
+}
+
+function testFrom(stored: unknown): ConditionalTest | null {
+  if (typeof stored !== 'object' || stored === null) {
+    return null;
+  }
+  const held = stored as { kind?: unknown; value?: unknown; low?: unknown; high?: unknown; text?: unknown; input?: unknown };
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  switch (held.kind) {
+    case 'greaterThan':
+    case 'lessThan': {
+      const value = number(held.value);
+      return value === null ? null : { kind: held.kind, value };
+    }
+    case 'between': {
+      const low = number(held.low);
+      const high = number(held.high);
+      return low === null || high === null ? null : { kind: 'between', low, high };
+    }
+    case 'equalTo':
+      return typeof held.value === 'number' || typeof held.value === 'string'
+        ? { kind: 'equalTo', value: held.value }
+        : null;
+    case 'textContains':
+      return typeof held.text === 'string' ? { kind: 'textContains', text: held.text } : null;
+    case 'isEmpty':
+    case 'notEmpty':
+      return { kind: held.kind };
+    case 'formula':
+      return typeof held.input === 'string' ? { kind: 'formula', input: held.input } : null;
+    default:
+      return null;
+  }
+}
+
+function scaleFrom(stored: unknown): ColourScale | null {
+  if (typeof stored !== 'object' || stored === null) {
+    return null;
+  }
+  const held = stored as Partial<ColourScale>;
+  if (typeof held.from !== 'string' || typeof held.to !== 'string') {
+    return null;
+  }
+  return {
+    from: held.from,
+    to: held.to,
+    ...(typeof held.middle === 'string' ? { middle: held.middle } : {})
+  };
+}
+
+function paintOverlayFrom(stored: unknown): ConditionalPaint {
+  if (typeof stored !== 'object' || stored === null) {
+    return {};
+  }
+  const held = stored as Partial<ConditionalPaint>;
+  return {
+    ...(typeof held.fill === 'string' ? { fill: held.fill } : {}),
+    ...(typeof held.color === 'string' ? { color: held.color } : {}),
+    ...(typeof held.bold === 'boolean' ? { bold: held.bold } : {}),
+    ...(typeof held.italic === 'boolean' ? { italic: held.italic } : {})
+  };
+}
+
+function validationsFrom(stored: unknown): Validation[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  const found: Validation[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const held = entry as Partial<Validation>;
+    const range = rangeFrom(held.range);
+    const rule = validationRuleFrom(held.rule);
+    if (range === null || rule === null) {
+      continue;
+    }
+    found.push({
+      range,
+      rule,
+      ...(held.strict === true ? { strict: true } : {}),
+      ...(typeof held.message === 'string' ? { message: held.message } : {})
+    });
+  }
+  return found;
+}
+
+function validationRuleFrom(stored: unknown): ValidationRule | null {
+  if (typeof stored !== 'object' || stored === null) {
+    return null;
+  }
+  const held = stored as {
+    kind?: unknown;
+    values?: unknown;
+    min?: unknown;
+    max?: unknown;
+    integer?: unknown;
+    maxLength?: unknown;
+    from?: unknown;
+    to?: unknown;
+  };
+  const number = (value: unknown): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? value : null;
+  switch (held.kind) {
+    case 'list': {
+      if (!Array.isArray(held.values)) {
+        return null;
+      }
+      const values = held.values.filter((value): value is string => typeof value === 'string');
+      return values.length === 0 ? null : { kind: 'list', values };
+    }
+    case 'number':
+      return {
+        kind: 'number',
+        ...(number(held.min) === null ? {} : { min: held.min as number }),
+        ...(number(held.max) === null ? {} : { max: held.max as number }),
+        ...(held.integer === true ? { integer: true } : {})
+      };
+    case 'text':
+      return {
+        kind: 'text',
+        ...(number(held.maxLength) === null ? {} : { maxLength: held.maxLength as number })
+      };
+    case 'date':
+      return {
+        kind: 'date',
+        ...(number(held.from) === null ? {} : { from: held.from as number }),
+        ...(number(held.to) === null ? {} : { to: held.to as number })
+      };
+    default:
+      return null;
+  }
 }
 
 /** A name as a file holds it: its text, its sheet, and the corners it names. */
