@@ -262,8 +262,19 @@ export class SheetService {
 
   addSheet(): void {
     this.document.addSheet();
+    // A new sheet's columns are as wide as the first sheet's were
+    // when it was made. The constructor does this for sheet one and
+    // nothing did it for the rest, so an added sheet reached the file
+    // with no widths at all — which drew correctly, because the grid
+    // falls back, and reloaded as a sheet whose widths were a shorter
+    // array than the sheet is wide.
+    this.document.columnWidths = this.defaultWidths();
     this.publishSheet();
     this.persist();
+  }
+
+  private defaultWidths(): number[] {
+    return Array.from({ length: this.geometrySubject.value.columnCount }, () => COLUMN_WIDTH);
   }
 
   renameSheet(sheet: number, name: string): void {
@@ -1155,8 +1166,7 @@ export class SheetService {
       this.document.sheet.recalculate();
     } else {
       applySnapshot(this.document, stored);
-      this.document.columnWidths = [...stored.columnWidths];
-      this.publishGeometry();
+      this.publishSheet();
     }
     this.restored = true;
     this.selectionSubject.next(this.document.selection);
@@ -1180,7 +1190,7 @@ export class SheetService {
 
   /** The snapshot as it stands, for a spec or a worker shutting down. */
   snapshot(): SheetSnapshot {
-    return snapshotOf(this.document, this.document.columnWidths, this.geometrySubject.value.rowCount);
+    return snapshotOf(this.document, this.geometrySubject.value.rowCount);
   }
 
   /** Writes anything outstanding now. */

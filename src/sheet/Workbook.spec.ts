@@ -196,6 +196,19 @@ describe('renaming a sheet', () => {
     expect(w.input(0, 0, 0)).toBe('=Sheet3!A1');
   });
 
+  /**
+   * Which is what fixing a capital, or pressing Enter on a box
+   * nobody changed, both look like from here.
+   */
+  it('lets a sheet keep the name it already has', () => {
+    const w = book(['Sheet1', 'Working']);
+    w.renameSheet(1, 'Working');
+    expect(w.sheetNames()).toEqual(['Sheet1', 'Working']);
+
+    w.renameSheet(1, 'working');
+    expect(w.sheetNames()).toEqual(['Sheet1', 'working']);
+  });
+
   it('refuses to collide with a name already taken', () => {
     const w = book();
     w.renameSheet(1, 'Sheet1');

@@ -142,7 +142,7 @@ describe('a name in a saved file', () => {
     document.defineName('Sales', area(1, 1, 9, 1));
 
     const reopened = new SheetDocument();
-    applySnapshot(reopened, parseSnapshot(JSON.stringify(snapshotOf(document, [])), 20)!);
+    applySnapshot(reopened, parseSnapshot(JSON.stringify(snapshotOf(document)), 20)!);
 
     expect(reopened.sheet.names.rangeOf('Sales')).toMatchObject({
       start: { row: 1, column: 1 },
@@ -152,7 +152,7 @@ describe('a name in a saved file', () => {
 
   it('is absent from a file written before names existed', () => {
     const document = new SheetDocument();
-    const stored = JSON.parse(JSON.stringify(snapshotOf(document, []))) as Record<string, unknown>;
+    const stored = JSON.parse(JSON.stringify(snapshotOf(document))) as Record<string, unknown>;
     delete stored.names;
     expect(parseSnapshot(JSON.stringify(stored), 20)?.names).toEqual([]);
   });
@@ -160,7 +160,7 @@ describe('a name in a saved file', () => {
   /** A file is untrusted input in exactly the way a keystroke is. */
   it('drops a name a file should not have held', () => {
     const document = new SheetDocument();
-    const stored = JSON.parse(JSON.stringify(snapshotOf(document, []))) as Record<string, unknown>;
+    const stored = JSON.parse(JSON.stringify(snapshotOf(document))) as Record<string, unknown>;
     stored.names = [
       { name: 'A1', firstRow: 0, firstColumn: 0, lastRow: 0, lastColumn: 0 },
       { name: 'Fine', firstRow: 0, firstColumn: 0, lastRow: 1, lastColumn: 1 },

@@ -106,7 +106,7 @@ describe('the proof surface', () => {
 
     const snapshot = h.service.snapshot();
 
-    expect(snapshot.cells).toEqual([{ row: 3, column: 1, input: 'kept' }]);
+    expect(snapshot.sheets[0].cells).toEqual([{ row: 3, column: 1, input: 'kept' }]);
   });
 
   /**

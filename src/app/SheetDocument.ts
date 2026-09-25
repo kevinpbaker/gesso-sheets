@@ -863,6 +863,39 @@ export class SheetDocument {
     return true;
   }
 
+  /**
+   * Shapes the workbook to a list of names, for a load.
+   *
+   * Called before anything is written into the pages, which is the
+   * order that matters twice: every write below goes through the
+   * active page and there has to be one, and a formula reading
+   * `Data!A1` can only find `Data` if `Data` exists by the time it is
+   * parsed.
+   *
+   * Renaming before there are cells is also what keeps this from
+   * rewriting anything: `Workbook.renameSheet` walks the formulas,
+   * and at this point there are none.
+   */
+  restoreSheets(names: readonly string[]): void {
+    const wanted = names.length === 0 ? ['Sheet1'] : names;
+    while (this.pages.length > wanted.length) {
+      this.book.removeSheet(this.pages.length - 1);
+      this.pages.pop();
+    }
+    for (let index = 0; index < wanted.length; index++) {
+      if (index < this.pages.length) {
+        this.book.renameSheet(index, wanted[index]);
+        this.pages[index] = newPage(this.book.sheet(index));
+      } else {
+        const at = this.book.addSheet(wanted[index]);
+        this.pages.push(newPage(this.book.sheet(at)));
+      }
+    }
+    this.repage();
+    this.activeSheet = 0;
+    this.forgetHistory();
+  }
+
   /** Re-binds each page to the sheet now at its index. */
   private repage(): void {
     for (let index = 0; index < this.pages.length; index++) {

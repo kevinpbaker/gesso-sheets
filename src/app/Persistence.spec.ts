@@ -4,6 +4,7 @@ import { DEFAULT_FORMAT, GENERAL, PLAIN, type CellFormat } from '../sheet/Format
 
 import { COLUMN_WIDTH } from './dimensions';
 import { applySnapshot, parseSnapshot, snapshotOf, type SheetSnapshot } from './SheetFile';
+import { relativeRef } from '../sheet/A1';
 import { SheetDocument } from './SheetDocument';
 import { InMemorySheetRepository } from './SheetRepository';
 import { SheetService, type Schedule } from './SheetService';
@@ -36,11 +37,11 @@ describe('what is written down', () => {
     document.setCell(0, 1, '=A1*10');
     document.sheet.recalculate();
 
-    const snapshot = snapshotOf(document, [COLUMN_WIDTH]);
+    const snapshot = snapshotOf(document);
 
     // The formula, not the 20 it displayed: a value can be rebuilt
     // from a formula and a formula cannot be rebuilt from a value.
-    expect(snapshot.cells).toContainEqual({ row: 0, column: 1, input: '=A1*10' });
+    expect(snapshot.sheets[0].cells).toContainEqual({ row: 0, column: 1, input: '=A1*10' });
   });
 
   it('comes back as the sheet it was', () => {
@@ -50,7 +51,7 @@ describe('what is written down', () => {
     before.sheet.recalculate();
 
     const after = new SheetDocument();
-    applySnapshot(after, snapshotOf(before, []));
+    applySnapshot(after, snapshotOf(before));
 
     expect(after.sheet.value(0, 1)).toBe(20);
     expect(after.sheet.input(0, 1)).toBe('=A1*10');
@@ -63,25 +64,40 @@ describe('what is written down', () => {
   it('does not land on the undo stack', () => {
     const document = new SheetDocument();
     applySnapshot(document, {
-      version: 2,
-      cells: [{ row: 0, column: 0, input: 'a' }],
-      palette: [],
-      formats: [],
-      regions: { sheet: 0, rows: [], columns: [] },
-      merges: [],
+      version: 3,
+      active: 0,
       names: [],
-      frozenRows: 0,
-      frozenColumns: 0,
-      hiddenRows: [],
-      columnWidths: []
+      sheets: [
+        {
+          name: 'Sheet1',
+          colour: null,
+          cells: [{ row: 0, column: 0, input: 'a' }],
+          palette: [],
+          formats: [],
+          regions: { sheet: 0, rows: [], columns: [] },
+          merges: [],
+          frozenRows: 0,
+          frozenColumns: 0,
+          hiddenRows: [],
+          columnWidths: []
+        }
+      ]
     });
     expect(document.canUndo).toBe(false);
   });
 });
 
 describe('reading a file that is not what this build writes', () => {
-  it('reads one that is', () => {
-    const snapshot: SheetSnapshot = {
+  /**
+   * A v2 file is a workbook of one sheet, and is read as one.
+   *
+   * The whole of v3's compatibility claim, and it is a claim about
+   * files already on somebody's disk — so it is asserted against the
+   * literal shape v2 wrote rather than against anything this build
+   * can still produce.
+   */
+  it('reads a v2 file as a workbook of one sheet', () => {
+    const v2 = {
       version: 2,
       cells: [{ row: 1, column: 2, input: '=A1' }],
       palette: [],
@@ -94,9 +110,12 @@ describe('reading a file that is not what this build writes', () => {
       hiddenRows: [],
       columnWidths: [80, 90]
     };
-    const read = parseSnapshot(JSON.stringify(snapshot), 4);
-    expect(read?.cells).toEqual(snapshot.cells);
-    expect(read?.columnWidths).toEqual([80, 90, COLUMN_WIDTH, COLUMN_WIDTH]);
+    const read = parseSnapshot(JSON.stringify(v2), 4);
+    expect(read?.version).toBe(3);
+    expect(read?.sheets).toHaveLength(1);
+    expect(read?.sheets[0].name).toBe('Sheet1');
+    expect(read?.sheets[0].cells).toEqual(v2.cells);
+    expect(read?.sheets[0].columnWidths).toEqual([80, 90, COLUMN_WIDTH, COLUMN_WIDTH]);
   });
 
   /**
@@ -111,8 +130,8 @@ describe('reading a file that is not what this build writes', () => {
       columnWidths: [60, 'wide', -5]
     });
     const read = parseSnapshot(text, 3);
-    expect(read?.cells).toEqual([{ row: 0, column: 0, input: 'good' }]);
-    expect(read?.columnWidths).toEqual([60, COLUMN_WIDTH, COLUMN_WIDTH]);
+    expect(read?.sheets[0].cells).toEqual([{ row: 0, column: 0, input: 'good' }]);
+    expect(read?.sheets[0].columnWidths).toEqual([60, COLUMN_WIDTH, COLUMN_WIDTH]);
   });
 
   it('refuses one it does not recognise at all', () => {
@@ -176,22 +195,29 @@ describe('a sheet that is opened again', () => {
     await service.restore(sheet => sheet.setCell(0, 0, 'from the seed'));
 
     expect(document.sheet.input(0, 0)).toBe('from the seed');
-    expect(repository.peek()?.cells).toContainEqual({ row: 0, column: 0, input: 'from the seed' });
+    expect(repository.peek()?.sheets[0].cells).toContainEqual({ row: 0, column: 0, input: 'from the seed' });
   });
 
   it('does not seed over a sheet that exists', async () => {
     const repository = new InMemorySheetRepository({
-      version: 2,
-      cells: [{ row: 0, column: 0, input: 'mine' }],
-      palette: [],
-      formats: [],
-      regions: { sheet: 0, rows: [], columns: [] },
-      merges: [],
+      version: 3,
+      active: 0,
       names: [],
-      frozenRows: 0,
-      frozenColumns: 0,
-      hiddenRows: [],
-      columnWidths: []
+      sheets: [
+        {
+          name: 'Sheet1',
+          colour: null,
+          cells: [{ row: 0, column: 0, input: 'mine' }],
+          palette: [],
+          formats: [],
+          regions: { sheet: 0, rows: [], columns: [] },
+          merges: [],
+          frozenRows: 0,
+          frozenColumns: 0,
+          hiddenRows: [],
+          columnWidths: []
+        }
+      ]
     });
     const { service, document } = harness(repository);
 
@@ -268,10 +294,10 @@ describe('formats in the file', () => {
     document.setFormat(0, 0, money);
     document.setFormat(1, 1, bold);
 
-    const snapshot = snapshotOf(document, [], 100);
-    expect(snapshot.version).toBe(2);
-    expect(snapshot.palette).toHaveLength(3);
-    expect(snapshot.formats).toHaveLength(2);
+    const snapshot = snapshotOf(document, 100);
+    expect(snapshot.version).toBe(3);
+    expect(snapshot.sheets[0].palette).toHaveLength(3);
+    expect(snapshot.sheets[0].formats).toHaveLength(2);
   });
 
   it('brings a formatted sheet back exactly as it was', () => {
@@ -281,7 +307,7 @@ describe('formats in the file', () => {
     document.setFormat(2, 0, bold);
 
     const loaded = new SheetDocument();
-    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, 100)), 4)!);
 
     expect(loaded.display(0, 0)).toBe('$1,234.50');
     expect(loaded.formatAt(2, 0).paint.bold).toBe(true);
@@ -301,7 +327,7 @@ describe('formats in the file', () => {
     expect(document.display(0, 0)).toBe('007');
 
     const loaded = new SheetDocument();
-    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, 100)), 4)!);
     expect(loaded.display(0, 0)).toBe('007');
   });
 
@@ -311,9 +337,9 @@ describe('formats in the file', () => {
       JSON.stringify({ version: 1, cells: [{ row: 0, column: 0, input: '5' }], columnWidths: [] }),
       4
     );
-    expect(read?.cells).toEqual([{ row: 0, column: 0, input: '5' }]);
-    expect(read?.formats).toEqual([]);
-    expect(read?.palette).toHaveLength(1);
+    expect(read?.sheets[0].cells).toEqual([{ row: 0, column: 0, input: '5' }]);
+    expect(read?.sheets[0].formats).toEqual([]);
+    expect(read?.sheets[0].palette).toHaveLength(1);
   });
 
   /**
@@ -333,7 +359,7 @@ describe('formats in the file', () => {
       }),
       4
     );
-    const entry = read!.palette[1];
+    const entry = read!.sheets[0].palette[1];
     expect(entry.paint.bold).toBe(true);
     expect(entry.paint.align).toBe('auto');
     expect(entry.number).toEqual({ kind: 'currency', places: 2, symbol: '$' });
@@ -350,7 +376,7 @@ describe('formats in the file', () => {
       }),
       4
     );
-    expect(read?.formats).toEqual([]);
+    expect(read?.sheets[0].formats).toEqual([]);
   });
 });
 
@@ -371,7 +397,7 @@ describe('the shape of the sheet in the file', () => {
     document.merges.add({ firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 3 });
 
     const loaded = new SheetDocument();
-    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, 100)), 4)!);
 
     expect(loaded.merges.at(0, 2)).toEqual({ firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 3 });
   });
@@ -383,7 +409,7 @@ describe('the shape of the sheet in the file', () => {
     document.hiddenRows.add(4);
 
     const loaded = new SheetDocument();
-    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, [], 100)), 4)!);
+    applySnapshot(loaded, parseSnapshot(JSON.stringify(snapshotOf(document, 100)), 4)!);
 
     expect(loaded.frozenRows).toBe(2);
     expect(loaded.frozenColumns).toBe(1);
@@ -395,9 +421,9 @@ describe('the shape of the sheet in the file', () => {
       JSON.stringify({ version: 2, cells: [{ row: 0, column: 0, input: '5' }], columnWidths: [] }),
       4
     );
-    expect(read?.merges).toEqual([]);
-    expect(read?.frozenRows).toBe(0);
-    expect(read?.hiddenRows).toEqual([]);
+    expect(read?.sheets[0].merges).toEqual([]);
+    expect(read?.sheets[0].frozenRows).toBe(0);
+    expect(read?.sheets[0].hiddenRows).toEqual([]);
   });
 
   it('drops a merge a file got wrong', () => {
@@ -410,13 +436,239 @@ describe('the shape of the sheet in the file', () => {
       }),
       4
     );
-    expect(read?.merges).toEqual([]);
+    expect(read?.sheets[0].merges).toEqual([]);
   });
 
   /** What lives past the end of the sheet is not somebody's data. */
   it('does not write a merge past the end of the sheet', () => {
     const document = new SheetDocument();
     document.merges.add({ firstRow: 500, lastRow: 501, firstColumn: 0, lastColumn: 1 });
-    expect(snapshotOf(document, [], 100).merges).toEqual([]);
+    expect(snapshotOf(document, 100).sheets[0].merges).toEqual([]);
+  });
+});
+
+/**
+ * Phase 13's other exit criterion: Phase 6's reload proof, run over a
+ * three-sheet workbook with cross-references in both directions.
+ *
+ * Written down, read back, and every claim made against the reloaded
+ * workbook rather than against the snapshot — a file that round-trips
+ * its own JSON proves nothing about whether it holds a workbook.
+ */
+describe('a workbook of three sheets, written down and opened again', () => {
+  function built(): SheetDocument {
+    const document = new SheetDocument();
+    document.renameSheet(0, 'Input');
+    document.setCell(0, 0, '10');
+    document.setCell(1, 0, '20');
+    document.columnWidths = [140, COLUMN_WIDTH];
+    document.frozenRows = 1;
+    document.merges.add({ firstRow: 4, lastRow: 4, firstColumn: 0, lastColumn: 2 });
+
+    document.addSheet('Working');
+    // Reads back down the book…
+    document.setCell(0, 0, '=SUM(Input!A1:A2)');
+    document.setFormat(0, 0, {
+      ...document.formatAt(0, 0),
+      number: { kind: 'currency', places: 2, symbol: '$' }
+    });
+    document.hiddenRows.add(7);
+
+    document.addSheet('Report');
+    document.setCell(0, 0, '=Working!A1*2');
+    document.setSheetColour(2, '#34a853');
+
+    // …and back up it, so the references run both ways.
+    document.activate(0);
+    document.setCell(3, 0, '=Report!A1+1');
+    document.defineName('Readings', {
+      start: { ...relativeRef(0, 0), sheet: 'Input' },
+      end: { ...relativeRef(1, 0), sheet: 'Input' }
+    });
+    document.activate(1);
+    document.setCell(2, 0, '=COUNT(Readings)');
+    document.activate(2);
+    document.book.recalculate();
+    return document;
+  }
+
+  function reopened(): SheetDocument {
+    const written = JSON.stringify(snapshotOf(built(), 1_000));
+    const read = parseSnapshot(written, 2);
+    expect(read).not.toBeNull();
+    const after = new SheetDocument();
+    applySnapshot(after, read!);
+    return after;
+  }
+
+  it('comes back with all three sheets, named and in order', () => {
+    const after = reopened();
+    expect(after.sheets().map(entry => entry.name)).toEqual(['Input', 'Working', 'Report']);
+  });
+
+  it('opens on the sheet that was showing', () => {
+    expect(reopened().active).toBe(2);
+  });
+
+  it('works out the whole chain again, across all three', () => {
+    const after = reopened();
+    after.activate(0);
+    expect(after.sheet.value(0, 0)).toBe(10);
+    after.activate(1);
+    expect(after.sheet.value(0, 0)).toBe(30);
+    after.activate(2);
+    expect(after.sheet.value(0, 0)).toBe(60);
+  });
+
+  /** The reference that runs back up the book, which a naive load breaks. */
+  it('resolves a reference pointing at a sheet written after it', () => {
+    const after = reopened();
+    after.activate(0);
+    expect(after.sheet.value(3, 0)).toBe(61);
+  });
+
+  it('keeps the formulas as text, not the numbers they showed', () => {
+    const after = reopened();
+    after.activate(1);
+    expect(after.sheet.input(0, 0)).toBe('=SUM(Input!A1:A2)');
+  });
+
+  it('brings back a name that points at a sheet', () => {
+    const after = reopened();
+    after.activate(1);
+    expect(after.sheet.value(2, 0)).toBe(2);
+    expect(after.book.names.rangeOf('Readings')?.start.sheet).toBe('Input');
+  });
+
+  /**
+   * The names arrive after the cells, so the formulas that read them
+   * were wired when the name meant nothing — and a formula that is
+   * *evaluated* correctly but not *wired* is the silent kind of
+   * wrong: right on the screen until somebody edits what it reads.
+   *
+   * So the claim is about the edge and not about the value, which is
+   * why this writes into the named range rather than reading it.
+   */
+  it('wires a formula to the name it reads, not only evaluates it', () => {
+    const after = reopened();
+    after.activate(0);
+    after.setCell(2, 0, '30');
+    after.book.recalculate();
+
+    after.activate(1);
+    expect(after.sheet.value(2, 0)).toBe(2);
+    after.activate(0);
+    after.setCell(1, 0, '');
+    after.book.recalculate();
+    after.activate(1);
+    expect(after.sheet.value(2, 0)).toBe(1);
+  });
+
+  it('keeps what is drawn over each sheet with that sheet', () => {
+    const after = reopened();
+    after.activate(0);
+    expect(after.columnWidths[0]).toBe(140);
+    expect(after.frozenRows).toBe(1);
+    expect(after.merges.size).toBe(1);
+    expect(after.hiddenRows.size).toBe(0);
+
+    after.activate(1);
+    expect(after.columnWidths[0]).toBe(COLUMN_WIDTH);
+    expect(after.frozenRows).toBe(0);
+    expect(after.merges.size).toBe(0);
+    expect(after.hiddenRows.has(7)).toBe(true);
+  });
+
+  it('keeps each sheet’s formats to itself', () => {
+    const after = reopened();
+    after.activate(1);
+    expect(after.formatAt(0, 0).number).toEqual({ kind: 'currency', places: 2, symbol: '$' });
+    expect(after.display(0, 0)).toBe('$30.00');
+
+    after.activate(0);
+    expect(after.formatAt(0, 0).number).toEqual({ kind: 'general' });
+  });
+
+  it('keeps a tab colour', () => {
+    expect(reopened().sheets()[2].colour).toBe('#34a853');
+  });
+
+  /** Opening a workbook is not an edit, however many sheets it has. */
+  it('does not land on the undo stack', () => {
+    expect(reopened().canUndo).toBe(false);
+  });
+});
+
+/**
+ * Phase 6's reload proof, run through the service and the repository
+ * over a workbook of three sheets.
+ *
+ * The document-level specs above say the snapshot is right. This
+ * says the *round trip* is: a real service writes to a real
+ * repository, a second service reads it back, and every claim is
+ * made against what the second one holds.
+ */
+describe('a workbook of three sheets, reloaded through the service', () => {
+  async function saved(): Promise<InMemorySheetRepository> {
+    const repository = new InMemorySheetRepository();
+    const first = harness(repository);
+    await first.service.restore();
+
+    first.service.renameSheet(0, 'Input');
+    first.service.setCell(0, 0, '10');
+    first.service.setCell(1, 0, '20');
+    first.service.setColumnWidth(0, 140);
+
+    first.service.addSheet();
+    first.service.renameSheet(1, 'Working');
+    first.service.setCell(0, 0, '=SUM(Input!A1:A2)');
+
+    first.service.addSheet();
+    first.service.renameSheet(2, 'Report');
+    first.service.setSheetColour(2, '#34a853');
+    first.service.setCell(0, 0, '=Working!A1*2');
+
+    first.service.activateSheet(0);
+    first.service.setCell(3, 0, '=Report!A1+1');
+    first.drain();
+    return repository;
+  }
+
+  it('comes back with every sheet, and works the chain out again', async () => {
+    const second = harness(await saved());
+    await second.service.restore();
+    second.drain();
+
+    expect(second.document.sheets().map(entry => entry.name)).toEqual(['Input', 'Working', 'Report']);
+
+    second.document.activate(1);
+    expect(second.document.sheet.value(0, 0)).toBe(30);
+    second.document.activate(2);
+    expect(second.document.sheet.value(0, 0)).toBe(60);
+    // The reference that runs back up the book.
+    second.document.activate(0);
+    expect(second.document.sheet.value(3, 0)).toBe(61);
+  });
+
+  it('keeps each sheet’s own widths and colour', async () => {
+    const second = harness(await saved());
+    await second.service.restore();
+    second.drain();
+
+    second.document.activate(0);
+    expect(second.document.columnWidths[0]).toBe(140);
+    second.document.activate(1);
+    expect(second.document.columnWidths[0]).toBe(COLUMN_WIDTH);
+    expect(second.document.sheets()[2].colour).toBe('#34a853');
+  });
+
+  it('tells the render worker about the tabs', async () => {
+    const second = harness(await saved());
+    await second.service.restore();
+    second.drain();
+
+    let tabs: readonly { name: string }[] = [];
+    second.service.sheets.subscribe(view => (tabs = view.entries)).unsubscribe();
+    expect(tabs.map(tab => tab.name)).toEqual(['Input', 'Working', 'Report']);
   });
 });

@@ -224,17 +224,27 @@ export class Workbook {
    * A name nothing else has, by adding a number until it is one.
    *
    * Two sheets called `Sheet2` would make `Sheet2!A1` mean whichever
-   * the lookup reached first, which is a formula whose meaning depends
-   * on tab order.
+   * the lookup reached first, which is a formula whose meaning
+   * depends on tab order.
+   *
+   * `except` is the sheet being renamed, which does not count as
+   * something else. Without it, renaming `Working` to `Working` —
+   * which is what fixing a capital or pressing Enter on an unchanged
+   * box does — found the sheet itself in the way and called it
+   * `Working 2`.
    */
-  private freeName(wanted: string): string {
+  private freeName(wanted: string, except = -1): string {
+    const taken = (name: string): boolean => {
+      const at = this.sheetFor(name);
+      return at !== null && at !== except;
+    };
     const trimmed = wanted.trim() === '' ? 'Sheet' : wanted.trim();
-    if (this.sheetFor(trimmed) === null) {
+    if (!taken(trimmed)) {
       return trimmed;
     }
     for (let suffix = 2; ; suffix++) {
       const candidate = `${trimmed} ${suffix}`;
-      if (this.sheetFor(candidate) === null) {
+      if (!taken(candidate)) {
         return candidate;
       }
     }
@@ -258,7 +268,7 @@ export class Workbook {
       return 0;
     }
     const from = entry.name;
-    const settled = this.freeName(to);
+    const settled = this.freeName(to, sheet);
     if (settled.toUpperCase() === from.toUpperCase()) {
       entry.name = settled;
       return 0;

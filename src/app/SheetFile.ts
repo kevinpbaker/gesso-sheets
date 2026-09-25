@@ -29,11 +29,44 @@ import type { SheetDocument } from './SheetDocument';
  * `version` is here from the first write rather than added when it is
  * first needed, because the file that needs it is the one already on
  * somebody's disk — and Phase 9 is the phase that needed it. A v1
- * file is a v2 file with no formats, so it loads, and that is the
- * whole job the field was put there to do.
+ * file is a v2 file with no formats, and a v2 file is a v3 file of
+ * one sheet, so both load and that is the whole job the field was put
+ * there to do.
+ *
+ * v3 is the one version bump that could not be an absent field. A v2
+ * file has its cells at the top level and a v3 file has them inside a
+ * sheet, so a reader that guessed would read a whole workbook as
+ * nothing at all.
  */
 export interface SheetSnapshot {
-  readonly version: 2;
+  readonly version: 3;
+  /** Every sheet, in tab order. */
+  readonly sheets: readonly StoredSheet[];
+  /** Which one was showing when it was written. */
+  readonly active: number;
+  /**
+   * The names, which belong to the workbook rather than to a sheet.
+   *
+   * Each says which sheet its range is on, because `Sales` on Sheet 2
+   * and `Sales` on Sheet 1 are different cells and the name alone
+   * cannot tell them apart. Absent in a v2 file, which had one sheet
+   * — so it reads as the first one, which is where those cells were.
+   */
+  readonly names: readonly StoredName[];
+}
+
+/**
+ * One sheet of the workbook, and everything drawn over its cells.
+ *
+ * All of it per sheet and none of it shared, which is the shape the
+ * document already has: widths, hidden rows, freezes, merges and
+ * formats are facts about *a* sheet. A v3 file is therefore a v2 file
+ * with a name and a colour on it, repeated.
+ */
+export interface StoredSheet {
+  readonly name: string;
+  /** A tab colour somebody chose, or null for the plain one. */
+  readonly colour: string | null;
   readonly cells: readonly StoredCell[];
   /**
    * The formats, as a palette and a list of cells pointing into it.
@@ -44,7 +77,11 @@ export interface SheetSnapshot {
    * rather than with the number of distinct formats in it.
    *
    * Written through `Formats.compact`, so nothing no cell points at
-   * reaches the disk.
+   * reaches the disk. A palette per sheet rather than one for the
+   * workbook, because sheets are added and removed and a shared
+   * palette would need a reference count to know when an entry could
+   * go — for a saving of a few hundred bytes on a file that already
+   * holds every formula.
    */
   readonly palette: readonly CellFormat[];
   readonly formats: readonly StoredFormat[];
@@ -55,23 +92,8 @@ export interface SheetSnapshot {
    * rather than thirty megabytes of per-cell entries.
    */
   readonly regions: StoredRegions;
-  /**
-   * The merged rectangles, and the frozen pane.
-   *
-   * Absent in a file written before they existed, which reads as none
-   * and no pane — so no version bump: the field's absence already
-   * means the right thing, and a version is for a change that would
-   * be read *wrongly* rather than not at all.
-   */
+  /** The merged rectangles. */
   readonly merges: readonly MergeRect[];
-  /**
-   * The names, each as its text and the four corners it stands for.
-   *
-   * Absent in a file written before they existed, which reads as no
-   * names — so no version bump, on the same rule the merges were
-   * added under: the field's absence already means the right thing.
-   */
-  readonly names: readonly StoredName[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
@@ -120,40 +142,55 @@ export interface StoredFormat {
  * cells the person could never reach and had not asked for. The chain
  * is a measuring instrument, and an instrument is not a document.
  */
-export function snapshotOf(
-  document: SheetDocument,
-  columnWidths: readonly number[],
-  rowCount = Number.POSITIVE_INFINITY
-): SheetSnapshot {
-  const cells: StoredCell[] = [];
-  for (const cell of document.sheet.entries()) {
-    if (cell.row < rowCount) {
-      cells.push(cell);
+export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_INFINITY): SheetSnapshot {
+  const sheets: StoredSheet[] = [];
+  for (let index = 0; index < document.sheetCount; index++) {
+    const page = document.pageAt(index);
+    if (page === undefined) {
+      continue;
     }
+    const cells: StoredCell[] = [];
+    for (const cell of page.sheet.entries()) {
+      if (cell.row < rowCount) {
+        cells.push(cell);
+      }
+    }
+    const formats = page.formats.compact();
+    sheets.push({
+      name: page.sheet.name,
+      colour: page.sheet.colour,
+      cells,
+      palette: formats.palette,
+      formats: formats.cells.filter(cell => cell.row < rowCount),
+      regions: {
+        sheet: formats.regions.sheet,
+        rows: formats.regions.rows.filter(([row]) => row < rowCount),
+        columns: formats.regions.columns
+      },
+      merges: page.merges.all.filter(rect => rect.lastRow < rowCount),
+      frozenRows: page.frozenRows,
+      frozenColumns: page.frozenColumns,
+      hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
+      columnWidths: [...page.columnWidths]
+    });
   }
-  const formats = document.formats.compact();
   return {
-    version: 2,
-    cells,
-    palette: formats.palette,
-    formats: formats.cells.filter(cell => cell.row < rowCount),
-    regions: {
-      sheet: formats.regions.sheet,
-      rows: formats.regions.rows.filter(([row]) => row < rowCount),
-      columns: formats.regions.columns
-    },
-    merges: document.merges.all.filter(rect => rect.lastRow < rowCount),
-    names: document.sheet.names.all().map(entry => ({
+    version: 3,
+    sheets,
+    active: document.active,
+    names: document.book.names.all().map(entry => ({
       name: entry.name,
+      // The name of the sheet rather than its index, so a name
+      // survives the sheets being reordered between two saves — and
+      // so a file somebody read can be understood without counting
+      // tabs. Unknown on load means the first sheet, which is where a
+      // v2 file's names were.
+      sheet: entry.range.start.sheet ?? null,
       firstRow: Math.min(entry.range.start.row, entry.range.end.row),
       firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
       lastRow: Math.max(entry.range.start.row, entry.range.end.row),
       lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
-    })),
-    frozenRows: document.frozenRows,
-    frozenColumns: document.frozenColumns,
-    hiddenRows: [...document.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
-    columnWidths: [...columnWidths]
+    }))
   };
 }
 
@@ -165,41 +202,63 @@ export function snapshotOf(
  * first ctrl-Z after opening a sheet should do nothing, not empty it.
  */
 export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot): void {
-  // Formats first, so that a Text-formatted cell is Text *before* its
-  // input is read: written the other way round, `007` would be parsed
-  // as the number seven and then formatted as text, and the leading
-  // zeros somebody saved would be gone by the time the format said
-  // to keep them.
-  document.merges.restore(snapshot.merges);
-  document.sheet.names.restore(
-    snapshot.names.map(stored => ({
-      name: stored.name,
-      range: {
-        start: relativeRef(stored.firstRow, stored.firstColumn),
-        end: relativeRef(stored.lastRow, stored.lastColumn)
-      }
-    }))
+  // The sheets before anything on them, because every write below
+  // goes through the active page and there has to be one to go
+  // through. Named first too: a formula reading `Data!A1` can only
+  // find `Data` if `Data` exists by the time it is parsed.
+  document.restoreSheets(snapshot.sheets.map(stored => stored.name));
+  for (const [index, stored] of snapshot.sheets.entries()) {
+    document.activate(index);
+    document.setSheetColour(index, stored.colour);
+    const page = document.pageAt(index);
+    if (page === undefined) {
+      continue;
+    }
+    // Formats first, so that a Text-formatted cell is Text *before*
+    // its input is read: written the other way round, `007` would be
+    // parsed as the number seven and then formatted as text, and the
+    // leading zeros somebody saved would be gone by the time the
+    // format said to keep them.
+    page.merges.restore(stored.merges);
+    page.frozenRows = stored.frozenRows;
+    page.frozenColumns = stored.frozenColumns;
+    page.hiddenRows.clear();
+    for (const row of stored.hiddenRows) {
+      page.hiddenRows.add(row);
+    }
+    page.columnWidths = [...stored.columnWidths];
+    page.formats.restore(stored.palette, stored.formats, {
+      sheet: stored.regions.sheet,
+      rows: stored.regions.rows,
+      columns: stored.regions.columns
+    });
+    for (const cell of stored.cells) {
+      page.sheet.setCell(
+        cell.row,
+        cell.column,
+        cell.input,
+        page.formats.formatAt(cell.row, cell.column).number.kind === 'text'
+      );
+    }
+  }
+  document.book.names.restore(
+    snapshot.names.map(stored => {
+      const on = stored.sheet === null ? undefined : stored.sheet;
+      return {
+        name: stored.name,
+        range: {
+          start: { ...relativeRef(stored.firstRow, stored.firstColumn), sheet: on },
+          end: { ...relativeRef(stored.lastRow, stored.lastColumn), sheet: on }
+        }
+      };
+    })
   );
-  document.frozenRows = snapshot.frozenRows;
-  document.frozenColumns = snapshot.frozenColumns;
-  document.hiddenRows.clear();
-  for (const row of snapshot.hiddenRows) {
-    document.hiddenRows.add(row);
-  }
-  document.formats.restore(snapshot.palette, snapshot.formats, {
-    sheet: snapshot.regions.sheet,
-    rows: snapshot.regions.rows,
-    columns: snapshot.regions.columns
-  });
-  for (const cell of snapshot.cells) {
-    document.sheet.setCell(
-      cell.row,
-      cell.column,
-      cell.input,
-      document.formats.formatAt(cell.row, cell.column).number.kind === 'text'
-    );
-  }
-  document.sheet.recalculate();
+  // The names arrive after the cells, so the formulas that read them
+  // were wired when the name meant nothing. This is the same wake-up
+  // defining one by hand gives.
+  document.book.namesChanged();
+  document.activate(Math.min(Math.max(snapshot.active, 0), Math.max(snapshot.sheets.length - 1, 0)));
+  document.book.recalculate();
 }
 
 /**
@@ -220,35 +279,92 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
   if (typeof raw !== 'object' || raw === null) {
     return null;
   }
-  const source = raw as Omit<Partial<SheetSnapshot>, 'version'> & { version?: number };
-  // A v1 file is a v2 file with no formats in it, so it is read
-  // rather than refused. The version exists to let an old file keep
-  // working, and refusing one would be the version field costing
-  // exactly what it was meant to save.
-  if ((source.version !== 1 && source.version !== 2) || !Array.isArray(source.cells)) {
+  const source = raw as Record<string, unknown>;
+  const version = source.version;
+
+  /**
+   * A v1 or v2 file is a workbook of one sheet, and is read as one.
+   *
+   * The version exists to let an old file keep working, and refusing
+   * one would be the field costing exactly what it was meant to save.
+   * A v1 file is a v2 file with no formats; a v2 file is this, with
+   * its one sheet's fields at the top level where they used to be.
+   */
+  if (version === 1 || version === 2) {
+    if (!Array.isArray(source.cells)) {
+      return null;
+    }
+    return {
+      version: 3,
+      sheets: [sheetFrom(source, 'Sheet1', columnCount)],
+      active: 0,
+      names: namesFrom(source.names)
+    };
+  }
+
+  if (version !== 3 || !Array.isArray(source.sheets)) {
     return null;
   }
+  const sheets: StoredSheet[] = [];
+  for (const [index, stored] of (source.sheets as unknown[]).entries()) {
+    if (typeof stored !== 'object' || stored === null) {
+      continue;
+    }
+    const held = stored as Record<string, unknown>;
+    sheets.push(
+      sheetFrom(held, typeof held.name === 'string' && held.name.trim() !== '' ? held.name : `Sheet${index + 1}`, columnCount)
+    );
+  }
+  // A workbook of none is a state nothing else is written to survive,
+  // and a file that says so is a file that has been truncated.
+  if (sheets.length === 0) {
+    return null;
+  }
+  const active = source.active;
+  return {
+    version: 3,
+    sheets,
+    active: Number.isInteger(active) && (active as number) >= 0 && (active as number) < sheets.length ? (active as number) : 0,
+    names: namesFrom(source.names)
+  };
+}
+
+/**
+ * One sheet's worth of fields, wherever they were found.
+ *
+ * Shared by the v3 path and the v2 one, which is what makes "a v2
+ * file is a workbook of one sheet" a fact about the reader rather
+ * than a sentence in a comment: both go through the same checks and
+ * neither can drift.
+ */
+function sheetFrom(source: Record<string, unknown>, name: string, columnCount: number): StoredSheet {
   const cells: StoredCell[] = [];
-  for (const cell of source.cells) {
-    if (
-      typeof cell === 'object' &&
-      cell !== null &&
-      Number.isInteger((cell as StoredCell).row) &&
-      Number.isInteger((cell as StoredCell).column) &&
-      typeof (cell as StoredCell).input === 'string'
-    ) {
-      cells.push({ row: (cell as StoredCell).row, column: (cell as StoredCell).column, input: (cell as StoredCell).input });
+  if (Array.isArray(source.cells)) {
+    for (const cell of source.cells) {
+      if (
+        typeof cell === 'object' &&
+        cell !== null &&
+        Number.isInteger((cell as StoredCell).row) &&
+        Number.isInteger((cell as StoredCell).column) &&
+        typeof (cell as StoredCell).input === 'string'
+      ) {
+        cells.push({
+          row: (cell as StoredCell).row,
+          column: (cell as StoredCell).column,
+          input: (cell as StoredCell).input
+        });
+      }
     }
   }
   const palette = paletteFrom(source.palette);
   return {
-    version: 2,
+    name,
+    colour: typeof source.colour === 'string' ? source.colour : null,
     cells,
     palette,
     formats: formatsFrom(source.formats, palette.length),
     regions: regionsFrom(source.regions, palette.length),
     merges: mergesFrom(source.merges),
-    names: namesFrom(source.names),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     hiddenRows: Array.isArray(source.hiddenRows)
@@ -455,9 +571,17 @@ function widthsFrom(stored: unknown, columnCount: number): number[] {
   return widths;
 }
 
-/** A name as a file holds it: its text and the corners it names. */
+/** A name as a file holds it: its text, its sheet, and the corners it names. */
 export interface StoredName {
   readonly name: string;
+  /**
+   * The sheet its range is on, by name, or null for the first one.
+   *
+   * By name rather than by index so it survives the tabs being
+   * reordered between two saves, and so a file can be read without
+   * counting them. Null is what a v2 file means: it had one sheet.
+   */
+  readonly sheet: string | null;
   readonly firstRow: number;
   readonly firstColumn: number;
   readonly lastRow: number;
@@ -491,6 +615,7 @@ function namesFrom(stored: unknown): StoredName[] {
     }
     found.push({
       name: held.name,
+      sheet: typeof held.sheet === 'string' ? held.sheet : null,
       firstRow: held.firstRow as number,
       firstColumn: held.firstColumn as number,
       lastRow: held.lastRow as number,
