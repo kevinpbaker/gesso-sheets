@@ -77,6 +77,15 @@ export interface SheetGeometry {
    * document's.
    */
   readonly columnWidths: readonly number[];
+  /**
+   * The rows that are hidden, in order.
+   *
+   * A list of the exceptions and not a height per row, because a
+   * sheet is ten thousand rows tall and all but a handful of them are
+   * the same — which is the same shape `UiVirtualSheet.rowHeights`
+   * takes, and for the same reason.
+   */
+  readonly hiddenRows: readonly number[];
 }
 
 /** The active cell, and the rectangle anchored from it. */
@@ -312,6 +321,8 @@ export interface SheetCommands {
    */
   hideColumns(first: number, last: number): void;
   showColumns(first: number, last: number): void;
+  hideRows(first: number, last: number): void;
+  showRows(first: number, last: number): void;
 }
 
 /** What a border command draws. */
@@ -453,7 +464,7 @@ export function cellIn(window: SheetWindow, row: number, column: number): string
 
 export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   window: EMPTY_WINDOW,
-  geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104, columnWidths: [] },
+  geometry: { rowCount: 0, columnCount: 0, rowHeight: 24, columnWidth: 104, columnWidths: [], hiddenRows: [] },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },

@@ -122,6 +122,14 @@ export class SheetDocument {
    * *file* was concerned; this finishes the move.
    */
   columnWidths: number[] = [];
+  /**
+   * The rows somebody has hidden.
+   *
+   * A set of exceptions rather than a height per row, for the reason
+   * `UiVirtualSheetOptions.rowHeights` is sparse: a sheet is ten
+   * thousand rows tall and all but a handful are the same.
+   */
+  readonly hiddenRows = new Set<number>();
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
@@ -452,9 +460,22 @@ export class SheetDocument {
     }
 
     const widths = [...this.columnWidths];
+    const hidden = [...this.hiddenRows];
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.columnWidths = shiftWidths(this.columnWidths, shift);
+    // A hidden row is hidden by index, so it moves with the rows it
+    // was among — an insert above a hidden row must not reveal it and
+    // hide its neighbour instead.
+    if (shift.axis === 'row') {
+      this.hiddenRows.clear();
+      for (const row of hidden) {
+        const moved = shiftIndex(row, shift);
+        if (moved !== -1) {
+          this.hiddenRows.add(moved);
+        }
+      }
+    }
 
     this.record({
       kind: 'structure',

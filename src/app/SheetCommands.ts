@@ -68,7 +68,9 @@ export type CommandId =
   | 'sortAscending'
   | 'sortDescending'
   | 'hideColumns'
-  | 'showColumns';
+  | 'showColumns'
+  | 'hideRows'
+  | 'showRows';
 
 /**
  * How long a chain the proof command builds.
@@ -224,6 +226,12 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     id: 'showColumns',
     label: 'Show columns',
     accelerator: { key: '0', ctrl: true, alt: true, shift: true, shifted: ')' }
+  },
+  hideRows: { id: 'hideRows', label: 'Hide rows', accelerator: { key: '9', ctrl: true, alt: true } },
+  showRows: {
+    id: 'showRows',
+    label: 'Show rows',
+    accelerator: { key: '9', ctrl: true, alt: true, shift: true, shifted: '(' }
   },
 
   bold: { id: 'bold', label: 'Bold', accelerator: { key: 'b', ctrl: true } },
@@ -407,6 +415,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'fillDown',
       'fillRight',
       SEPARATOR,
+      'hideRows',
+      'showRows',
       'hideColumns',
       'showColumns',
       SEPARATOR,

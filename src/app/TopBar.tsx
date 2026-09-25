@@ -403,6 +403,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'showColumns':
         sheet.send.showColumns(columns().first, columns().last);
         break;
+      case 'hideRows':
+        sheet.send.hideRows(rows().first, rows().last);
+        break;
+      case 'showRows':
+        sheet.send.showRows(rows().first, rows().last);
+        break;
     }
     edit.focusSheet();
   };

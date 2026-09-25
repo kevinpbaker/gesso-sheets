@@ -16,9 +16,10 @@ themselves rather than take a benchmark's word for it.
 and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
 in, is two and a half phases into nine: the top bar and the format
-axis are done, and Phase 10 has landed insert, delete, borders and
-sort but waits on two engine gaps for merging, freezing and hiding
-rows. `pnpm test` is 554 specs and `pnpm proof` is six budgets. Phase
+axis are done, and Phase 10 has landed insert, delete, borders, sort and
+hidden rows and columns, with merging and freezing still to build on
+the two engine gaps it closed. `pnpm test` is 560 specs and `pnpm
+proof` is six budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
@@ -643,10 +644,10 @@ bugs; the eight named formats cover what people pick.
 ### Phase 10 — Rows, columns, and borders — **partly done**
 
 Insert and delete rows and columns with reference rewriting, per-edge
-cell borders, sorting a range, and hiding columns. **Merged cells,
-freeze panes at an arbitrary cell, hiding rows, autofit and filtering
-are not done**, and the reasons are two engine gaps rather than five
-separate ones — see below and the list at the end of this file.
+cell borders, sorting a range, and hiding rows and columns. **Merged
+cells, freeze panes, autofit and filtering are not done** — but the
+two engine gaps that blocked them are now closed, so what is left is
+application work rather than a wall. See the end of this file.
 
 **Exit:** a rewrite-count spec in Phase 1's style — inserting a row
 above a column of 50,000 formulas rewrites exactly the formulas that
@@ -711,14 +712,22 @@ property is bound correctly now and the control is out of the
 toolbar, on this file's own rule: a control that silently does
 nothing is worse than one that is missing.
 
-**What is left, and why it is two things and not five.** Merged cells
-and freeze-at-an-arbitrary-cell both need the mounted set to include
-something outside the window — a merge whose anchor has scrolled off,
-a frozen row that is far away. Hiding rows, autofit and a visible
-`wrap` all need `rowHeight` to be an array as `columnWidth` already
-is; filtering hides rows, so it waits on the same thing. Two engine
-changes, both named below, and the application work behind each of
-them is small once they land.
+**The two engine changes, and the first thing built on them.**
+Merged cells and freeze panes needed the mounted set to be able to
+include something outside the window; hiding rows, autofit and a
+visible `wrap` needed a row height per row. Both are done — see the
+list at the end of this file — and hiding rows is the first thing
+standing on one of them, which is also how it was checked: an engine
+change with no consumer is an engine change nobody has run.
+
+And it took a browser to finish it. A hidden row is one of height
+zero, and a zero-height row whose cells are also zero-height still
+*paints* them — nothing in the engine clips a node to its box unless
+it is asked to, so the text of the hidden row went on drawing over
+its neighbours. Every spec passed: they asked what the cell's height
+property was, and zero is exactly what they got. The row clips itself
+now, and only the hidden ones do, because clipping every row would
+cut off the fill handle that deliberately hangs outside its cell.
 
 ### Phase 11 — The library, and dates
 
@@ -949,20 +958,28 @@ Carried forward from the head of this file, with what Part Two adds:
   opt-out half, so `Dialog` making its body `focusable: true` and
   every control inside it staying an ordinary stop would work — what
   is missing is only that the body must not itself become a stop.
-- **A mounted set that depends on the document.** `UiVirtualSheet`
-  mounts what the window covers, and a merged cell anchored above the
-  window still has to paint into it — as does a frozen row the sheet
-  has scrolled far past. *Confirmed by Phase 10*, which left merged
-  cells and freeze panes undone because of it, and it is the deepest
-  of the gaps here.
-- **One row height for every row.** `columnWidth` on
-  `UiVirtualSheetOptions` is a number *or an array*, and the prefix
-  sum that makes a resizable column work is already written;
-  `rowHeight` is only a number. So a column can be hidden by setting
-  its width to zero and a row cannot, autofit has nothing to set, and
-  wrapped text has nowhere to put its second line. *Found by Phase
-  10*, which is three of its five unfinished items. The change is the
-  one already made on the other axis.
+- ~~**A mounted set that depends on the document.**~~ *Closed.*
+  `UiVirtualSheet` mounted what the window covered, so a merged cell
+  anchored above the window could not paint into it and a frozen row
+  the sheet had scrolled past was not there to be frozen. Two
+  additions rather than one, because the two cases want different
+  things: `extendRange` widens the window the viewport implies, which
+  is what a merge needs and costs nothing when nobody widens
+  anything; `frozenRows` and `frozenColumns` are a *second* mounted
+  set, because widening the window back to row 0 from row 5,000 would
+  mount five thousand rows to show one. Both are the header row and
+  the gutter — which have always done this — with the count turned
+  up, and keeping them visible stays the renderer's job with sticky
+  positioning.
+- ~~**One row height for every row.**~~ *Closed.* `columnWidth` was a
+  number or an array and `rowHeight` was only a number, so a column
+  could be hidden by setting its width to zero and a row could not.
+  `rowHeights` is a **sparse map** rather than an array, and the
+  asymmetry is the point: a sheet has a few hundred columns and up to
+  a million rows, so a height per row would be the largest allocation
+  in the application to describe a sheet where every row but two is
+  the same. The offsets stay a multiplication plus a binary search
+  over the exceptions, so a sheet with none pays what it always paid.
 - **A floating object layer over a scroll surface.** Selectable,
   movable, resizable things in a scrolled coordinate space, which
   charts need and images would reuse. Phase 15.

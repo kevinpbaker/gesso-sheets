@@ -170,7 +170,8 @@ export class SheetService {
       columnCount,
       rowHeight: ROW_HEIGHT,
       columnWidth: COLUMN_WIDTH,
-      columnWidths: document.columnWidths
+      columnWidths: document.columnWidths,
+      hiddenRows: []
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
     this.editorSubject = new BehaviorSubject<SheetEditor>({
@@ -297,9 +298,13 @@ export class SheetService {
     this.persist();
   }
 
-  /** The geometry, with the widths as the document now holds them. */
+  /** The geometry, with the widths and hidden rows the document holds. */
   private publishGeometry(): void {
-    this.geometrySubject.next({ ...this.geometrySubject.value, columnWidths: this.document.columnWidths });
+    this.geometrySubject.next({
+      ...this.geometrySubject.value,
+      columnWidths: this.document.columnWidths,
+      hiddenRows: [...this.document.hiddenRows].sort((a, b) => a - b)
+    });
   }
 
   /**
@@ -711,6 +716,36 @@ export class SheetService {
       }
     }
     this.document.columnWidths = widths;
+    this.publishGeometry();
+    this.persist();
+  }
+
+  /**
+   * A hidden row, which the engine draws as one of height zero.
+   *
+   * It could not be done at all until the virtual sheet took a row
+   * height per row: `columnWidth` was a number *or an array* and
+   * `rowHeight` was only ever a number, so a column could be hidden
+   * and a row could not. The heights are sparse rather than an array,
+   * because a sheet is ten thousand rows tall and all but a handful
+   * of them are the same.
+   */
+  hideRows(first: number, last: number): void {
+    const { rowCount } = this.geometrySubject.value;
+    for (let row = first; row <= last && row < rowCount; row++) {
+      this.document.hiddenRows.add(row);
+    }
+    this.publishGeometry();
+    this.persist();
+  }
+
+  showRows(first: number, last: number): void {
+    // Widened by one on each side, so that selecting the rows either
+    // side of a hidden one and asking to show it works — which is the
+    // only way to select a row you cannot see.
+    for (let row = Math.max(0, first - 1); row <= last + 1; row++) {
+      this.document.hiddenRows.delete(row);
+    }
     this.publishGeometry();
     this.persist();
   }

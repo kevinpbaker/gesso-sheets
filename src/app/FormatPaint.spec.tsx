@@ -31,6 +31,7 @@ import { SheetService } from './SheetService';
 interface Harness {
   ui: Rendered;
   served: ServedForTest;
+  service: SheetService;
 }
 
 const bold: CellFormat = { number: GENERAL, paint: { ...PLAIN, bold: true, fill: '#eef2f7' } };
@@ -49,7 +50,7 @@ async function mount(fill: (document: SheetDocument) => void): Promise<Harness> 
   await ui.settle();
   await served.settle();
   await ui.settle();
-  return { ui, served };
+  return { ui, served, service };
 }
 
 describe('what the grid draws a formatted cell with', () => {
@@ -265,3 +266,119 @@ async function applyOutline(h: Harness): Promise<void> {
   await h.served.settle();
   await h.ui.settle();
 }
+
+/**
+ * Hidden rows, which could not exist until the engine took a height
+ * per row.
+ *
+ * `columnWidth` on a virtual sheet was a number *or an array* and
+ * `rowHeight` was only ever a number, so a column could be hidden by
+ * setting its width to zero and a row could not. These assert the
+ * app's half of that: a hidden row is zero tall, and the row after it
+ * is where the hidden one used to be.
+ */
+describe('a hidden row', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const heightOf = (text: string): unknown =>
+    h.ui.getByRole('cell', { name: text }).properties.get('height');
+
+  it('is drawn with no height at all', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'first');
+      d.setCell(1, 0, 'hidden');
+      d.setCell(2, 0, 'third');
+    });
+    expect(heightOf('hidden')).toBe(ROW_HEIGHT);
+
+    h.service.hideRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(heightOf('hidden')).toBe(0);
+    expect(heightOf('first')).toBe(ROW_HEIGHT);
+    expect(heightOf('third')).toBe(ROW_HEIGHT);
+  });
+
+  /**
+   * A zero-height row whose cells are also zero-height still *paints*
+   * them: nothing in the engine clips a node to its box unless it is
+   * asked to, so the text of a hidden row went on drawing over its
+   * neighbours. Found by hiding a row in a browser — the spec above
+   * passed throughout, because it asked what the cell's height was
+   * and zero is exactly what it got.
+   */
+  it('clips what it is hiding, so nothing paints over the row below', async () => {
+    h = await mount(d => d.setCell(1, 0, 'hidden'));
+    const rowOf = (text: string) => h.ui.getByRole('cell', { name: text }).parent;
+    expect(rowOf('hidden')?.properties.get('overflow')).toBeUndefined();
+
+    h.service.hideRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(rowOf('hidden')?.properties.get('overflow')).toBe('hidden');
+  });
+
+  /** Only the hidden rows: clipping every row would cut the fill handle off. */
+  it('does not clip the rows it is not hiding', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'kept');
+      d.setCell(1, 0, 'hidden');
+    });
+    h.service.hideRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.getByRole('cell', { name: 'kept' }).parent?.properties.get('overflow')).toBeUndefined();
+  });
+
+  it('comes back when it is shown again', async () => {
+    h = await mount(d => d.setCell(1, 0, 'hidden'));
+    h.service.hideRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(heightOf('hidden')).toBe(0);
+
+    h.service.showRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(heightOf('hidden')).toBe(ROW_HEIGHT);
+  });
+
+  /** The only way to select a row you cannot see is the ones beside it. */
+  it('is shown again by selecting the rows either side of it', async () => {
+    h = await mount(d => d.setCell(1, 0, 'hidden'));
+    h.service.hideRows(1, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    h.service.showRows(0, 2);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(heightOf('hidden')).toBe(ROW_HEIGHT);
+  });
+
+  /**
+   * A hidden row is hidden by index, so an insert above it must not
+   * reveal it and hide its neighbour instead.
+   */
+  it('moves with its row when one is inserted above it', async () => {
+    h = await mount(d => {
+      d.setCell(1, 0, 'hidden');
+      d.setCell(2, 0, 'visible');
+    });
+    h.service.hideRows(1, 1);
+    h.service.insertRows(0, 1);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(heightOf('hidden')).toBe(0);
+    expect(heightOf('visible')).toBe(ROW_HEIGHT);
+  });
+});

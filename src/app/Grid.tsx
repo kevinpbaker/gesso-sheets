@@ -251,6 +251,43 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const widths = internalState<number[]>(Array.from({ length: COLUMN_COUNT }, () => COLUMN_WIDTH));
 
   /**
+   * The rows somebody has hidden, as heights the window understands.
+   *
+   * Sparse, because a sheet is ten thousand rows tall and all but a
+   * handful are the default — which is the shape
+   * `UiVirtualSheetOptions.rowHeights` takes, and the reason it is a
+   * map rather than the array `columnWidth` is.
+   */
+  const hidden = internalState<ReadonlySet<number>>(new Set<number>());
+  const heightsOf = (rows: ReadonlySet<number>): Map<number, number> =>
+    new Map([...rows].map(row => [row, 0] as const));
+
+  /**
+   * One height per row that anyone is looking at.
+   *
+   * The same argument as `columnWidths`, at a smaller scale: a row
+   * that is hidden changes the cells in that row and nothing else, so
+   * a subject per row is a list a cell can be taken off in a glance.
+   */
+  const rowHeights = new Map<number, BehaviorSubject<number>>();
+  const heightOf = (row: number): Observable<number> => {
+    let height = rowHeights.get(row);
+    if (height === undefined) {
+      height = new BehaviorSubject(hidden.value.has(row) ? 0 : ROW_HEIGHT);
+      rowHeights.set(row, height);
+    }
+    return height;
+  };
+  ctx.effect(hidden, rows => {
+    for (const [row, height] of rowHeights) {
+      const next = rows.has(row) ? 0 : ROW_HEIGHT;
+      if (next !== height.value) {
+        height.next(next);
+      }
+    }
+  });
+
+  /**
    * One width per column, rather than one array every cell reads.
    *
    * The same argument as the window and the selection, at a smaller
@@ -365,7 +402,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
       borderWidth: state.pipe(map(where => (where === 2 ? 2 : 1))),
       width: widthOf(column),
-      height: ROW_HEIGHT,
+      height: heightOf(row),
       flexShrink: 0,
       paddingLeft: 6,
       paddingRight: 6,
@@ -532,7 +569,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       },
       value: edit.draft.pipe(map(text => text ?? '')),
       width: widthOf(column),
-      height: ROW_HEIGHT,
+      height: heightOf(row),
       flexShrink: 0,
       paddingLeft: 6,
       paddingRight: 6,
@@ -561,7 +598,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       key: 'gutter',
       text: String(row + 1),
       width: GUTTER_WIDTH,
-      height: ROW_HEIGHT,
+      height: heightOf(row),
       flexShrink: 0,
       // Held at the left edge while the sheet scrolls sideways. Its
       // vertical travel is its row's, which it gets for free by being
@@ -714,7 +751,31 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (corner && cornerAt !== null) {
       line.push(fillHandle(cornerAt.column));
     }
-    return Row({ role: 'row', posInSet: row + 1, position: corner ? 'relative' : undefined }, ...line);
+    /**
+     * The row clips its own cells, which is what makes a hidden row
+     * disappear rather than merely collapse.
+     *
+     * A hidden row is one of height zero, and a zero-height row whose
+     * cells are also zero-height still *paints* them — nothing in the
+     * engine clips a node to its box unless it is asked to, so the
+     * text of the hidden row went on drawing over its neighbours.
+     * Found by hiding a row in a browser; every spec passed, because
+     * they asked what the cell's height property was and a height of
+     * zero was exactly what they got.
+     *
+     * Only the hidden rows are clipped. Clipping every row would cut
+     * off the fill handle, which deliberately hangs outside the
+     * corner cell.
+     */
+    return Row(
+      {
+        role: 'row',
+        posInSet: row + 1,
+        position: corner ? 'relative' : undefined,
+        overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
+      },
+      ...line
+    );
   };
 
   const renderHeader = (firstColumn: number, lastColumn: number): UiElement => {
@@ -857,6 +918,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       rowCount: sheet.view.geometry.pipe(map(g => g.rowCount)),
       columnCount: sheet.view.geometry.pipe(map(g => g.columnCount)),
       rowHeight: ROW_HEIGHT,
+      rowHeights: heightsOf(hidden.value),
       columnWidth: widths.value,
       gutterWidth: GUTTER_WIDTH,
       headerHeight: HEADER_HEIGHT,
@@ -930,6 +992,30 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   // it: everything past the column that moved sits somewhere else, and
   // the prefix sum is what says where.
   ctx.effect(widths, all => sheetWindow.setColumnWidths(all));
+
+  // And the same for the rows, which the window needs before it can
+  // place anything below a hidden one.
+  ctx.effect(hidden, rows => sheetWindow.setRowHeights(heightsOf(rows)));
+
+  /**
+   * The geometry the application worker publishes, adopted.
+   *
+   * The widths *lead* on this side while a drag is happening — that
+   * is Phase 3's decision and it is why a resize costs no round trip
+   * — but they are the document's once they are written down, and a
+   * sheet reopened had been showing default widths while the worker
+   * held the saved ones. Skipped mid-drag, or the echo of what is
+   * being dragged would fight the drag.
+   */
+  ctx.effect(sheet.view.geometry, geometry => {
+    if (resizing === null && !sameWidths(geometry.columnWidths, widths.value)) {
+      widths.value = [...geometry.columnWidths];
+    }
+    const rows = geometry.hiddenRows;
+    if (rows.length !== hidden.value.size || rows.some(row => !hidden.value.has(row))) {
+      hidden.value = new Set(rows);
+    }
+  });
 
   // A copy asked for on this thread is answered on the other and comes
   // back as a patch, because a command has no return value — and the
@@ -1113,3 +1199,7 @@ export type { SheetWindow };
 
 /** Shared, because the overwhelming majority of cells have no border. */
 const NO_SHAPES: DecorationShape[] = [];
+
+function sameWidths(a: readonly number[], b: readonly number[]): boolean {
+  return a.length === b.length && a.every((width, index) => width === b[index]);
+}
