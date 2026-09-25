@@ -1555,3 +1555,102 @@ describe('where the caret is while a cell is open', () => {
     expect(caret()).toBe('=SUM(A1)'.length);
   });
 });
+
+/**
+ * An error's explanation, under the cell showing it.
+ *
+ * Under the cell rather than in a panel: an error code is a diagnosis
+ * in five characters, and the sentence that makes it actionable
+ * belongs beside the five characters rather than somewhere else on
+ * the screen.
+ */
+describe('explaining an error under the cell', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const withRole = (role: string) => h.ui.allNodes().filter(node => node.properties.get('role') === role);
+  const explanation = () =>
+    withRole('status')
+      .map(node => String(node.properties.get('label') ?? ''))
+      .filter(label => label.endsWith('explained'));
+  const sentence = () =>
+    h.ui
+      .allNodes()
+      .map(node => String(node.properties.get('text') ?? ''))
+      .find(text => text.includes('—'));
+
+  async function selecting(row: number, column: number): Promise<void> {
+    h.service.setSelection(row, column, row, column);
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  it('says nothing about a cell that is fine', async () => {
+    h = await mount(document => document.setCell(1, 1, '5'));
+    await selecting(1, 1);
+    expect(explanation()).toEqual([]);
+  });
+
+  it('explains the code under the cell', async () => {
+    h = await mount(document => document.setCell(1, 1, '=1/0'));
+    await selecting(1, 1);
+    expect(explanation()).toEqual(['#DIV/0! explained']);
+    expect(sentence()).toContain('divided by zero');
+  });
+
+  /** The useful half: where it came from. */
+  it('names the cell that made it', async () => {
+    h = await mount(document => {
+      document.setCell(0, 0, '=1/0');
+      document.setCell(4, 4, '=A1+1');
+    });
+    await selecting(4, 4);
+    expect(sentence()).toContain('Made in A1.');
+  });
+
+  it('says nothing about where when the cell broke itself', async () => {
+    h = await mount(document => document.setCell(1, 1, '=1/0'));
+    await selecting(1, 1);
+    expect(sentence()).not.toContain('Made in');
+  });
+
+  it('follows the selection off the broken cell', async () => {
+    h = await mount(document => document.setCell(1, 1, '=1/0'));
+    await selecting(1, 1);
+    expect(explanation()).toHaveLength(1);
+
+    await selecting(3, 3);
+    expect(explanation()).toEqual([]);
+  });
+
+  /**
+   * A cell being typed into is a cell somebody is already fixing, and
+   * an explanation under the caret covers the sheet they are reading
+   * to decide what to type.
+   */
+  it('gets out of the way while the cell is being edited', async () => {
+    h = await mount(document => document.setCell(1, 1, '=1/0'));
+    await selecting(1, 1);
+    expect(explanation()).toHaveLength(1);
+
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(explanation()).toEqual([]);
+  });
+});

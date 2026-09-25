@@ -135,6 +135,26 @@ export interface SheetEditor {
   readonly row: number;
   readonly column: number;
   readonly input: string;
+  /**
+   * Why this cell is showing an error, when it is.
+   *
+   * Travels with the editor rather than as a key of its own because
+   * it changes exactly when the active cell does, and a key that
+   * changes with another key is a second publish for one event.
+   *
+   * Computed on the application worker, because finding the cell that
+   * *made* the error is a walk back through the dependency graph and
+   * the graph is not on the wire. The render worker gets a sentence
+   * and an address, which is all it draws.
+   */
+  readonly explain: SheetExplain | null;
+}
+
+export interface SheetExplain {
+  readonly code: string;
+  readonly meaning: string;
+  /** The cell that produced it, already written as `B7`, or null. */
+  readonly blame: string | null;
 }
 
 /**
@@ -571,7 +591,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
-  editor: { row: 0, column: 0, input: '' },
+  editor: { row: 0, column: 0, input: '', explain: null },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
   stats: NO_STATS,

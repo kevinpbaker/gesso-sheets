@@ -1,5 +1,6 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
+import { addressOf, explainCell } from '../sheet/Explain';
 import { aggregateOf } from './Aggregate';
 import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
@@ -9,6 +10,7 @@ import {
   PLAIN_PAINT,
   type SheetClipboard,
   type SheetEditor,
+  type SheetExplain,
   type SheetFindView,
   type SheetGeometry,
   type SheetSelection,
@@ -184,7 +186,8 @@ export class SheetService {
     this.editorSubject = new BehaviorSubject<SheetEditor>({
       row: document.selection.row,
       column: document.selection.column,
-      input: document.activeInput
+      input: document.activeInput,
+      explain: null
     });
     this.statusSubject = new BehaviorSubject<SheetStatus>(this.statusNow());
 
@@ -1225,7 +1228,32 @@ export class SheetService {
 
   private publishEditor(): void {
     const { row, column } = this.document.selection;
-    this.editorSubject.next({ row, column, input: this.document.activeInput });
+    this.editorSubject.next({
+      row,
+      column,
+      input: this.document.activeInput,
+      explain: this.explainAt(row, column)
+    });
+  }
+
+  /**
+   * Why the active cell is broken, as a sentence and an address.
+   *
+   * Only for the one cell the selection is on: the walk is cheap for
+   * one cell and would not be for a window of them, and the question
+   * "why is *this* showing an error" is one somebody asks about the
+   * cell they are pointing at.
+   */
+  private explainAt(row: number, column: number): SheetExplain | null {
+    const found = explainCell(this.document.sheet, row, column);
+    if (found === null) {
+      return null;
+    }
+    return {
+      code: found.code,
+      meaning: found.meaning,
+      blame: found.blame === null ? null : addressOf(found.blame.row, found.blame.column)
+    };
   }
 
   private publishStatus(): void {

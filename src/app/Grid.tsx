@@ -51,7 +51,15 @@ import {
   ROW_HEIGHT
 } from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
-import { cellIn, PLAIN_PAINT, Sheet, type SheetMerge, type SheetSelection, type SheetWindow } from './SheetContract';
+import {
+  cellIn,
+  PLAIN_PAINT,
+  Sheet,
+  type SheetExplain,
+  type SheetMerge,
+  type SheetSelection,
+  type SheetWindow
+} from './SheetContract';
 import { colouredReferences, formulaSpans } from './FormulaColours';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { commandFor } from './SheetCommands';
@@ -785,6 +793,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * about it.
    */
   const hint = internalState<FormulaHint>(null);
+  /**
+   * Why the selected cell is showing an error, when it is.
+   *
+   * Worked out on the application worker — finding the cell that
+   * *made* an error is a walk back through the dependency graph, and
+   * the graph is not on the wire — so this holds a sentence and an
+   * address and draws them.
+   */
+  const explain = internalState<SheetExplain | null>(null);
   /** Which name in the list is picked out, an index into `names`. */
   const chosen = internalState(0);
 
@@ -827,6 +844,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       sheetWindow.invalidate();
     }
   };
+
+  ctx.effect(sheet.view.editor, view => {
+    const before = explain.value;
+    explain.value = view.explain;
+    // The popup is a child of a row, so a change has to rebuild one.
+    if ((before === null) !== (view.explain === null) || before?.code !== view.explain?.code) {
+      sheetWindow.invalidate();
+    }
+  });
 
   ctx.effect(edit.draft, draft => {
     if (draft !== pickedText) {
@@ -1364,6 +1390,52 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * typing through a list of suggestions feel like typing rather than
    * like operating a menu.
    */
+  /**
+   * The error's explanation, under the cell that is showing it.
+   *
+   * Under the cell rather than in a panel, because a panel is
+   * somewhere else and the question is about *this* cell: an error
+   * code is a diagnosis in five characters and the sentence that
+   * makes it actionable belongs beside the five characters.
+   *
+   * Only for the selected cell, and only while it is not being
+   * edited — a cell somebody is typing into is a cell they are
+   * already fixing, and an explanation under the caret would cover
+   * the sheet they are reading to decide what to type.
+   */
+  const explainPopup = (column: number): UiElement => {
+    const current = explain.value;
+    const blamed = current?.blame == null ? '' : ` Made in ${current.blame}.`;
+    return Box(
+      {
+        key: 'explain',
+        position: 'absolute',
+        left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
+        top: ROW_HEIGHT,
+        zIndex: 4,
+        maxWidth: 320,
+        backgroundColor: 'surface',
+        borderColor: 'danger',
+        borderWidth: 1,
+        paddingLeft: 6,
+        paddingRight: 6,
+        paddingTop: 3,
+        paddingBottom: 3,
+        pointerEvents: 'none',
+        role: 'status',
+        label: `${current?.code ?? ''} explained`
+      },
+      Text({
+        key: 'why',
+        text: `${current?.code ?? ''} — ${current?.meaning ?? ''}${blamed}`,
+        fontSize: 11,
+        color: 'text',
+        textWrap: 'word',
+        maxLines: 3
+      })
+    );
+  };
+
   const hintPopup = (column: number): UiElement => {
     const current = hint.value;
     const caret = editing.caretRectOf(editorNode);
@@ -1461,6 +1533,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (hinting && openAt !== null) {
       line.push(hintPopup(openAt.column));
     }
+    // And the error's explanation, which belongs to the selected cell
+    // rather than to an open one: a cell being typed into is a cell
+    // somebody is already fixing.
+    const explaining =
+      openAt === null && explain.value !== null && latestSelection !== null && latestSelection.row === row;
+    if (explaining && latestSelection !== null) {
+      line.push(explainPopup(latestSelection.column));
+    }
     /**
      * The row clips its own cells, which is what makes a hidden row
      * disappear rather than merely collapse.
@@ -1503,9 +1583,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // formula being typed names something on this row, and an
         // empty array the rest of the time.
         modifiers: outlineFor(row).modifiers,
-        position: stuck ? 'sticky' : corner || spans || hinting ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner || spans || hinting || explaining ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
-        zIndex: stuck || spans || hinting ? 1 : undefined,
+        zIndex: stuck || spans || hinting || explaining ? 1 : undefined,
         backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
       },
