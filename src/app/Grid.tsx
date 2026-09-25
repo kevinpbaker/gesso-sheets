@@ -32,7 +32,8 @@ import {
   type Inputs
 } from 'gesso-framework';
 
-import { columnName } from '../sheet/A1';
+import { columnName, relativeRef } from '../sheet/A1';
+import type { Span } from '../sheet/Tokenizer';
 
 import {
   CELL_FONT_SIZE,
@@ -49,6 +50,7 @@ import {
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import { cellIn, PLAIN_PAINT, Sheet, type SheetMerge, type SheetSelection, type SheetWindow } from './SheetContract';
 import { colouredReferences, formulaSpans } from './FormulaColours';
+import { pick, repick } from './FormulaEditing';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
@@ -733,6 +735,78 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     return merge === null ? { row, column } : { row: merge.firstRow, column: merge.firstColumn };
   };
 
+  /**
+   * Where a reference being picked was written, so a drag can rewrite
+   * it in place rather than adding a corner per pointer move.
+   */
+  let picking: Span | null = null;
+  /**
+   * The text the last pick wrote, so typing can cancel the pick.
+   *
+   * Clicking a second cell straight after picking one *replaces* it —
+   * you are still choosing which cell you meant. But typing anything
+   * in between ends that: `=A1` then `+` then a click on B2 has to
+   * give `=A1+B2`, and without this it gives `=B2+`, which is the
+   * first reference silently eaten.
+   */
+  let pickedText: string | null = null;
+  /** The corner a range is being dragged from, while one is. */
+  let pickingFrom: { row: number; column: number } | null = null;
+
+  ctx.effect(edit.draft, draft => {
+    if (draft !== pickedText) {
+      picking = null;
+      pickedText = null;
+    }
+  });
+
+  /**
+   * A click while a formula is open, when it means "this cell".
+   *
+   * **This is the mode the roadmap called the hard part**, and the
+   * decision is not made here: `pickDecision` is a function of the
+   * text and the caret with a table of cases beside it, and this asks
+   * it and does what it says. A pointer handler that decided for
+   * itself is how a click during an edit ends up throwing the formula
+   * away — or how the selection freezes because every click is read
+   * as picking.
+   *
+   * Returns whether the click was a pick. False means it was a click.
+   */
+  const pickByPointer = (row: number, column: number, to?: { row: number; column: number }): boolean => {
+    if (!edit.openNow() || editorNode === null) {
+      return false;
+    }
+    const draft = edit.draftNow();
+    if (draft === null) {
+      return false;
+    }
+    const model = editorFor(editorNode);
+    const range = {
+      start: relativeRef(row, column),
+      end: relativeRef(to?.row ?? row, to?.column ?? column)
+    };
+    // A drag rewrites the address it already wrote; the first press
+    // asks the caret where it is.
+    const picked = picking === null ? pick(draft, model.focus, range) : repick(draft, picking, range);
+    if (picked === null) {
+      return false;
+    }
+    picking = picked.span;
+    // Before the write, because the write feeds the effect above
+    // synchronously and it has to recognise its own text.
+    pickedText = picked.text;
+    edit.write(picked.text);
+    // The model is the text's owner while the cell is open, so the
+    // caret has to be put back by hand: `write` changes the draft and
+    // the field follows it, and neither of them knows where somebody
+    // was typing.
+    model.replaceText(picked.text);
+    model.select(picked.caret);
+    focus.focus(editorNode);
+    return true;
+  };
+
   const selectByPointer = (row: number, column: number, extend = false): void => {
     // A click ends any sweep, whatever the gesture recogniser thinks.
     //
@@ -743,6 +817,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     // later and more definite statement of what the person wants, so
     // it wins.
     sweeping = false;
+    // A click that is picking a reference into a formula is not a
+    // click on a cell, and must not commit what is open.
+    if (!extend && pickByPointer(row, column)) {
+      return;
+    }
     // A click elsewhere commits what is open, as it does everywhere.
     if (edit.openNow()) {
       edit.commit(0, 0);
@@ -1323,6 +1402,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         if (at === null) {
           return;
         }
+        // A drag that starts where a reference may go is dragging a
+        // range *into the formula*, not sweeping a selection. The
+        // corner is remembered so every move can rewrite the address
+        // rather than add another one.
+        if (pickByPointer(at.row, at.column)) {
+          pickingFrom = at;
+          return;
+        }
         sweeping = true;
         if (edit.openNow()) {
           edit.commit(0, 0);
@@ -1333,6 +1420,16 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         }
       },
       onPanMove: (event: UiPointerEvent) => {
+        if (pickingFrom !== null) {
+          if (event.buttons === 0) {
+            return;
+          }
+          const at = cellUnder(event);
+          if (at !== null) {
+            pickByPointer(pickingFrom.row, pickingFrom.column, at);
+          }
+          return;
+        }
         // The button has to still be down. A recogniser that reported
         // a move after the release would otherwise go on stretching
         // the selection under a pointer that is merely passing over.
@@ -1346,6 +1443,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       },
       onPanEnd: () => {
         sweeping = false;
+        pickingFrom = null;
       },
       // Text from the clipboard with no caret anywhere. Before the
       // engine offered this the paste was dropped: `paste` had nothing

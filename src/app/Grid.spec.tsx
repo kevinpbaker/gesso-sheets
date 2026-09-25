@@ -980,3 +980,155 @@ describe('outlining the cells a formula names', () => {
     expect(h.ui.getAllByRole('row').flatMap(row => decorationsOf(row))).toHaveLength(0);
   });
 });
+
+/**
+ * Clicking a cell into a formula that is open.
+ *
+ * `FormulaEditing.spec.ts` is the table of (caret context, click) →
+ * result; this is the other half of that claim — that the grid asks
+ * it, and does what it says, rather than deciding for itself.
+ *
+ * The mode is the risk: the same click either moves the selection or
+ * types into somebody's formula. Both directions are asserted here,
+ * because getting either wrong is how a spreadsheet eats a formula
+ * somebody was halfway through.
+ */
+describe('picking a reference by clicking', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount(document => {
+      document.setCell(1, 1, '5');
+      document.setCell(2, 2, '7');
+    });
+  });
+
+  /** Opens the cell at `row`/`column` and types `text` into it. */
+  async function typing(row: number, column: number, text: string): Promise<void> {
+    h.service.setSelection(row, column, row, column);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  /**
+   * Where a cell sits on screen, for clicking it.
+   *
+   * The row's y comes from the row's own box rather than from
+   * `grid.y + HEADER_HEIGHT + row * ROW_HEIGHT`, which assumes the
+   * grid has not scrolled. It had: the toolbar grew a row of icons,
+   * the viewport lost a row with it, and selecting the cell being
+   * edited scrolled the sheet by one. Every coordinate then named the
+   * cell below the one it meant, which looked exactly like broken
+   * picking and was arithmetic in the spec.
+   */
+  function at(row: number, column: number): { x: number; y: number } {
+    const rowNode = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
+    if (rowNode === undefined) {
+      throw new Error(`row ${row} is not on screen`);
+    }
+    const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
+    return {
+      x: grid.x + GUTTER_WIDTH + column * COLUMN_WIDTH + 4,
+      y: h.ui.getVisibleBox(rowNode).y + 4
+    };
+  }
+
+  async function clickCell(row: number, column: number): Promise<void> {
+    const point = at(row, column);
+    h.ui.fireEvent.pointerDown(point.x, point.y, { buttons: 1 });
+    h.ui.fireEvent.pointerUp(point.x, point.y);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  const draft = () => h.document.sheet.input(8, 0);
+  const editorText = () => h.ui.queryByRole('textbox', { name: 'Cell' })?.properties.get('value');
+
+  it('writes the address where a formula wants a value', async () => {
+    await typing(8, 0, '=');
+    await clickCell(1, 1);
+    expect(editorText()).toBe('=B2');
+  });
+
+  it('adds to what is already there rather than replacing it', async () => {
+    await typing(8, 0, '=');
+    await clickCell(1, 1);
+    h.ui.fireEvent.type('+');
+    await h.ui.settle();
+    await clickCell(2, 2);
+    expect(editorText()).toBe('=B2+C3');
+  });
+
+  /** Still choosing: a second click with nothing typed between. */
+  it('replaces the reference when the next click is a change of mind', async () => {
+    await typing(8, 0, '=');
+    await clickCell(1, 1);
+    await clickCell(2, 2);
+    expect(editorText()).toBe('=C3');
+  });
+
+  it('leaves the formula alone when a click is only a click', async () => {
+    await typing(8, 0, '=1');
+    await clickCell(1, 1);
+    // The edit was committed and the selection moved, as it always does.
+    expect(h.ui.queryByRole('textbox', { name: 'Cell' })).toBeNull();
+    expect(draft()).toBe('=1');
+  });
+
+  it('commits and moves when nothing is open at all', async () => {
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    await clickCell(3, 3);
+    expect(h.document.selection.row).toBe(3);
+    expect(h.document.selection.column).toBe(3);
+  });
+
+  it('drags a range in, rewriting it as the pointer moves', async () => {
+    await typing(8, 0, '=SUM(');
+    const from = at(1, 1);
+    const to = at(3, 2);
+    h.ui.fireEvent.pointerDown(from.x, from.y, { buttons: 1 });
+    h.ui.fireEvent.pointerMove(from.x + 8, from.y + 8, { buttons: 1 });
+    await h.ui.settle();
+    h.ui.fireEvent.pointerMove(to.x, to.y, { buttons: 1 });
+    await h.ui.settle();
+    h.ui.fireEvent.pointerUp(to.x, to.y);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(editorText()).toBe('=SUM(B2:C4');
+  });
+
+  /** The colours follow, because they are the same list. */
+  it('outlines what it picked', async () => {
+    await typing(8, 0, '=');
+    await clickCell(1, 1);
+    const row = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === 2);
+    expect((row?.decorations ?? []).length).toBe(4);
+  });
+});
