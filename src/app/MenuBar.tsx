@@ -1,6 +1,6 @@
-import { BehaviorSubject, map, type Observable } from 'rxjs';
+import { BehaviorSubject, combineLatest, map, type Observable } from 'rxjs';
 
-import { Column, type UiKeyboardEvent, type UiNode } from 'gesso-core';
+import { clickOutside, Column, type UiKeyboardEvent, type UiNode } from 'gesso-core';
 import { useOverlay } from 'gesso-components';
 import { type ComponentContext, type Inputs } from 'gesso-framework';
 
@@ -48,6 +48,16 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, ctx: ComponentContext) {
   const state = new BehaviorSubject<MenuBarState>(CLOSED);
   /** The node each menu's title is drawn as, so the panel can sit under it. */
   const titles: (UiNode | null)[] = menus.map(() => null);
+  /**
+   * The title the pointer is over, or -1.
+   *
+   * Separate from the state above because hovering a title while
+   * nothing is open is not the same as opening it: the title lights
+   * up, and that is all. Once a menu *is* open, hovering a different
+   * title switches to it, which is what every menu bar does and what
+   * makes dragging along the bar work.
+   */
+  const hoveredTitle = new BehaviorSubject(-1);
   /**
    * True while `show` is taking a panel down in order to put another
    * one up.
@@ -99,7 +109,19 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, ctx: ComponentContext) {
       environment: anchor,
       placement: 'bottom-start',
       offset: 2,
-      dismissOnOutsidePress: true,
+      /**
+       * No backdrop, and `clickOutside` instead.
+       *
+       * `dismissOnOutsidePress` inserts a full-screen box over
+       * everything to catch the press — and a box over everything is
+       * a box over the menu bar, so the titles stopped receiving
+       * `pointerEnter` and moving along the bar with the pointer did
+       * nothing. `clickOutside` hears the press at the root and lets
+       * it through, which is what its own documentation says a menu
+       * wants. The titles are `except`ed, or pressing the open menu's
+       * title would close it and reopen it in one press.
+       */
+      dismissOnOutsidePress: false,
       onClose: () => {
         if (!swapping && state.value.open) {
           state.next({ ...state.value, open: false, active: -1 });
@@ -144,7 +166,13 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, ctx: ComponentContext) {
         borderWidth: 1,
         borderRadius: 8,
         role: 'menu',
-        label: menus[index].label
+        label: menus[index].label,
+        modifiers: [
+          clickOutside({
+            onOutside: () => show({ ...state.value, open: false, active: -1 }),
+            except: () => titles
+          })
+        ]
       },
       ...menus[index].entries.map((entry, at) => item(entry, at, index))
     );
@@ -182,6 +210,20 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, ctx: ComponentContext) {
         role="menuitem"
         label={command.label}
         disabled={!on}
+        /**
+         * Hovering moves the *same* highlight the arrows move.
+         *
+         * One highlight and not two: a menu with a keyboard highlight
+         * on Undo and a hover highlight on Paste is a menu that
+         * cannot say what Enter will do. A disabled item is skipped,
+         * on the rule `seek` already follows — the highlight only
+         * ever rests where Enter would work.
+         */
+        onPointerEnter={() => {
+          if (on && state.value.active !== at) {
+            state.next({ ...state.value, active: at });
+          }
+        }}
         onClick={() => choose(entry)}>
         <text
           text={command.label}
@@ -227,9 +269,27 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, ctx: ComponentContext) {
           paddingBottom={4}
           borderRadius={5}
           cursor="pointer"
-          backgroundColor={state.pipe(
-            map(current => (current.open && current.focused === index ? 'controlBackgroundHovered' : 'transparent'))
+          backgroundColor={combineLatest([state, hoveredTitle]).pipe(
+            map(([current, hovered]) =>
+              (current.open && current.focused === index) || hovered === index
+                ? 'controlBackgroundHovered'
+                : 'transparent'
+            )
           )}
+          onPointerEnter={() => {
+            hoveredTitle.next(index);
+            // With a menu already open, moving along the bar opens the
+            // one under the pointer. Without that, a bar is something
+            // you have to click four times to read.
+            if (state.value.open && state.value.focused !== index) {
+              show({ focused: index, open: true, active: -1 });
+            }
+          }}
+          onPointerLeave={() => {
+            if (hoveredTitle.value === index) {
+              hoveredTitle.next(-1);
+            }
+          }}
           onClick={() => {
             const current = state.value;
             // Clicking the menu that is already open closes it, which

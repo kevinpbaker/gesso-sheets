@@ -632,3 +632,118 @@ describe('the toolbar', () => {
     expect(h.document.formatAt(0, 0).paint.bold).toBe(true);
   });
 });
+
+/**
+ * Hovering a menu, which is the half of a menu bar the keyboard
+ * specs above cannot reach.
+ *
+ * Driven through `pointerMove`, which goes through the hit tester, so
+ * these are the enter and leave events a real pointer produces rather
+ * than handlers called by hand.
+ */
+describe('the menu under the pointer', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount();
+    // F10 is answered by the grid, so the keyboard has to be there
+    // first — the same arrival a person makes.
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid && stops++ < 10) {
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+  });
+
+  /** The middle of a node, in the coordinates the hit tester uses. */
+  function middleOf(node: Parameters<Rendered['getLayout']>[0]): [number, number] {
+    const box = h.ui.getLayout(node);
+    return [box.x + box.width / 2, box.y + box.height / 2];
+  }
+
+  async function moveTo(node: Parameters<Rendered['getLayout']>[0]): Promise<void> {
+    const [x, y] = middleOf(node);
+    h.ui.fireEvent.pointerMove(x, y);
+    await h.ui.settle();
+  }
+
+  async function openEdit(): Promise<void> {
+    h.ui.fireEvent.press('F10');
+    await h.ui.settle();
+    h.ui.fireEvent.press('ArrowDown');
+    await h.ui.settle();
+  }
+
+  const background = (name: string): unknown =>
+    h.ui.getByRole('menuitem', { name }).properties.get('backgroundColor');
+
+  it('lights up the item the pointer is over', async () => {
+    await openEdit();
+    // Cut, not Undo: the sheet is empty, so Undo cannot be run and
+    // the menu opens past it. The highlight only rests where Enter
+    // would work, whether it got there by key or by pointer.
+    expect(background('Cut')).toBe('controlBackgroundHovered');
+    expect(background('Select all')).toBe('transparent');
+
+    await moveTo(h.ui.getByRole('menuitem', { name: 'Select all' }));
+
+    expect(background('Select all')).toBe('controlBackgroundHovered');
+    expect(background('Cut')).toBe('transparent');
+  });
+
+  /**
+   * One highlight, not two. A menu with a keyboard highlight on Undo
+   * and a hover highlight on Paste cannot say what Enter will do.
+   */
+  it('hands the keyboard highlight to the pointer, so Enter follows it', async () => {
+    await openEdit();
+    await moveTo(h.ui.getByRole('menuitem', { name: 'Select all' }));
+
+    h.ui.fireEvent.press('Enter');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    // Select all ran, which is what the pointer was resting on.
+    expect(h.document.selection.anchorRow).toBeGreaterThan(0);
+  });
+
+  /** The highlight only ever rests where Enter would work. */
+  it('does not light up a command that cannot be run', async () => {
+    await openEdit();
+    await moveTo(h.ui.getByRole('menuitem', { name: 'Redo' }));
+    expect(background('Redo')).toBe('transparent');
+  });
+
+  /**
+   * Moving along the bar with a menu open opens the one under the
+   * pointer. Without it a bar is something you have to click four
+   * times to read.
+   *
+   * This is the behaviour that cost the overlay its backdrop:
+   * `dismissOnOutsidePress` puts a full-screen box over everything to
+   * catch the press, and a box over everything is a box over the menu
+   * bar — so the titles never saw the pointer at all.
+   */
+  it('opens the menu the pointer moves onto', async () => {
+    await openEdit();
+    expect(h.ui.getByRole('menu', { name: 'Edit' })).toBeDefined();
+
+    await moveTo(h.ui.getByText('Format'));
+
+    expect(h.ui.queryByRole('menu', { name: 'Edit' })).toBeNull();
+    expect(h.ui.getByRole('menu', { name: 'Format' })).toBeDefined();
+  });
+
+  /** Hovering a title with nothing open lights it and opens nothing. */
+  it('lights a title without opening it', async () => {
+    await moveTo(h.ui.getByText('Data'));
+    expect(h.ui.queryByRole('menu', { name: 'Data' })).toBeNull();
+  });
+});

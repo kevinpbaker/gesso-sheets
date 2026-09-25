@@ -96,13 +96,20 @@ export function Toolbar(inputs: Inputs<ToolbarProps>, _ctx: ComponentContext) {
 function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>) {
   const pressed = item.pressed ?? of(false);
   const enabled = item.enabled ?? of(true);
+  const hovered = new BehaviorSubject(false);
   /**
-   * The roving highlight is drawn as a ring rather than as focus,
-   * because focus is on the toolbar itself. Without something
-   * visible, the arrows would move a selection nobody can see.
+   * Three reasons a button is lit, and one colour for all of them.
+   *
+   * It is already on, the roving highlight is resting on it, or the
+   * pointer is over it. The roving highlight has to be *visible*
+   * rather than shown as focus, because focus is on the toolbar
+   * itself — without it the arrows would move a selection nobody can
+   * see.
    */
-  const carried = combineLatest([pressed, at]).pipe(
-    map(([is, current]) => (is ? 'controlBackgroundHovered' : current === index ? 'controlBackgroundHovered' : 'controlBackground'))
+  const carried = combineLatest([pressed, at, hovered]).pipe(
+    map(([is, current, over]) =>
+      is || current === index || over ? 'controlBackgroundHovered' : 'controlBackground'
+    )
   );
   return (
     <button
@@ -115,6 +122,8 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>) {
        * a button is focusable by type unless it says otherwise.
        */
       focusable={false}
+      onPointerEnter={() => hovered.next(true)}
+      onPointerLeave={() => hovered.next(false)}
       onClick={() => {
         at.next(index);
         item.onRun();
