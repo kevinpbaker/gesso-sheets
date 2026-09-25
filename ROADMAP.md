@@ -15,8 +15,8 @@ themselves rather than take a benchmark's word for it.
 **Status:** Part One is done — eight phases, eight exit criteria met —
 and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
-in, is two and a half phases into nine: the top bar and the format
-axis are done, and Phase 10 has landed insert, delete, borders, sort, hidden
+in, is three phases into nine: the top bar, the format axis and the
+structural edits are done — insert, delete, borders, sort, hidden
 rows and columns, frozen panes, merged cells, autofit and filtering.
 `pnpm test` is 625 specs and `pnpm proof` is six budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
