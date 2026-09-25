@@ -11,17 +11,38 @@ import type { ErrorCode } from './Values';
  * here would need the lexer to look ahead past whitespace, which is
  * the parser's job and where it already happens.
  */
-export type Token =
-  | { readonly kind: 'number'; readonly value: number }
-  | { readonly kind: 'text'; readonly value: string }
-  | { readonly kind: 'word'; readonly value: string }
-  | { readonly kind: 'error'; readonly code: ErrorCode }
-  | { readonly kind: 'operator'; readonly value: string }
-  | { readonly kind: 'open' }
-  | { readonly kind: 'close' }
-  | { readonly kind: 'comma' }
-  | { readonly kind: 'colon' }
-  | { readonly kind: 'end' };
+/**
+ * Where a token sat in the text it came from.
+ *
+ * Carried on every token because Phase 12 is built out of the
+ * question "what is under the caret" — which reference to colour,
+ * which argument of which call the caret is inside, which bracket
+ * matches the one beside it. None of that can be answered from a
+ * token list that has forgotten where the tokens were, and
+ * re-deriving the positions by re-scanning the text is a second
+ * scanner to disagree with this one.
+ *
+ * `start` is the first character, `end` is one past the last, so
+ * `source.slice(start, end)` is the token.
+ */
+export interface Span {
+  readonly start: number;
+  readonly end: number;
+}
+
+export type Token = Span &
+  (
+    | { readonly kind: 'number'; readonly value: number }
+    | { readonly kind: 'text'; readonly value: string }
+    | { readonly kind: 'word'; readonly value: string }
+    | { readonly kind: 'error'; readonly code: ErrorCode }
+    | { readonly kind: 'operator'; readonly value: string }
+    | { readonly kind: 'open' }
+    | { readonly kind: 'close' }
+    | { readonly kind: 'comma' }
+    | { readonly kind: 'colon' }
+    | { readonly kind: 'end' }
+  );
 
 export class FormulaSyntaxError extends Error {}
 
@@ -43,29 +64,29 @@ export function tokenize(source: string): Token[] {
     }
 
     if (character === '(') {
-      tokens.push({ kind: 'open' });
+      tokens.push({ kind: 'open', start: at, end: at + 1 });
       at++;
       continue;
     }
     if (character === ')') {
-      tokens.push({ kind: 'close' });
+      tokens.push({ kind: 'close', start: at, end: at + 1 });
       at++;
       continue;
     }
     if (character === ',') {
-      tokens.push({ kind: 'comma' });
+      tokens.push({ kind: 'comma', start: at, end: at + 1 });
       at++;
       continue;
     }
     if (character === ':') {
-      tokens.push({ kind: 'colon' });
+      tokens.push({ kind: 'colon', start: at, end: at + 1 });
       at++;
       continue;
     }
 
     if (character === '"') {
       const { value, next } = readText(source, at);
-      tokens.push({ kind: 'text', value });
+      tokens.push({ kind: 'text', value, start: at, end: next });
       at = next;
       continue;
     }
@@ -75,14 +96,14 @@ export function tokenize(source: string): Token[] {
       if (literal === undefined) {
         throw new FormulaSyntaxError(`Unknown error value at ${at}.`);
       }
-      tokens.push({ kind: 'error', code: literal });
+      tokens.push({ kind: 'error', code: literal, start: at, end: at + literal.length });
       at += literal.length;
       continue;
     }
 
     if (isDigit(character) || (character === '.' && isDigit(source[at + 1] ?? ''))) {
       const { value, next } = readNumber(source, at);
-      tokens.push({ kind: 'number', value });
+      tokens.push({ kind: 'number', value, start: at, end: next });
       at = next;
       continue;
     }
@@ -92,19 +113,19 @@ export function tokenize(source: string): Token[] {
       while (end < source.length && isWordPart(source[end])) {
         end++;
       }
-      tokens.push({ kind: 'word', value: source.slice(at, end) });
+      tokens.push({ kind: 'word', value: source.slice(at, end), start: at, end });
       at = end;
       continue;
     }
 
     const two = source.slice(at, at + 2);
     if (TWO_CHARACTER_OPERATORS.has(two)) {
-      tokens.push({ kind: 'operator', value: two });
+      tokens.push({ kind: 'operator', value: two, start: at, end: at + 2 });
       at += 2;
       continue;
     }
     if (ONE_CHARACTER_OPERATORS.has(character)) {
-      tokens.push({ kind: 'operator', value: character });
+      tokens.push({ kind: 'operator', value: character, start: at, end: at + 1 });
       at++;
       continue;
     }
@@ -112,7 +133,7 @@ export function tokenize(source: string): Token[] {
     throw new FormulaSyntaxError(`Unexpected character ${JSON.stringify(character)} at ${at}.`);
   }
 
-  tokens.push({ kind: 'end' });
+  tokens.push({ kind: 'end', start: source.length, end: source.length });
   return tokens;
 }
 

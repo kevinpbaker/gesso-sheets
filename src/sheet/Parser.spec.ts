@@ -32,22 +32,49 @@ function show(node: Ast): string {
 
 describe('the tokenizer', () => {
   it('reads numbers, including exponents', () => {
-    expect(tokenize('1 2.5 .5 1e3 1E-2').filter(t => t.kind === 'number')).toEqual([
-      { kind: 'number', value: 1 },
-      { kind: 'number', value: 2.5 },
-      { kind: 'number', value: 0.5 },
-      { kind: 'number', value: 1000 },
-      { kind: 'number', value: 0.01 }
+    expect(tokenize('1 2.5 .5 1e3 1E-2').filter(t => t.kind === 'number').map(t => t.value)).toEqual([
+      1, 2.5, 0.5, 1000, 0.01
     ]);
   });
 
-  it('reads a quoted string, in which a doubled quote is one quote', () => {
-    expect(tokenize('"he said ""no"""')[0]).toEqual({ kind: 'text', value: 'he said "no"' });
+  /**
+   * Positions are part of the contract, not an implementation detail.
+   *
+   * Phase 12 is built almost entirely out of the question "what is
+   * under the caret" — which reference to colour, which argument of
+   * which call the caret sits in, which bracket matches the one beside
+   * it — and none of that can be asked of a token list that has
+   * forgotten where the tokens were. Re-deriving the positions by
+   * scanning the text again would be a second scanner to disagree
+   * with this one.
+   */
+  it('says where each token was', () => {
+    expect(tokenize('1 + B2').map(t => [t.kind, t.start, t.end])).toEqual([
+      ['number', 0, 1],
+      ['operator', 2, 3],
+      ['word', 4, 6],
+      ['end', 6, 6]
+    ]);
   });
 
-  it('reads the five error values as values', () => {
-    for (const code of ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!'] as const) {
-      expect(tokenize(code)[0]).toEqual({ kind: 'error', code });
+  it('spans a quoted string from quote to quote', () => {
+    const [text] = tokenize('"ab" + 1');
+    expect([text.start, text.end]).toEqual([0, 4]);
+  });
+
+  it('puts the end token at the end, with no width', () => {
+    const tokens = tokenize('1+2');
+    const last = tokens[tokens.length - 1];
+    expect([last.kind, last.start, last.end]).toEqual(['end', 3, 3]);
+  });
+
+  it('reads a quoted string, in which a doubled quote is one quote', () => {
+    expect(tokenize('"he said ""no"""')[0]).toMatchObject({ kind: 'text', value: 'he said "no"' });
+  });
+
+  it('reads the six error values as values', () => {
+    for (const code of ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A'] as const) {
+      expect(tokenize(code)[0]).toMatchObject({ kind: 'error', code });
     }
   });
 
@@ -57,9 +84,9 @@ describe('the tokenizer', () => {
    * both arrive as `word`.
    */
   it('does not try to tell a reference from a function name', () => {
-    expect(tokenize('SUM')[0]).toEqual({ kind: 'word', value: 'SUM' });
-    expect(tokenize('A1')[0]).toEqual({ kind: 'word', value: 'A1' });
-    expect(tokenize('LOG10')[0]).toEqual({ kind: 'word', value: 'LOG10' });
+    expect(tokenize('SUM')[0]).toMatchObject({ kind: 'word', value: 'SUM' });
+    expect(tokenize('A1')[0]).toMatchObject({ kind: 'word', value: 'A1' });
+    expect(tokenize('LOG10')[0]).toMatchObject({ kind: 'word', value: 'LOG10' });
   });
 
   it('refuses a string that is never closed', () => {

@@ -173,7 +173,7 @@ class Parser {
     if (this.peek().kind !== 'colon') {
       return null;
     }
-    const after = this.tokens[this.at + 1] ?? { kind: 'end' as const };
+    const after = this.tokens[this.at + 1] ?? { kind: 'end' as const, start: 0, end: 0 };
     if (after.kind !== 'word') {
       return null;
     }
@@ -225,7 +225,7 @@ class Parser {
   }
 
   private peek(): Token {
-    return this.tokens[this.at] ?? { kind: 'end' };
+    return this.tokens[this.at] ?? { kind: 'end', start: 0, end: 0 };
   }
 
   private isOperator(value: string): boolean {
