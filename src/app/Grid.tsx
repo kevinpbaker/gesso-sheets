@@ -487,7 +487,25 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       ),
       borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
       borderWidth: state.pipe(map(where => (where === 2 ? 2 : 1))),
-      width: covered ? 0 : anchors && spanWidth !== null ? spanWidth : widthOf(column),
+      /**
+       * A covered cell gives up its width only to the anchor's own row.
+       *
+       * The anchor takes the whole span across the row it is in, so the
+       * cells beside it there must come to nothing or the row is twice
+       * as wide as it should be. A row *below* the anchor has no anchor
+       * in it — the anchor reaches down into it by overflowing — so the
+       * cells it covers there still have to hold their columns open.
+       * Zeroed, they dragged every column after them one place left,
+       * which is invisible until there is something in those columns
+       * to see move. Found by reading the boxes in a browser.
+       */
+      width: covered
+        ? merge !== null && row === merge.firstRow
+          ? 0
+          : widthOf(column)
+        : anchors && spanWidth !== null
+          ? spanWidth
+          : widthOf(column),
       height: covered
         ? 0
         : anchors && spanRows > 1
@@ -495,7 +513,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
           : heightOf(row),
       flexShrink: 0,
       // A covered cell has no room for padding either, or a row of
-      // them adds twelve pixels each to the width of the row.
+      // them adds twelve pixels each to the width of the row. One
+      // below the anchor keeps its width but still draws nothing, so
+      // padding it would only push against a zero height.
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize))),
@@ -629,8 +649,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * Not memoised. There is one of these at a time and its life is the
    * edit.
    */
-  const editorCell = (row: number, column: number): UiElement =>
-    EditableText({
+  const editorCell = (row: number, column: number): UiElement => {
+    // The open cell is always a merge's anchor — `anchorOf` moves the
+    // selection there before anything can open it — so this needs the
+    // anchor's arithmetic and not the covered case.
+    const merge = mergeAt(row, column);
+    const spanWidth = merge === null ? null : columnLeft(merge.lastColumn + 1) - columnLeft(merge.firstColumn);
+    const spanRows = merge === null ? 1 : merge.lastRow - merge.firstRow + 1;
+
+    return EditableText({
       key: column,
       ref: node => {
         editorNode = node;
@@ -677,8 +704,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         }
       },
       value: edit.draft.pipe(map(text => text ?? '')),
-      width: widthOf(column),
-      height: heightOf(row),
+      /**
+       * The editor is the merged cell, not the cell under its corner.
+       *
+       * This is a cell in the row like any other, so its width is what
+       * holds the columns after it in place. Built from `widthOf`
+       * alone, opening a merge collapsed the anchor to one column and
+       * slid the rest of the row left by the difference — which on
+       * screen looks exactly like the merge coming apart to show the
+       * original cells underneath it. Same arithmetic as `buildCell`
+       * above, and for the same reason.
+       */
+      width: spanWidth ?? widthOf(column),
+      // A tall editor reaches down out of its own row, as the anchor
+      // does: rows are not merged, only cells are. It already carries
+      // the `zIndex: 1` below that lets it, being the open cell.
+      height: spanRows > 1 ? heightOf(row).pipe(map(height => (height === 0 ? 0 : height * spanRows))) : heightOf(row),
       flexShrink: 0,
       paddingLeft: 6,
       paddingRight: 6,
@@ -695,6 +736,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       onInput: (event: UiTextChangeEvent) => edit.write(event.value),
       onKeyDown: onKey
     });
+  };
 
   /** The node holding the open cell's editor, so focus can be put in it. */
   let editorNode: UiNode | null = null;

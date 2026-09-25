@@ -631,6 +631,24 @@ describe('merged cells', () => {
     expect(h.ui.getByRole('cell', { name: 'r2c1' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH });
   });
 
+  /**
+   * Found in a browser while checking the editor fix, by reading the
+   * boxes rather than the picture: with empty cells either side, a
+   * whole column sliding left is invisible.
+   */
+  it('keeps the columns beside a tall merge where the window put them', async () => {
+    await merge(1, 3, 1, 1);
+    // Row 1 holds the anchor; rows 2 and 3 hold cells it covers.
+    expect(h.ui.getByRole('cell', { name: 'r2c2' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH * 2 });
+    expect(h.ui.getByRole('cell', { name: 'r3c5' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH * 5 });
+  });
+
+  it('keeps them beside a merge that is tall and wide at once', async () => {
+    await merge(1, 3, 1, 2);
+    expect(h.ui.getByRole('cell', { name: 'r2c3' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH * 3 });
+    expect(h.ui.getByRole('cell', { name: 'r3c4' })).toHaveVisibleBox({ x: GUTTER_WIDTH + COLUMN_WIDTH * 4 });
+  });
+
   it('takes a merge apart again', async () => {
     await merge(1, 1, 1, 3);
     h.service.setSelection(1, 1, 1, 1);
@@ -656,6 +674,73 @@ describe('merged cells', () => {
 
     // The anchor is off to the left and still drawn, nine columns wide.
     expect(h.ui.getByRole('cell', { name: 'r1c0' })).toHaveVisibleBox({ width: COLUMN_WIDTH * 9 });
+  });
+
+  /**
+   * Opening a merge for editing used to take the grid apart.
+   *
+   * The editor is a cell in the row like any other, and it was built
+   * from `widthOf(column)` without ever asking about merges — so the
+   * moment somebody typed into a merged cell, the anchor snapped back
+   * to one column, the row lost the width the merge had given it, and
+   * every column after it slid left. What that looks like on screen is
+   * the original cells reappearing underneath the merge.
+   */
+  describe('editing one', () => {
+    async function open(row: number, column: number): Promise<void> {
+      h.service.setSelection(row, column, row, column);
+      await h.served.settle();
+      await h.ui.settle();
+      // F2 has to reach the grid, not the toolbar it started on.
+      const grid = h.ui.getByRole('grid');
+      let stops = 0;
+      while (h.ui.runtime.input.focus.focusedNode !== grid) {
+        if (stops++ > 8) {
+          throw new Error('Tab never reached the grid');
+        }
+        h.ui.fireEvent.tab();
+        await h.ui.settle();
+      }
+      h.ui.fireEvent.press('F2');
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+
+    const editor = () => h.ui.getByRole('textbox', { name: 'Cell' });
+
+    it('opens the editor across the columns the merge covers', async () => {
+      await merge(1, 1, 1, 3);
+      await open(1, 1);
+      expect(editor()).toHaveVisibleBox({
+        x: GUTTER_WIDTH + COLUMN_WIDTH,
+        width: COLUMN_WIDTH * 3,
+        height: ROW_HEIGHT
+      });
+    });
+
+    it('opens it down the rows the merge covers', async () => {
+      await merge(1, 3, 1, 1);
+      await open(1, 1);
+      expect(editor()).toHaveVisibleBox({ width: COLUMN_WIDTH, height: ROW_HEIGHT * 3 });
+    });
+
+    /** The symptom as it was reported: the grid moving underneath. */
+    it('leaves the columns after the merge exactly where they were', async () => {
+      await merge(1, 1, 1, 3);
+      const before = h.ui.getVisibleBox(h.ui.getByRole('cell', { name: 'r1c4' }));
+      await open(1, 1);
+      expect(h.ui.getByRole('cell', { name: 'r1c4' })).toHaveVisibleBox({ x: before.x, y: before.y });
+    });
+
+    it('still covers one cell when the cell is not merged', async () => {
+      await open(1, 5);
+      expect(editor()).toHaveVisibleBox({
+        x: GUTTER_WIDTH + COLUMN_WIDTH * 5,
+        width: COLUMN_WIDTH,
+        height: ROW_HEIGHT
+      });
+    });
   });
 
   /**
