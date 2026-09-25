@@ -32,6 +32,8 @@ interface Harness {
   ui: Rendered;
   served: ServedForTest;
   document: SheetDocument;
+  /** For the specs that need to move the selection without a keyboard. */
+  service: SheetService;
 }
 
 async function mount(fill?: (document: SheetDocument) => void): Promise<Harness> {
@@ -44,7 +46,7 @@ async function mount(fill?: (document: SheetDocument) => void): Promise<Harness>
   await ui.settle();
   await served.settle();
   await ui.settle();
-  return { ui, served, document };
+  return { ui, served, document, service };
 }
 
 describe('the top bar from the keyboard', () => {
@@ -778,5 +780,86 @@ describe('the menu under the pointer', () => {
   it('lights a title without opening it', async () => {
     await moveTo(h.ui.getByText('Data'));
     expect(h.ui.queryByRole('menu', { name: 'Data' })).toBeNull();
+  });
+});
+
+/**
+ * The formula bar's references, in the same colours as the grid's.
+ *
+ * The `B2` in the bar, the `B2` in the cell and the box round B2 on
+ * the sheet are one colour by construction — all three come from
+ * `formulaSpans` — rather than by three files agreeing.
+ */
+describe('colouring the formula bar', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const runs = () =>
+    (h.ui.getByRole('textbox', { name: 'Formula' }).properties.get('spans') ?? []) as readonly {
+      text: string;
+      color?: string;
+      backgroundColor?: string;
+    }[];
+
+  it('colours a formula the selected cell holds', async () => {
+    h = await mount(document => document.setCell(0, 0, '=B2+C3'));
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(runs().map(run => run.text)).toEqual(['=', 'B2', '+', 'C3']);
+    expect(runs().map(run => run.text).join('')).toBe('=B2+C3');
+  });
+
+  /** Read at a glance without the caret being anywhere near it. */
+  it('colours it without the bar being typed in', async () => {
+    h = await mount(document => document.setCell(0, 0, '=SUM(A1:A9)'));
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(runs().filter(run => run.color !== undefined).map(run => run.text)).toEqual(['A1:A9']);
+  });
+
+  it('gives a cell holding no formula no runs at all', async () => {
+    h = await mount(document => document.setCell(0, 0, 'North'));
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(runs()).toEqual([]);
+  });
+
+  it('follows the selection from cell to cell', async () => {
+    h = await mount(document => {
+      document.setCell(0, 0, '=B2');
+      document.setCell(1, 0, 'plain');
+    });
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(runs().map(run => run.text)).toEqual(['=', 'B2']);
+
+    h.service.setSelection(1, 0, 1, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    expect(runs()).toEqual([]);
+  });
+
+  /**
+   * The bracket wash needs a caret, so it appears only while the bar
+   * is being typed in — which is the only time it means anything.
+   */
+  it('marks no brackets while the caret is elsewhere', async () => {
+    h = await mount(document => document.setCell(0, 0, '=SUM(A1)'));
+    h.service.setSelection(0, 0, 0, 0);
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(runs().filter(run => run.backgroundColor !== undefined)).toEqual([]);
   });
 });

@@ -1,4 +1,4 @@
-import { combineLatest, map, type Observable } from 'rxjs';
+import { BehaviorSubject, combineLatest, map, type Observable } from 'rxjs';
 
 import {
   editorFor,
@@ -6,11 +6,13 @@ import {
   type UiKeyboardEvent,
   type UiNode,
   type UiSemanticState,
-  type UiTextChangeEvent
+  type UiTextChangeEvent,
+  type UiTextSpan
 } from 'gesso-core';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { FindBar } from './FindBar';
+import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox } from './NameBox';
 import { Sheet } from './SheetContract';
@@ -547,6 +549,35 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     map(([draft, current]) => draft ?? current.input)
   );
 
+  /**
+   * The formula bar's references, in the colours the grid draws their
+   * boxes in.
+   *
+   * The same `formulaSpans` the cell editor uses, so the `B2` in the
+   * bar, the `B2` in the cell and the box round B2 on the sheet are
+   * one colour by construction rather than by three files agreeing.
+   *
+   * Coloured whether or not the bar has the caret, because a selected
+   * cell showing `=SUM(Sales)+B2` is worth reading at a glance and
+   * the colours are most of what makes it readable. The *bracket*
+   * marking needs a caret and gets one only while the bar is being
+   * typed in, which is the only time it means anything.
+   */
+  const formulaSpans$ = new BehaviorSubject<readonly UiTextSpan[] | undefined>(undefined);
+  let formulaNode: UiNode | null = null;
+  let formulaText = '';
+
+  const refreshFormulaSpans = (): void => {
+    const caret =
+      formulaNode !== null && focus.focused.value === formulaNode ? editorFor(formulaNode).focus : undefined;
+    formulaSpans$.next(formulaSpans(formulaText, caret));
+  };
+
+  ctx.effect(formula, text => {
+    formulaText = text;
+    refreshFormulaSpans();
+  });
+
   const onFormulaKey = (event: UiKeyboardEvent): void => {
     // Always read as "a cell is open", whatever the draft says,
     // because the caret is in a text field and the keys belong to the
@@ -578,6 +609,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         <NameBox editing={edit} ref={arrived('name')} />
         <editabletext
           value={formula}
+          spans={formulaSpans$}
+          ref={(node: UiNode | null) => {
+            formulaNode = node;
+            refreshFormulaSpans();
+          }}
           flex={1}
           minWidth={0}
           fontSize={12}
@@ -592,6 +628,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           label="Formula"
           onInput={(event: UiTextChangeEvent) => edit.write(event.value)}
           onKeyDown={onFormulaKey}
+          // The caret moving with the text unchanged, which is what
+          // the bracket beside it depends on.
+          onSelectionChange={refreshFormulaSpans}
+          onFocus={refreshFormulaSpans}
+          onBlur={refreshFormulaSpans}
         />
       </row>
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
