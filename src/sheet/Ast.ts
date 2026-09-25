@@ -57,3 +57,34 @@ export function referencesOf(node: Ast, into: { ref(ref: CellRef): void; range(r
       return;
   }
 }
+
+/**
+ * Every function a formula calls, by name.
+ *
+ * The dependency graph is built from references, and two things it
+ * cannot see are written as calls: a formula that is *volatile* reads
+ * nothing yet must still be recalculated, and one that calls
+ * `INDIRECT` or `OFFSET` reads cells that its own text never names.
+ * Both are found here, once, when the formula is parsed — walking the
+ * tree again on every recalculation would be the same answer at a
+ * cost per evaluation rather than per edit.
+ */
+export function callNamesOf(node: Ast, into: Set<string>): void {
+  switch (node.kind) {
+    case 'call':
+      into.add(node.name);
+      for (const arg of node.args) {
+        callNamesOf(arg, into);
+      }
+      return;
+    case 'unary':
+      callNamesOf(node.operand, into);
+      return;
+    case 'binary':
+      callNamesOf(node.left, into);
+      callNamesOf(node.right, into);
+      return;
+    default:
+      return;
+  }
+}

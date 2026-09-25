@@ -1,8 +1,9 @@
 import { cellKey, columnOf, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
-import { referencesOf, type Ast } from './Ast';
+import { callNamesOf, referencesOf, type Ast } from './Ast';
 import { parseTypedDate } from './Dates';
 import { DependencyGraph } from './DependencyGraph';
 import { evaluate } from './Evaluator';
+import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
 import { shiftFormula, shiftIndex, type Shift } from './Shift';
 import { CIRC, formatValue, VALUE, type CellValue } from './Values';
@@ -52,6 +53,66 @@ export class Sheet {
   /** The order the current slice is working through, and where it is. */
   private plan: { order: number[]; at: number } | null = null;
 
+  /**
+   * The clock and the dice the volatile functions read.
+   *
+   * Fields rather than direct calls to `Date` and `Math.random` so
+   * that a spec can say what day it is, which is the only way to
+   * assert anything about `TODAY()` at all.
+   */
+  clock: () => number = nowSerial;
+  dice: () => number = Math.random;
+
+  /**
+   * Formulas that answer differently without anything changing:
+   * `RAND`, `RANDBETWEEN`, `NOW`, `TODAY`.
+   *
+   * Nothing in the graph would ever wake them — `=TODAY()` reads no
+   * cell — so they are woken by hand on every edit. Without this the
+   * date on a sheet is the date it was opened, for as long as it
+   * stays open.
+   */
+  private readonly volatile = new Set<number>();
+
+  /**
+   * Formulas whose precedents cannot be read off their own text.
+   *
+   * `=INDIRECT("A" & B1)` reads a cell that the formula never names,
+   * so the graph built from the tree has an edge to B1 and none to
+   * the cell it actually fetched. These are evaluated with their
+   * reads recorded and their edges rebuilt afterwards; see
+   * `evaluateCell`.
+   */
+  private readonly dynamic = new Set<number>();
+
+  /** The keys the cell now being evaluated read, when it is dynamic. */
+  private recording: Set<number> | null = null;
+
+  /**
+   * Dynamic cells already sent round a second time since the last
+   * edit.
+   *
+   * A dynamic cell that read something still dirty has to be redone
+   * once that cell is settled. Once is enough and once is the limit:
+   * two formulas pointing at each other through `INDIRECT` could
+   * otherwise re-dirty each other for as long as anybody watched.
+   */
+  private readonly redone = new Set<number>();
+
+  /** Fixed for a whole recalculation, so two `NOW()`s agree. */
+  private moment: FunctionContext | null = null;
+
+  /**
+   * How far down anything has ever been written.
+   *
+   * A high-water mark, and deliberately not recomputed when cells are
+   * cleared: shrinking it would mean walking the store on every
+   * delete, and the only cost of it being too large is that a
+   * whole-column reference reads a few cells that are empty. Too
+   * small would drop data, which is why it never goes down.
+   */
+  private highWaterRow = 0;
+
   // ---------------------------------------------------------------------
   // Editing
   // ---------------------------------------------------------------------
@@ -83,12 +144,14 @@ export class Sheet {
       this.clearCell(row, column);
       return;
     }
+    this.highWaterRow = Math.max(this.highWaterRow, row + 1);
 
     if (input.startsWith('=') && !asText) {
       this.writeFormula(key, input);
     } else {
       this.graph.clearPrecedents(key);
       this.dirty.delete(key);
+      this.forget(key);
       this.cells.set(key, { input, formula: null, value: asText ? input : literalValue(input) });
     }
     this.markDependentsDirty(key);
@@ -143,6 +206,9 @@ export class Sheet {
     this.cells.clear();
     this.graph.clear();
     this.dirty.clear();
+    this.volatile.clear();
+    this.dynamic.clear();
+    this.redone.clear();
     this.plan = null;
     for (const [key, cell] of carried) {
       if (cell.formula === null && cell.value === null) {
@@ -151,7 +217,8 @@ export class Sheet {
       } else {
         this.cells.set(key, cell);
         if (cell.formula !== null) {
-          this.graph.setPrecedents(key, precedentsOf(cell.formula));
+          this.wire(key, cell.formula);
+          this.classify(key, cell.formula);
           this.dirty.add(key);
         }
       }
@@ -163,6 +230,9 @@ export class Sheet {
       if (cell.formula !== null) {
         this.dirty.add(key);
       }
+      // An insert pushes cells past the old mark, and a whole-column
+      // reference that stopped at it would stop reading them.
+      this.highWaterRow = Math.max(this.highWaterRow, rowOf(key) + 1);
     }
     return rewrites;
   }
@@ -172,6 +242,7 @@ export class Sheet {
     this.graph.clearPrecedents(key);
     this.cells.delete(key);
     this.dirty.delete(key);
+    this.forget(key);
     this.markDependentsDirty(key);
   }
 
@@ -191,12 +262,47 @@ export class Sheet {
       // `#VALUE!` until it does parse.
       this.graph.clearPrecedents(key);
       this.dirty.delete(key);
+      this.forget(key);
       this.cells.set(key, { input, formula: null, value: VALUE });
       return;
     }
     this.cells.set(key, { input, formula, value: null });
-    this.graph.setPrecedents(key, precedentsOf(formula));
+    this.wire(key, formula);
+    this.classify(key, formula);
     this.dirty.add(key);
+  }
+
+  /**
+   * Files a formula under the two things the graph cannot see.
+   *
+   * Done once, when the formula is parsed. Walking the tree on every
+   * recalculation would give the same answer at a cost per evaluation
+   * instead of a cost per edit.
+   */
+  /** Puts a formula's edges into the graph, both kinds. */
+  private wire(key: number, formula: Ast): void {
+    const { keys, columns } = precedentsOf(formula);
+    this.graph.setPrecedents(key, keys);
+    this.graph.setWatchedColumns(key, columns);
+  }
+
+  private classify(key: number, formula: Ast): void {
+    const names = new Set<string>();
+    callNamesOf(formula, names);
+    let isVolatile = false;
+    let isDynamic = false;
+    for (const name of names) {
+      isVolatile ||= VOLATILE.has(name);
+      isDynamic ||= name === 'INDIRECT' || name === 'OFFSET';
+    }
+    setMembership(this.volatile, key, isVolatile);
+    setMembership(this.dynamic, key, isDynamic);
+  }
+
+  private forget(key: number): void {
+    this.volatile.delete(key);
+    this.dynamic.delete(key);
+    this.redone.delete(key);
   }
 
   /**
@@ -210,6 +316,29 @@ export class Sheet {
     for (const dependent of this.graph.closureOf([key])) {
       this.dirty.add(dependent);
     }
+    // An edit is a recalculation event, and a volatile formula is one
+    // that has to be redone on every one of them however far away the
+    // edit was. This is what Excel means by the word, and the reason
+    // the set is kept to four functions: the cost is paid per edit by
+    // every volatile cell in the sheet.
+    //
+    // And by everything downstream of them. A `=TODAY()` that is
+    // redone while the `=A1+1` beside it is not leaves two cells
+    // disagreeing about the date — which is worse than either being
+    // stale, because one of them looks right.
+    if (this.volatile.size > 0) {
+      for (const cell of this.volatile) {
+        this.dirty.add(cell);
+      }
+      for (const dependent of this.graph.closureOf(this.volatile)) {
+        this.dirty.add(dependent);
+      }
+    }
+    // A new edit is a new chance for the dynamic formulas to settle.
+    this.redone.clear();
+    // The clock moves on between edits, so two recalculations may
+    // legitimately disagree about the time; within one they may not.
+    this.moment = null;
     // Any plan in flight was ordered over a different set.
     this.plan = null;
   }
@@ -235,32 +364,50 @@ export class Sheet {
    * unless the new edit reaches them.
    */
   recalculate(budget: number = Number.POSITIVE_INFINITY): RecalcResult {
-    if (this.dirty.size === 0) {
-      return { evaluated: 0, done: true };
-    }
-    if (this.plan === null) {
-      this.plan = this.buildPlan();
-    }
-
     let evaluated = 0;
-    const plan = this.plan;
-    while (plan.at < plan.order.length && evaluated < budget) {
-      const key = plan.order[plan.at++];
-      // A cell can leave the dirty set between plans, when an edit
-      // turned a formula into a literal.
-      if (!this.dirty.delete(key)) {
-        continue;
-      }
-      this.evaluateCell(key);
-      evaluated++;
-    }
+    /**
+     * A cap on how many times one call will rebuild its plan.
+     *
+     * New work can appear *during* a pass: a dynamic formula that read
+     * a cell which had not been evaluated yet asks to be redone once
+     * that cell is settled. The `redone` set already bounds that to
+     * one retry per cell per edit, so this should never be reached —
+     * it is here because a recalculation that spun forever would hang
+     * the application worker, and a wrong answer is recoverable where
+     * a hang is not.
+     */
+    let plans = 0;
 
-    const done = plan.at >= plan.order.length;
-    if (done) {
+    while (this.dirty.size > 0 && evaluated < budget && plans < 64) {
+      if (this.plan === null) {
+        this.plan = this.buildPlan();
+        plans++;
+      }
+      const plan = this.plan;
+      while (plan.at < plan.order.length && evaluated < budget) {
+        const key = plan.order[plan.at++];
+        // A cell can leave the dirty set between plans, when an edit
+        // turned a formula into a literal.
+        if (!this.dirty.delete(key)) {
+          continue;
+        }
+        this.evaluateCell(key);
+        evaluated++;
+      }
+      if (plan.at < plan.order.length) {
+        // The budget ran out with the plan half done; it resumes on
+        // the next call from exactly here.
+        break;
+      }
       this.plan = null;
     }
+
     this.stats.evaluated += evaluated;
-    return { evaluated, done: done && this.dirty.size === 0 };
+    const done = this.plan === null && this.dirty.size === 0;
+    if (done) {
+      this.redone.clear();
+    }
+    return { evaluated, done };
   }
 
   /**
@@ -293,7 +440,38 @@ export class Sheet {
     if (cell === undefined || cell.formula === null) {
       return;
     }
-    cell.value = evaluate(cell.formula, this);
+    if (!this.dynamic.has(key)) {
+      cell.value = evaluate(cell.formula, this);
+      return;
+    }
+
+    /**
+     * A formula whose edges have to be discovered by running it.
+     *
+     * The reads are recorded and the graph is rebuilt from them, so
+     * that editing the cell an `INDIRECT` landed on wakes the formula
+     * that read it. Without this the formula is correct once and stale
+     * forever after — the worst bug a spreadsheet can have, because
+     * nothing on the screen says so.
+     */
+    const reads = new Set<number>();
+    this.recording = reads;
+    try {
+      cell.value = evaluate(cell.formula, this);
+    } finally {
+      this.recording = null;
+    }
+    if (!sameKeys(this.graph.precedentsOf(key), reads)) {
+      this.graph.setPrecedents(key, reads);
+    }
+    // It has just read cells that are themselves still waiting, so the
+    // answer it gave may be one recalculation out of date. Doing it
+    // again once they are settled is the fix; doing it again at most
+    // once is what stops two of these chasing each other.
+    if (!this.redone.has(key) && anyDirty(reads, this.dirty)) {
+      this.redone.add(key);
+      this.dirty.add(key);
+    }
   }
 
   // ---------------------------------------------------------------------
@@ -302,7 +480,33 @@ export class Sheet {
 
   /** The `EvaluationContext` the evaluator reads through. */
   valueAt(key: number): CellValue {
+    // Recorded only while a dynamic formula is running, which is the
+    // one case where what was read is not what the tree said.
+    this.recording?.add(key);
     return this.cells.get(key)?.value ?? null;
+  }
+
+  /**
+   * The clock and dice half of `EvaluationContext`.
+   *
+   * The time is *read once* and handed back as a constant, which is
+   * the whole reason this is cached rather than passed straight
+   * through. Two `NOW()`s in one recalculation that each called the
+   * clock would disagree by however long the pass took, and a sheet
+   * that contradicts itself about its own timestamps is worse than
+   * one that is a moment out of date.
+   */
+  get functions(): FunctionContext {
+    if (this.moment === null) {
+      const at = this.clock();
+      this.moment = { now: () => at, random: () => this.dice() };
+    }
+    return this.moment;
+  }
+
+  /** How far a whole-column reference reads; see `highWaterRow`. */
+  get usedRows(): number {
+    return this.highWaterRow;
   }
 
   value(row: number, column: number): CellValue {
@@ -351,20 +555,33 @@ export class Sheet {
   }
 }
 
-/** Every cell a formula reads, ranges expanded. */
-function precedentsOf(formula: Ast): number[] {
+/**
+ * What a formula reads: cells by key, and columns by number.
+ *
+ * Two lists because a whole-column reference cannot be a key list —
+ * `A:A` is 1,048,576 cells — and must not be turned into one. The
+ * graph watches those columns instead; see `DependencyGraph`.
+ */
+function precedentsOf(formula: Ast): { keys: number[]; columns: number[] } {
   const keys: number[] = [];
+  const columns: number[] = [];
   referencesOf(formula, {
     ref(ref: CellRef) {
       keys.push(cellKey(ref.row, ref.column));
     },
     range(range: RangeRef) {
+      if (range.wholeColumn === true) {
+        for (let column = range.start.column; column <= range.end.column; column++) {
+          columns.push(column);
+        }
+        return;
+      }
       for (const key of rangeKeys(range)) {
         keys.push(key);
       }
     }
   });
-  return keys;
+  return { keys, columns };
 }
 
 /**
@@ -398,4 +615,34 @@ function literalValue(input: string): CellValue {
     return Number(trimmed);
   }
   return parseTypedDate(trimmed)?.serial ?? input;
+}
+
+/** Adds or removes a key, which reads better than a branch at each call. */
+function setMembership(into: Set<number>, key: number, member: boolean): void {
+  if (member) {
+    into.add(key);
+  } else {
+    into.delete(key);
+  }
+}
+
+function sameKeys(left: ReadonlySet<number>, right: ReadonlySet<number>): boolean {
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const key of left) {
+    if (!right.has(key)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function anyDirty(keys: ReadonlySet<number>, dirty: ReadonlySet<number>): boolean {
+  for (const key of keys) {
+    if (dirty.has(key)) {
+      return true;
+    }
+  }
+  return false;
 }

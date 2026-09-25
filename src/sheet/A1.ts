@@ -53,6 +53,30 @@ export interface CellRef {
 export interface RangeRef {
   readonly start: CellRef;
   readonly end: CellRef;
+  /**
+   * `A:A` — every row of those columns, however many there turn out
+   * to be.
+   *
+   * A flag rather than a span from row 0 to row 1,048,575, because
+   * the two are not the same claim. A span is a rectangle somebody
+   * drew and it means those cells; this means *the column*, and it
+   * has to go on meaning the column after a row is added at the
+   * bottom. The difference shows up in three places, each of which
+   * would otherwise be a million of something: the dependency graph
+   * watches the column instead of storing an edge per cell, the
+   * evaluator reads only as far as the sheet is used, and `rangeKeys`
+   * is never handed one of these at all.
+   */
+  readonly wholeColumn?: boolean;
+}
+
+/** `A:A`, as a range that means the column rather than a rectangle. */
+export function wholeColumnRange(first: number, last: number): RangeRef {
+  return {
+    start: { row: 0, column: first, rowAbsolute: true, columnAbsolute: false },
+    end: { row: MAX_ROWS - 1, column: last, rowAbsolute: true, columnAbsolute: false },
+    wholeColumn: true
+  };
 }
 
 /** `0` → `A`, `25` → `Z`, `26` → `AA`. */
@@ -143,6 +167,11 @@ export function relativeRef(row: number, column: number): CellRef {
  * second.
  */
 export function* rangeKeys(range: RangeRef): Generator<number> {
+  if (range.wholeColumn === true) {
+    // A million keys, and every caller that could reach here has a
+    // better answer available. Throwing is louder than a hang.
+    throw new Error('a whole-column reference has no key list; watch the column instead');
+  }
   const firstRow = Math.min(range.start.row, range.end.row);
   const lastRow = Math.max(range.start.row, range.end.row);
   const firstColumn = Math.min(range.start.column, range.end.column);

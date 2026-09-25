@@ -1,4 +1,4 @@
-import { parseRef, type CellRef } from './A1';
+import { columnIndex, parseRef, wholeColumnRange, type CellRef } from './A1';
 import type { Ast, BinaryOperator } from './Ast';
 import { FormulaSyntaxError, tokenize, type Token } from './Tokenizer';
 
@@ -143,6 +143,10 @@ class Parser {
     }
     const ref = parseRef(text);
     if (ref === null) {
+      const whole = this.maybeWholeColumns(text);
+      if (whole !== null) {
+        return whole;
+      }
       // A name the sheet has no meaning for. It parses — the formula is
       // well formed — and fails at evaluation, which is where Excel
       // puts it too: `=NOSUCHNAME` is a `#NAME?` in the cell, not a
@@ -150,6 +154,39 @@ class Parser {
       return { kind: 'call', name: upper, args: [] };
     }
     return this.maybeRange(ref);
+  }
+
+  /**
+   * `A:A`, or `B:D` — a column name, a colon, and another.
+   *
+   * Reached only after `parseRef` has said the word is not a cell,
+   * which is what distinguishes `A:A` from `A1:A9`. Nothing is
+   * consumed unless the whole shape is there, so a bare `A` still
+   * falls through to being an unknown name.
+   *
+   * Whole *rows* — `1:3` — are deliberately not here. They would need
+   * the parser to read a range out of two number tokens, which is a
+   * second shape for a case nobody in this application has asked for;
+   * `A1:Z1` says the same thing and says which columns it means.
+   */
+  private maybeWholeColumns(text: string): Ast | null {
+    if (this.peek().kind !== 'colon') {
+      return null;
+    }
+    const after = this.tokens[this.at + 1] ?? { kind: 'end' as const };
+    if (after.kind !== 'word') {
+      return null;
+    }
+    const first = columnIndex(text.replace(/\$/g, ''));
+    const last = columnIndex(after.value.replace(/\$/g, ''));
+    if (first === null || last === null) {
+      return null;
+    }
+    this.at += 2;
+    return {
+      kind: 'range',
+      range: wholeColumnRange(Math.min(first, last), Math.max(first, last))
+    };
   }
 
   private maybeRange(start: CellRef): Ast {

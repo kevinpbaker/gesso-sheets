@@ -1,103 +1,53 @@
 import {
-  DIV0,
-  isError,
-  toNumber,
-  toText,
-  VALUE,
-  type CellError,
-  type CellValue
-} from './Values';
+  checked,
+  firstError,
+  numberAt,
+  numbersOf,
+  scalar,
+  valuesOf,
+  type Argument,
+  type FunctionContext,
+  type SheetFunction
+} from './FunctionKit';
+import { CONDITIONAL_FUNCTIONS } from './FunctionsConditional';
+import { DATE_FUNCTIONS } from './FunctionsDate';
+import { LOGIC_FUNCTIONS } from './FunctionsLogic';
+import { LOOKUP_FUNCTIONS, } from './FunctionsLookup';
+import { MATH_FUNCTIONS, roundHalfAway } from './FunctionsMath';
+import { STATS_FUNCTIONS } from './FunctionsStats';
+import { TEXT_FUNCTIONS } from './FunctionsText';
+import { DIV0, isError, toText, type CellValue } from './Values';
+
+export type { Argument, FunctionContext, SheetFunction };
 
 /**
- * An evaluated argument.
+ * The library: every function the sheet knows, in one table.
  *
- * A range stays a range rather than being flattened by the evaluator,
- * because the difference matters: `COUNT` counts the numbers in a
- * range and ignores its blanks, while `COUNT` of a blank *cell* passed
- * directly counts nothing either — but `SUM("x")` is an error and
- * `SUM(A1:A9)` with text in it is not. Keeping the shape lets each
- * function decide.
- */
-export type Argument =
-  | { readonly kind: 'value'; readonly value: CellValue }
-  | { readonly kind: 'range'; readonly values: readonly CellValue[] };
-
-export type SheetFunction = (args: readonly Argument[]) => CellValue;
-
-/**
- * The first error in the arguments, which every function reports
- * before doing anything else.
+ * The families are separate files because sixty functions in one is
+ * unreadable, and the registry is this one because "what does this
+ * sheet know" has to have a single answer. `Functions.spec.ts` is the
+ * conformance table over it, and it fails if a name appears here with
+ * no case asserting what it does.
  *
- * Errors travel: a sum of a cell holding `#DIV/0!` is `#DIV/0!`, not
- * zero and not `#VALUE!`. Getting this wrong hides the cell that
- * actually broke behind a cell that merely read it.
- */
-function firstError(args: readonly Argument[]): CellError | null {
-  for (const arg of args) {
-    if (arg.kind === 'value') {
-      if (isError(arg.value)) {
-        return arg.value;
-      }
-      continue;
-    }
-    for (const value of arg.values) {
-      if (isError(value)) {
-        return value;
-      }
-    }
-  }
-  return null;
-}
-
-/**
- * The numbers an aggregate should see.
+ * ## What is not in here
  *
- * A range contributes only its numbers — text and blanks in a column
- * of figures are skipped rather than being an error, which is what
- * makes `SUM(A1:A100)` usable on a column with a heading in it. A
- * scalar argument is coerced, so `SUM(A1, "3")` is arithmetic and
- * `SUM(A1, "x")` is `#VALUE!`: passing something directly is a claim
- * that it is a number.
+ * Five functions are in `Evaluator.ts` instead, and for two different
+ * reasons.
+ *
+ * **`IF`, `IFS` and `SWITCH` must not evaluate everything.** A
+ * function here is handed arguments that are already values, and
+ * those three exist specifically to leave one unevaluated:
+ * `=IF(B1=0, "n/a", A1/B1)` is how everybody writes a guarded
+ * division, and a sheet that evaluated both branches would answer
+ * `#DIV/0!` to the formula written to avoid it.
+ *
+ * **`INDIRECT` and `OFFSET` compute a reference.** They need to
+ * *read* cells chosen while they run, which a value-in value-out
+ * function cannot do, and they make the dependency graph unable to
+ * know their edges beforehand. That is the most dangerous thing in
+ * this phase — see `Sheet.evaluateCell`.
  */
-function numbersOf(args: readonly Argument[]): number[] | CellError {
-  const numbers: number[] = [];
-  for (const arg of args) {
-    if (arg.kind === 'range') {
-      for (const value of arg.values) {
-        if (typeof value === 'number') {
-          numbers.push(value);
-        }
-      }
-      continue;
-    }
-    if (arg.value === null) {
-      continue;
-    }
-    const number = toNumber(arg.value);
-    if (isError(number)) {
-      return number;
-    }
-    numbers.push(number);
-  }
-  return numbers;
-}
-
-function scalar(args: readonly Argument[], index: number): CellValue {
-  const arg = args[index];
-  if (arg === undefined) {
-    return null;
-  }
-  // A range where a value was wanted takes the range's first cell,
-  // which is what a spreadsheet does with `=ABS(A1:A3)` in the days
-  // before it spilled.
-  return arg.kind === 'value' ? arg.value : (arg.values[0] ?? null);
-}
-
-function arity(args: readonly Argument[], min: number, max: number): CellError | null {
-  return args.length < min || args.length > max ? VALUE : null;
-}
-
-export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
+const AGGREGATES: Readonly<Record<string, SheetFunction>> = {
   SUM(args) {
     const error = firstError(args);
     if (error !== null) {
@@ -169,16 +119,8 @@ export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    */
   COUNT(args) {
     let count = 0;
-    for (const arg of args) {
-      if (arg.kind === 'range') {
-        for (const value of arg.values) {
-          if (typeof value === 'number') {
-            count++;
-          }
-        }
-        continue;
-      }
-      if (typeof arg.value === 'number') {
+    for (const value of valuesOf(args)) {
+      if (typeof value === 'number') {
         count++;
       }
     }
@@ -186,40 +128,24 @@ export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   ROUND(args) {
-    const wrong = arity(args, 1, 2);
+    const wrong = checked(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
-    const error = firstError(args);
-    if (error !== null) {
-      return error;
-    }
-    const value = toNumber(scalar(args, 0));
+    const value = numberAt(args, 0);
     if (isError(value)) {
       return value;
     }
-    const places = args.length > 1 ? toNumber(scalar(args, 1)) : 0;
-    if (isError(places)) {
-      return places;
-    }
-    const factor = 10 ** Math.trunc(places);
-    // Away from zero on a tie, which is what a spreadsheet does and
-    // `Math.round` does not: `Math.round(-2.5)` is -2.
-    const scaled = value * factor;
-    const rounded = scaled < 0 ? -Math.round(-scaled) : Math.round(scaled);
-    return rounded / factor;
+    const places = args.length > 1 ? numberAt(args, 1) : 0;
+    return isError(places) ? places : roundHalfAway(value, places);
   },
 
   ABS(args) {
-    const wrong = arity(args, 1, 1);
+    const wrong = checked(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
-    const error = firstError(args);
-    if (error !== null) {
-      return error;
-    }
-    const value = toNumber(scalar(args, 0));
+    const value = numberAt(args, 0);
     return isError(value) ? value : Math.abs(value);
   },
 
@@ -229,21 +155,83 @@ export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return error;
     }
     let text = '';
-    for (const arg of args) {
-      const values = arg.kind === 'range' ? arg.values : [arg.value];
-      for (const value of values) {
-        const piece = toText(value);
-        if (isError(piece)) {
-          return piece;
-        }
-        text += piece;
+    for (const value of valuesOf(args)) {
+      const piece = toText(value);
+      if (isError(piece)) {
+        return piece;
       }
+      text += piece;
     }
     return text;
   }
 };
 
-/** `IF` is absent here on purpose; see `Evaluator`. */
+export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
+  ...AGGREGATES,
+  ...LOGIC_FUNCTIONS,
+  ...MATH_FUNCTIONS,
+  ...STATS_FUNCTIONS,
+  ...CONDITIONAL_FUNCTIONS,
+  ...TEXT_FUNCTIONS,
+  ...LOOKUP_FUNCTIONS,
+  ...DATE_FUNCTIONS
+};
+
+/**
+ * The functions whose answer changes when nothing they read has.
+ *
+ * A formula containing one of these is recalculated on every edit
+ * anywhere, because there is no edge in the dependency graph that
+ * would ever wake it: `=TODAY()` reads nothing, so nothing marks it
+ * dirty, and without this it would show the day the file was opened
+ * until somebody retyped it.
+ *
+ * Excel calls this set volatile and treats it the same way. The cost
+ * is real and the alternative is a sheet that lies about the date, so
+ * the set is kept as small as it can be: these four and nothing else.
+ * `INDIRECT` and `OFFSET` are deliberately *not* here — they are
+ * handled by re-deriving their edges after each evaluation, which is
+ * exact where volatility would be a blunt instrument.
+ */
+export const VOLATILE: ReadonlySet<string> = new Set(['RAND', 'RANDBETWEEN', 'NOW', 'TODAY']);
+
+/** The names handled in the evaluator rather than by the table. */
+export const SPECIAL_FORMS: ReadonlySet<string> = new Set(['IF', 'IFS', 'SWITCH', 'INDIRECT', 'OFFSET']);
+
+/** Whether the sheet knows a name at all, however it is implemented. */
 export function isSheetFunction(name: string): boolean {
-  return Object.prototype.hasOwnProperty.call(FUNCTIONS, name);
+  return Object.prototype.hasOwnProperty.call(FUNCTIONS, name) || SPECIAL_FORMS.has(name);
 }
+
+/** Every name the sheet knows, for the conformance table to walk. */
+export function functionNames(): string[] {
+  return [...Object.keys(FUNCTIONS), ...SPECIAL_FORMS].sort();
+}
+
+/** The default context: the real clock and real dice. */
+export function liveContext(): FunctionContext {
+  const serial = nowSerial();
+  return { now: () => serial, random: () => Math.random() };
+}
+
+/**
+ * The moment, as a serial.
+ *
+ * Local rather than UTC, deliberately and unlike everything else in
+ * `Dates.ts`: `TODAY()` has to be the date on the wall of the person
+ * looking at the screen. A UTC `TODAY()` is yesterday all evening in
+ * Auckland, which is the one thing it must never be. Stored dates
+ * stay UTC — they are the same day for everybody — and only the
+ * reading of *now* is local, because only *now* is a question about
+ * where you are standing.
+ */
+export function nowSerial(): number {
+  const at = new Date();
+  const midnight = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
+  const days = Math.round((Date.UTC(at.getFullYear(), at.getMonth(), at.getDate()) - Date.UTC(1899, 11, 30)) / 86_400_000);
+  return days + (at.getTime() - midnight) / 86_400_000;
+}
+
+/** Re-exported so the evaluator can build arguments without a cycle. */
+export { scalar };
+export type { CellValue };

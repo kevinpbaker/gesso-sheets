@@ -109,6 +109,12 @@ function operandValue(text: string): CellValue {
  * what treating a blank as zero here would give.
  */
 function equal(value: CellValue, wanted: CellValue): boolean {
+  if (isError(wanted)) {
+    // A criterion that is itself an error matches the same error,
+    // which is how `COUNTIF(A:A, "#N/A")`'s cousin behaves and is the
+    // only reading that is not simply "never".
+    return isError(value) && value.code === wanted.code;
+  }
   if (wanted === null) {
     return value === null;
   }
@@ -143,11 +149,19 @@ function textOf(value: CellValue): string {
   return isError(value) ? value.code : String(value);
 }
 
+/**
+ * Whether a criterion is a pattern rather than a literal.
+ *
+ * True for an unescaped `*` or `?`, and *also* for an escaped one —
+ * `"N~*"` has no wildcard left once the tilde is read, but it still
+ * has to go through the pattern builder, because that is what strips
+ * the tilde. Answering false there compared the criterion to the
+ * cell tilde and all, and matched nothing.
+ */
 function hasWildcards(text: string): boolean {
   for (let at = 0; at < text.length; at++) {
-    if (text[at] === '~') {
-      at++;
-      continue;
+    if (text[at] === '~' && escapable(text[at + 1])) {
+      return true;
     }
     if (text[at] === '*' || text[at] === '?') {
       return true;
@@ -156,12 +170,17 @@ function hasWildcards(text: string): boolean {
   return false;
 }
 
+/** The three characters a tilde can escape; before anything else it is one. */
+function escapable(character: string | undefined): boolean {
+  return character === '*' || character === '?' || character === '~';
+}
+
 /** `N*` as a regular expression, with `~` escaping a literal star. */
 function wildcardPattern(text: string): RegExp {
   let source = '';
   for (let at = 0; at < text.length; at++) {
     const character = text[at];
-    if (character === '~' && at + 1 < text.length) {
+    if (character === '~' && escapable(text[at + 1])) {
       source += escapeLiteral(text[++at]);
       continue;
     }

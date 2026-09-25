@@ -25,7 +25,7 @@ export type Token =
 
 export class FormulaSyntaxError extends Error {}
 
-const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!'];
+const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A'];
 
 const TWO_CHARACTER_OPERATORS = new Set(['<>', '<=', '>=']);
 const ONE_CHARACTER_OPERATORS = new Set(['+', '-', '*', '/', '^', '&', '=', '<', '>']);

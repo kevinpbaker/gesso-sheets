@@ -1,11 +1,23 @@
 /**
  * What a cell holds, and how one kind becomes another.
  *
- * Five error values, as the roadmap lists them, and no sixth. They are
- * tagged objects rather than strings because a cell may legitimately
- * hold the *text* `#REF!` — someone pasted it from a report — and a
- * sheet that cannot tell that apart from the error is a sheet that
- * cannot be trusted about either.
+ * Six error values, and no seventh. They are tagged objects rather
+ * than strings because a cell may legitimately hold the *text*
+ * `#REF!` — someone pasted it from a report — and a sheet that cannot
+ * tell that apart from the error is a sheet that cannot be trusted
+ * about either.
+ *
+ * It was five until Phase 11. `#N/A` is the sixth, and it arrived
+ * with the lookups because it is the answer to a question they are
+ * constantly asked: `VLOOKUP` that found nothing has not failed, and
+ * calling that `#VALUE!` would say the formula is wrong when the
+ * formula is fine and the table simply does not have that row.
+ * `IFNA` exists to catch exactly this one and nothing else, which is
+ * only a coherent function if the code is its own.
+ *
+ * `#NUM!` is deliberately still absent. `SQRT(-1)` and `LN(0)` give
+ * `#VALUE!` here: a value of the wrong kind was passed, which is what
+ * `#VALUE!` says, and a seventh code earns less than it costs.
  *
  * `null` is an empty cell, and it is not the same as `''`. An empty
  * cell is zero in arithmetic and the empty string in text, which is
@@ -13,7 +25,7 @@
  * happens to be empty, and `COUNT` treats them differently.
  */
 
-export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!';
+export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!' | '#N/A';
 
 export interface CellError {
   readonly kind: 'error';
@@ -37,6 +49,8 @@ export const NAME = error('#NAME?');
 export const VALUE = error('#VALUE!');
 /** A cell that depends, however indirectly, on itself. */
 export const CIRC = error('#CIRC!');
+/** A lookup that found nothing. Not a failure — an absence. */
+export const NA = error('#N/A');
 
 /**
  * Takes `unknown` rather than `CellValue` because it is the guard the

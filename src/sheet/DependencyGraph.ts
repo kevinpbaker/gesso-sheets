@@ -1,3 +1,5 @@
+import { columnOf } from './A1';
+
 /**
  * Who reads whom.
  *
@@ -7,17 +9,30 @@
  * question an edit asks is "what has to be redone", which is the
  * inverse direction.
  *
- * Ranges are expanded to their cells. `=SUM(A1:A100)` stores a hundred
- * edges, which is the honest thing at this phase and wrong at scale:
- * a sheet with a column of running totals stores a triangle of them.
- * The fix is an interval index that answers "which formulas cover this
- * cell" without an edge per cell, and it is a Phase 1 follow-up rather
- * than part of it — the recalc budget this phase is judged on counts
- * *evaluations*, which an interval index would not change.
+ * Ranges written as rectangles are expanded to their cells.
+ * `=SUM(A1:A100)` stores a hundred edges, which is honest at this
+ * scale and wrong at a larger one: a sheet with a column of running
+ * totals stores a triangle of them. The recalc budget the engine is
+ * judged on counts *evaluations*, which an index would not change, so
+ * the expansion has stayed.
+ *
+ * **A whole-column reference cannot be expanded at all.** `=SUM(A:A)`
+ * covers 1,048,576 cells and Phase 11 made it writable, so columns are
+ * *watched* instead: one entry per column per formula, and
+ * `dependentsOf` unions the watchers in. That is the interval index
+ * this file has wanted since Phase 1, built for the one case that
+ * cannot live without it rather than for all of them — because the
+ * case that cannot live without it is also the case where the index is
+ * trivially exact, a column being a whole coordinate rather than a
+ * span.
  */
 export class DependencyGraph {
   private readonly precedents = new Map<number, Set<number>>();
   private readonly dependents = new Map<number, Set<number>>();
+  /** Formulas reading a whole column, by the column they read. */
+  private readonly columnWatchers = new Map<number, Set<number>>();
+  /** And the inverse, so a formula can take its watches back. */
+  private readonly watchedColumns = new Map<number, number[]>();
 
   /**
    * Replaces everything `key` reads.
@@ -54,10 +69,53 @@ export class DependencyGraph {
   clear(): void {
     this.precedents.clear();
     this.dependents.clear();
+    this.columnWatchers.clear();
+    this.watchedColumns.clear();
+  }
+
+  /**
+   * Records that `key` reads every cell of these columns.
+   *
+   * Replaces whatever it watched before, on the same rule as
+   * `setPrecedents`: a formula's references are rewritten as a unit.
+   */
+  setWatchedColumns(key: number, columns: readonly number[]): void {
+    this.clearWatchedColumns(key);
+    if (columns.length === 0) {
+      return;
+    }
+    this.watchedColumns.set(key, [...columns]);
+    for (const column of columns) {
+      let watchers = this.columnWatchers.get(column);
+      if (watchers === undefined) {
+        watchers = new Set();
+        this.columnWatchers.set(column, watchers);
+      }
+      watchers.add(key);
+    }
+  }
+
+  private clearWatchedColumns(key: number): void {
+    const columns = this.watchedColumns.get(key);
+    if (columns === undefined) {
+      return;
+    }
+    for (const column of columns) {
+      const watchers = this.columnWatchers.get(column);
+      if (watchers === undefined) {
+        continue;
+      }
+      watchers.delete(key);
+      if (watchers.size === 0) {
+        this.columnWatchers.delete(column);
+      }
+    }
+    this.watchedColumns.delete(key);
   }
 
   /** Forgets that `key` reads anything. Its readers are untouched. */
   clearPrecedents(key: number): void {
+    this.clearWatchedColumns(key);
     const existing = this.precedents.get(key);
     if (existing === undefined) {
       return;
@@ -79,8 +137,29 @@ export class DependencyGraph {
     return this.precedents.get(key) ?? EMPTY;
   }
 
+  /**
+   * What reads a cell: the edges to it, plus anything watching its
+   * column.
+   *
+   * Unioned here rather than at each call site because every walk in
+   * this file asks the same question, and a walk that forgot the
+   * watchers would leave a `=SUM(A:A)` stale after a write to A900 —
+   * silently, which is the failure mode a spreadsheet cannot have.
+   */
   dependentsOf(key: number): ReadonlySet<number> {
-    return this.dependents.get(key) ?? EMPTY;
+    const direct = this.dependents.get(key) ?? EMPTY;
+    const watchers = this.columnWatchers.get(columnOf(key)) ?? EMPTY;
+    if (watchers.size === 0) {
+      return direct;
+    }
+    if (direct.size === 0) {
+      return watchers;
+    }
+    const both = new Set(direct);
+    for (const watcher of watchers) {
+      both.add(watcher);
+    }
+    return both;
   }
 
   /**
@@ -127,15 +206,28 @@ export class DependencyGraph {
    * every spreadsheet does.
    */
   topological(cells: ReadonlySet<number>): { order: number[]; circular: number[] } {
+    /**
+     * In-degrees, counted forwards rather than backwards.
+     *
+     * The obvious spelling asks each cell for its precedents and
+     * counts the ones in the set. That cannot see a column watch —
+     * `precedentsOf` has no entry for the million cells of `A:A` and
+     * must not — so the count is taken the other way instead: walk
+     * the set once and add one to each dependent, which goes through
+     * `dependentsOf` and therefore through the watchers. Same number,
+     * same cost, and it works for both kinds of edge.
+     */
     const remaining = new Map<number, number>();
     for (const cell of cells) {
-      let indegree = 0;
-      for (const precedent of this.precedentsOf(cell)) {
-        if (cells.has(precedent)) {
-          indegree++;
+      remaining.set(cell, 0);
+    }
+    for (const cell of cells) {
+      for (const dependent of this.dependentsOf(cell)) {
+        const indegree = remaining.get(dependent);
+        if (indegree !== undefined) {
+          remaining.set(dependent, indegree + 1);
         }
       }
-      remaining.set(cell, indegree);
     }
 
     const order: number[] = [];
