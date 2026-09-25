@@ -12,7 +12,10 @@ available: everyone has felt a browser spreadsheet die, the failure is
 legible without a profiler, and reviewers will try to break it
 themselves rather than take a benchmark's word for it.
 
-**Status:** all eight phases done, all eight exit criteria met. Phase
+**Status:** Part One is done — eight phases, eight exit criteria met.
+[Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration) is the
+plan for turning the proof into a spreadsheet somebody would keep a
+budget in, and none of it has started. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid and the
 editor in `src/app`, the proof strip in `src/shell`, and `pnpm test` is
@@ -422,15 +425,377 @@ in which a real browser found something the suite could not.
 
 ---
 
-## Not in v1
+## What was not in v1
 
 Charts, pivot tables, multiple sheets, conditional formatting, and
-merged cells.
+merged cells were all held back, and all but the pivot tables come
+back in Part Two below. The objection recorded against merging —
+that it fights `subgrid: 'columns'` — is stale: Phase 3 stopped using
+subgrid, for unrelated reasons, and the real cost turned out to be
+somewhere else. See Phase 10.
 
-Merging is the tempting one and the one that fights `subgrid: 'columns'`
-hardest: it wants a cell to span tracks its row does not own. If merged
-cells turn out to be required, they are their own engine phase, not a
-detail of Phase 3.
+---
+
+# Part two — a spreadsheet rather than a demonstration
+
+The eight phases above proved the claim. Nobody keeps a budget in a
+proof.
+
+Part two is the ordinary work: a top bar, formats, insert and delete,
+a function library worth the name, several sheets, charts, and files
+that came from somewhere else. None of it is novel and all of it is
+required, and the interesting question is not how to build any one of
+these — it is whether the thing Part One bought survives having them
+built on top of it. A spreadsheet with a toolbar bound to the
+selection, formats on every cell, conditional rules over a million
+rows and a chart open is the sheet that usually stops being fast.
+
+Somebody could stop after Phase 11 and have a spreadsheet they would
+keep a budget in. The phases after it are what make them keep a
+second one.
+
+## The rule Part Two runs under
+
+Every phase below inherits three exit criteria on top of its own, and
+a phase that cannot meet them is a phase whose design is wrong rather
+than a budget that needs raising:
+
+1. **Patches are proportional to the viewport, never to the sheet.**
+   Phase 2's spec is the template, and each phase that adds a view key
+   owes one of its own.
+2. **`pnpm proof` does not move.** The fourth budget — a frame while
+   recalculating may not cost more than 4 ms over a frame while idle —
+   holds with the whole chrome mounted, not just with a bare grid.
+3. **`src/sheet` still imports nothing.** `boundaries.spec.ts` fails
+   the build over a stray framework import, and three of the phases
+   below are large enough to be tempted.
+
+---
+
+### Phase 8 — The top bar
+
+A menu bar (File, Edit, Insert, Format, Data, View, Help), a toolbar
+beneath it, the name box beside the formula bar, and a status bar
+along the bottom carrying the selection's Sum, Average and Count —
+the readout people check before they trust a column.
+
+The bar is painted in the render worker, like everything else, and
+that is the point of doing it rather than a reason to dread it. The
+grid was one role repeated across a lot of cells; the bar is fifteen
+roles with a traversal model — Alt opens the menu bar, arrows walk
+across the menus and down their items, Escape closes, type-ahead
+jumps, and an item shows its own shortcut. `menubar`, `menuitem`,
+`menuitemcheckbox` and `menuitemradio` are in `UI_ROLES` already, so
+the semantics are available; `Menu` in `gesso-components` is a popup
+that knows nothing about a bar above it, so traversal *between* menus
+is engine work, and probably upstream.
+
+The trap is performance and it is Phase 0's trap wearing a hat. A
+toolbar bound to the selection re-renders on every arrow key, so its
+buttons must be memoized by what they show exactly as Phase 3
+memoized cells by the cell they hold. A bar that reallocates its
+bindings on every keystroke is the cell-binding bug again, in the one
+part of the screen that is on top of everything.
+
+Find and replace lands here too, on `FindBar`, along with the
+distinction between clearing contents and clearing formats, and a
+shortcut sheet that is generated from the keymap rather than written
+beside it.
+
+**Exit:** the whole bar driven from the keyboard through the semantics
+tree with no pointer event anywhere in the spec — Phase 4's standard,
+applied to the chrome. And `pnpm proof` with the bar mounted, plus a
+fifth budget: the median frame while a menu is open over a scrolling
+sheet.
+
+### Phase 9 — The format axis
+
+The format model in `src/sheet`: number formats (general, number with
+places, currency, percent, scientific, date, time, text, and a custom
+pattern), weight, italic, underline, size, text colour, fill,
+horizontal and vertical alignment, wrap, indent, and borders.
+
+The contract gains a seventh view key, `formats`, a window keyed
+exactly as `window` is — carrying **an index into a palette, not a
+record**. A column formatted as currency is one palette entry and one
+small integer per visible cell; a record per cell would double the
+bytes on the wire and give the differ a nested object to walk for
+every cell in the window. The palette changes when somebody formats
+something and the indices change when the viewport moves, and those
+being different rates is the same argument that split `rows` from
+`open`.
+
+Formatting itself stays on the application worker. `display()`
+already returns a formatted string and now consults the cell's format
+to build it; the render worker must never learn a number format,
+because a locale-aware formatter on the frame path is precisely the
+work this architecture exists to keep off it. The consequence to
+accept rather than engineer around: changing a format republishes the
+window's *values* as well as its indices. That is bounded by the
+viewport, which is the whole answer.
+
+File format v2 — `formats` and the palette beside `cells` — and a
+format change is a `Step` on the existing undo stack, not a second
+one.
+
+**Exit:** a patch-count spec. Formatting a column of 50,000 cells
+emits one palette patch and one patch per visible cell,
+`toHaveLength` and not a ceiling. And `pnpm proof` over a sheet where
+every cell is formatted: the same budget, not a new one.
+
+### Phase 10 — Rows, columns, and cells that span
+
+Insert and delete rows and columns, hide and unhide, autofit, freeze
+at an arbitrary cell rather than only at the headers, sort a range,
+filter, and merge.
+
+The hard half is references, and it is a different rewrite from the
+one `Rewrite.ts` already does. A fill moves relative references and
+pins absolute ones; an insert moves *both*, because `$A$1` is
+absolute against a fill and not against a column that appeared to its
+left. References into a deleted region become `#REF!`; a range that
+spans the boundary grows or shrinks rather than moving. That one
+distinction is what every implementation gets wrong exactly once.
+
+The cost to watch is that an insert rewrites every formula below the
+line and rebuilds their edges — on a 200,000-cell chain, that is the
+whole graph in one call. It has to go through the same resumable
+queue the recalc uses, or an insert is a five-second freeze on the
+one thread in this application that is not allowed to have one.
+
+Merging is here rather than in its own phase because merging is a
+structural edit, and because the objection recorded against it is no
+longer the real one. The real cost is that `UiVirtualSheet` mounts
+the cells the window covers, and a merge whose anchor has scrolled
+off the top must still paint into the window — so the mounted set has
+to be widened by the merges intersecting it. That is engine work, and
+it is the first thing in this project that makes what is mounted
+depend on what the document says.
+
+**Exit:** a rewrite-count spec in Phase 1's style — inserting a row
+above a column of 50,000 formulas rewrites exactly the formulas that
+reference it, `toBe` and not `toBeLessThan`. And an insert performed
+mid-scroll that does not drop a frame, asserted by `pnpm proof`.
+
+### Phase 11 — The library, and dates
+
+Headless, in `src/sheet`, under vitest in node. `boundaries.spec.ts`
+guards the whole phase.
+
+Dates first, because a spreadsheet without them is a toy. A date is a
+number with a format — Excel's serial from 1899-12-30 — and the only
+new thing in the value model is that typing `2026-09-24` into a cell
+sets a number *and* a format. That is the single point where the
+engine and the format axis touch, and it is why this phase comes
+after Phase 9 rather than before it.
+
+Then roughly sixty functions in six families: logic (`AND`, `OR`,
+`NOT`, `XOR`, `IFERROR`, `IFNA`, `IFS`, `SWITCH`); maths (`SQRT`,
+`POWER`, `MOD`, `INT`, `TRUNC`, `CEILING`, `FLOOR`, `SIGN`, `EXP`,
+`LN`, `LOG`, `RAND`, `RANDBETWEEN`, `SUMPRODUCT`); statistics
+(`MEDIAN`, `MODE`, `STDEV`, `VAR`, `COUNTA`, `COUNTBLANK`, `LARGE`,
+`SMALL`, `RANK`, `PERCENTILE`); conditional aggregates (`SUMIF`,
+`SUMIFS`, `COUNTIF`, `COUNTIFS`, `AVERAGEIF`, and the `">10"`
+criteria grammar all of them share); text (`LEFT`, `RIGHT`, `MID`,
+`LEN`, `FIND`, `SEARCH`, `TRIM`, `UPPER`, `LOWER`, `PROPER`,
+`SUBSTITUTE`, `REPLACE`, `REPT`, `TEXTJOIN`, `VALUE`, and `TEXT`,
+which is Phase 9's formatter called from inside a formula); lookup
+(`VLOOKUP`, `HLOOKUP`, `INDEX`, `MATCH`, `XLOOKUP`, `OFFSET`,
+`INDIRECT`, `CHOOSE`); and dates (`TODAY`, `NOW`, `DATE`, `DATEDIF`,
+`YEAR`, `MONTH`, `DAY`, `HOUR`, `MINUTE`, `WEEKDAY`, `EDATE`,
+`EOMONTH`, `NETWORKDAYS`).
+
+Three of those are dangerous and are worth naming now rather than
+discovering. `INDIRECT` and `OFFSET` compute their references while
+being evaluated, so the graph cannot know their edges beforehand and
+has to re-derive them after each evaluation; getting that wrong
+produces a cell that is stale and never woken, which is the worst bug
+a spreadsheet can have because it is silent. `RAND`, `NOW` and
+`TODAY` are volatile: they recalculate whenever anything does, which
+is a set the graph carries beside its edges.
+
+Full-column references (`A:A`) arrive here, and they are the stress
+this phase exists to apply. `=SUM(A:A)` must not create a million
+edges — Phase 1 already proved a range edge wakes its formula once
+and not once per cell, so this should hold, and the spec is what says
+it did rather than that it was assumed to.
+
+**Exit:** a conformance table — input, expected value, asserted as a
+literal — covering every function and its error cases; and a budget
+spec saying a `VLOOKUP` down a full column evaluates once per edit
+inside that column and not once per row.
+
+### Phase 12 — The formula editor
+
+Everything a person uses while actually typing a formula: function
+autocomplete with the signature and the current argument highlighted,
+references coloured in the text and outlined in the grid as they are
+typed, clicking or dragging a range into a formula mid-typing, F4
+cycling `A1 → $A$1 → A$1 → $A1`, matching-paren highlight, an error's
+`explain` shown under the cell rather than in a panel, and named
+ranges — `Insert ▸ Name`, and the name box defining one.
+
+It is separate from Phase 11 for a reason worth keeping: Phase 11
+adds nothing that imports the framework and this phase is nothing
+else. Keeping the seam is what lets the library stay runnable in node
+and keeps `boundaries.spec.ts` meaningful instead of ceremonial.
+
+The one genuinely hard piece is reference picking. While a cell is
+open and the caret sits just after an operator, a click in the grid
+must insert an address rather than move the selection — that is a
+mode, and modes are where spreadsheets keep their worst bugs. It
+belongs in pure logic with a spec, in the shape `SheetKeys` already
+has, and not in a click handler.
+
+**Exit:** Phase 4's standard again — driven through the semantics
+tree, keyboard-only wherever keyboard will do — and the reference
+picking written as a table of (caret context, click) → result.
+
+### Phase 13 — Many sheets
+
+Tabs along the bottom: add, rename, delete, reorder, duplicate,
+colour. `Sheet2!A1` and `'Q3 Budget'!A1:B9` in the parser.
+Three-dimensional ranges left out.
+
+The key widens everywhere. The store is keyed by a packed row and
+column; it becomes a sheet id and that. The dependency graph keys the
+same way. `SheetContract` gains a `sheets` view key — the list and
+the active one — and the viewport names its sheet, which is cheaper
+than putting a sheet argument on every command and says the same
+thing.
+
+The claim this phase has to defend, and why it carries a patch-count
+spec of Phase 2's kind: a formula on Sheet 1 depending on 50,000
+cells on Sheet 2 publishes **nothing** while Sheet 2 is not the sheet
+in view. Cross-sheet references are exactly where a naive
+implementation starts publishing the whole workbook, and the failure
+is invisible until the workbook is large.
+
+Deleting a sheet turns every reference to it into `#REF!` and
+renaming one rewrites them, which is Phase 10's rewrite machinery
+aimed down a third axis. File format v3.
+
+**Exit:** the cross-sheet patch-count spec above, and Phase 6's
+reload proof run over a three-sheet workbook with cross-references in
+both directions.
+
+### Phase 14 — Formats that think
+
+Conditional formatting and data validation.
+
+The design is worth writing down before it is built, because the
+obvious implementation is the expensive one. **A conditional format
+is resolved at the window, not in the graph.** A rule is a formula
+over a range; a rule covering a million cells does not need a million
+graph nodes, because a format nobody can see does not exist. The
+application worker evaluates each rule for the cells in the window at
+publish time and folds the answer into the palette index Phase 9 is
+already sending. A rule over the whole sheet costs the viewport,
+which is the sentence this file keeps writing.
+
+The catch, stated honestly rather than waved at: a rule that reads
+other cells must re-resolve when those change. The window republishes
+then anyway, so the answer is to re-resolve the window's rules on
+every publish and then *measure* whether that is affordable rather
+than assuming it. It is a few hundred formula evaluations per frame
+at worst, which is the same order as a slice of the recalc pump the
+worker already runs between publishes — but that is a prediction, and
+this phase's job is to replace it with a number.
+
+Data validation is the same shape: a per-cell predicate resolved at
+the window, drawn as a marker, enforced at commit, with a dropdown
+when the rule is a list.
+
+**Exit:** a colour-scale rule over a million cells, scrolled, with
+`pnpm proof` unchanged; and a patch-count spec saying the rule
+published palette indices for the window and nothing else.
+
+### Phase 15 — Charts
+
+`<paint>` is the element — a box the application draws into over a
+full path surface — so a chart is a component that subscribes to a
+series and strokes it. Line, bar, column, stacked, area, pie and
+scatter, with axes, a legend and a title.
+
+This phase has an admission to make, and making it plainly is better
+than breaking the invariant quietly. A chart is the first thing that
+lets the render worker know about cells that are not on screen. It
+does not learn the *cells*: it learns a **series**, built by the
+application worker from the range and published on its own view key
+at its own rate. And a chart 400 px wide should not be sent 50,000
+points, so the worker downsamples to the chart's own pixel width
+before it sends anything. "The render worker never learns about a
+cell that is not on screen" becomes "the render worker learns a
+series, at the resolution it can draw" — which is a weaker sentence
+and a true one.
+
+Charts float over the grid in the sheet's coordinate space: they
+scroll with it and are hit-tested against it, and a chart is
+selectable, movable and resizable. That is a small floating-object
+layer the grid does not have, and it is what images and shapes would
+later reuse.
+
+**Exit:** a 50,000-point chart open while the sheet scrolls, with
+`pnpm proof` unchanged; and a spec asserting the series published for
+a chart 400 px wide holds at most 400 points.
+
+### Phase 16 — Files that leave the tab
+
+CSV import and export, `.gsheet` open and save-as through the File
+System Access API, several documents open at once, recent files, and
+a file dropped on the window.
+
+**On `.xlsx`, which was an open question: CSV and local files now,
+`.xlsx` import as the phase after this one, `.xlsx` export not yet.**
+Reading xlsx is a zip reader and a handful of OOXML parts — sheets,
+shared strings, styles, the calc chain ignored — and it is tractable
+precisely because a reader is allowed to drop what it does not
+understand. Writing xlsx is a fidelity contract with Excel, and every
+part that cannot be round-tripped is somebody's lost work. Import is
+what makes this a spreadsheet people can bring their data to; export
+is what makes it a spreadsheet people can lose their data with. Do
+the first, and let the second wait until something has actually been
+imported.
+
+CSV is not TSV with a different separator, and Phase 5's `Tsv.ts`
+will not cover it: quoting, embedded newlines, a BOM, semicolon
+locales, and the question of whether `=1+2` arriving in a CSV cell is
+a formula. It is text. A CSV is data and not a program, and treating
+it as one is how spreadsheet injection works.
+
+**Exit:** Phase 6's proof, widened — import a CSV exported from
+somewhere else, save it to the local disk as `.gsheet`, close the
+tab, reopen the file, and the formulas added since recalculate.
+
+---
+
+## Still not in it, after all sixteen
+
+Pivot tables, macros and scripting, collaborative editing, `.xlsx`
+export, rich text runs *within* a single cell (formatting is
+per-cell, and a bold word inside a cell is a different text model),
+and touch.
+
+Touch is the one with a date on it. `UiTouchScroller` is still
+one-axis, noted in Phase 0 and still true, so a tablet cannot scroll
+this sheet sideways at all. Whichever phase first wants a tablet
+closes it.
+
+## What Gesso still does not have
+
+Carried forward from the head of this file, with what Part Two adds:
+
+- **Menu bar traversal.** `Menu` is a popup with no notion of a bar
+  above it. The roles exist; the arrow-across-the-menus model does
+  not. Phase 8, probably upstream.
+- **A mounted set that depends on the document.** `UiVirtualSheet`
+  mounts what the window covers, and a merged cell anchored above the
+  window still has to paint into it. Phase 10, and it is the deepest
+  of the three.
+- **A floating object layer over a scroll surface.** Selectable,
+  movable, resizable things in a scrolled coordinate space, which
+  charts need and images would reuse. Phase 15.
+- **Two-axis touch scroll.** Still open, from Phase 0.
 
 ---
 
