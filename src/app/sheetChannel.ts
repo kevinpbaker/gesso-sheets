@@ -15,6 +15,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
   return serve(Sheet, {
     view: {
       window: service.window,
+      sheets: service.sheets,
       geometry: service.geometry,
       selection: service.selection,
       editor: service.editor,
@@ -29,8 +30,15 @@ export function sheetChannel(service: SheetService): ServedChannel {
       autofit: service.autofit
     },
     commands: {
-      setViewport: (firstRow, lastRow, firstColumn, lastColumn) =>
-        service.setViewport(firstRow, lastRow, firstColumn, lastColumn),
+      setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
+        service.setViewport(sheet, firstRow, lastRow, firstColumn, lastColumn),
+      activateSheet: sheet => service.activateSheet(sheet),
+      addSheet: () => service.addSheet(),
+      renameSheet: (sheet, name) => service.renameSheet(sheet, name),
+      removeSheet: sheet => service.removeSheet(sheet),
+      moveSheet: (from, to) => service.moveSheet(from, to),
+      duplicateSheet: sheet => service.duplicateSheet(sheet),
+      setSheetColour: (sheet, colour) => service.setSheetColour(sheet, colour),
       setCell: (row, column, input) => service.setCell(row, column, input),
       setSelection: (row, column, anchorRow, anchorColumn) =>
         service.setSelection(row, column, anchorRow, anchorColumn),

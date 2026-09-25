@@ -34,6 +34,13 @@ export class Merges {
     return this.rects.length;
   }
 
+  /** A copy, for duplicating the sheet these merges are drawn on. */
+  copy(): Merges {
+    const made = new Merges();
+    made.rects = this.rects.map(rect => ({ ...rect }));
+    return made;
+  }
+
   /** The merge covering a cell, or null. */
   at(row: number, column: number): MergeRect | null {
     for (const rect of this.rects) {

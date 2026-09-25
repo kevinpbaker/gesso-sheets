@@ -44,7 +44,7 @@ describe('the cost of formatting', () => {
       command(h.port, 'setCell', row, 0, String(row));
     }
     h.clock.drain();
-    command(h.port, 'setViewport', 0, VISIBLE - 1, 0, 0);
+    command(h.port, 'setViewport', 0, 0, VISIBLE - 1, 0, 0);
     command(h.port, 'setSelection', 0, 0, CELLS - 1, 0);
     h.clock.drain();
     h.port.clear();
@@ -71,7 +71,7 @@ describe('the cost of formatting', () => {
     }
     h.clock.drain();
     // Looking at the far end of the sheet, nowhere near the column.
-    command(h.port, 'setViewport', 0, 29, 5, 9);
+    command(h.port, 'setViewport', 0, 0, 29, 5, 9);
     command(h.port, 'setSelection', 0, 0, CELLS - 1, 0);
     h.clock.drain();
     h.port.clear();
@@ -96,7 +96,7 @@ describe('the cost of formatting', () => {
       command(h.port, 'setCell', row, 0, '1234.5');
     }
     h.clock.drain();
-    command(h.port, 'setViewport', 0, VISIBLE - 1, 0, 0);
+    command(h.port, 'setViewport', 0, 0, VISIBLE - 1, 0, 0);
     command(h.port, 'setSelection', 0, 0, 4_999, 0);
     h.clock.drain();
     h.port.clear();
@@ -116,7 +116,7 @@ describe('the cost of formatting', () => {
   it('sends nothing at all for a sheet nobody has formatted', () => {
     command(h.port, 'setCell', 0, 0, '1');
     h.clock.drain();
-    command(h.port, 'setViewport', 0, 29, 0, 9);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 9);
     h.clock.drain();
     h.port.clear();
 
@@ -139,14 +139,14 @@ describe('the cost of formatting', () => {
       command(h.port, 'setCell', row, 0, String(row));
     }
     h.clock.drain();
-    command(h.port, 'setViewport', 0, 29, 0, 0);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 0);
     command(h.port, 'setSelection', 0, 0, 199, 0);
     h.clock.drain();
     command(h.port, 'format', { bold: true });
     h.clock.drain();
     h.port.clear();
 
-    command(h.port, 'setViewport', 1, 30, 0, 0);
+    command(h.port, 'setViewport', 0, 1, 30, 0, 0);
 
     // Four: the row that arrived, the row that left, and the two
     // bounds that moved.
@@ -162,7 +162,7 @@ describe('the cost of formatting', () => {
     command(h.port, 'setCell', 0, 0, '1');
     command(h.port, 'setCell', 1, 0, '2');
     h.clock.drain();
-    command(h.port, 'setViewport', 0, 29, 0, 0);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 0);
     command(h.port, 'setSelection', 0, 0, 0, 0);
     command(h.port, 'format', { bold: true });
     h.clock.drain();
@@ -317,7 +317,7 @@ describe('formatting a whole region', () => {
   /** And the wire is unchanged, which is what makes it all work. */
   it('still costs the viewport on the wire', () => {
     h = sheet(10_000, 100);
-    command(h.port, 'setViewport', 0, 29, 0, 9);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 9);
     command(h.port, 'setSelection', 0, 0, 9_999, 99);
     h.clock.drain();
     h.port.clear();
@@ -355,7 +355,7 @@ describe('the cells a frozen pane needs', () => {
     command(h.port, 'setCell', 0, 20, 'scrolled');
     h.clock.drain();
     command(h.port, 'freeze', 0, 1);
-    command(h.port, 'setViewport', 0, 9, 18, 25);
+    command(h.port, 'setViewport', 0, 0, 9, 18, 25);
     h.clock.drain();
 
     const window = h.window();
@@ -368,7 +368,7 @@ describe('the cells a frozen pane needs', () => {
     command(h.port, 'setCell', 500, 5, 'far down');
     h.clock.drain();
     command(h.port, 'freeze', 1, 0);
-    command(h.port, 'setViewport', 495, 505, 0, 9);
+    command(h.port, 'setViewport', 0, 495, 505, 0, 9);
     h.clock.drain();
 
     const window = h.window();
@@ -386,18 +386,18 @@ describe('the cells a frozen pane needs', () => {
     command(h.port, 'setCell', 250, 5, 'in between');
     h.clock.drain();
     command(h.port, 'freeze', 1, 0);
-    command(h.port, 'setViewport', 495, 505, 0, 9);
+    command(h.port, 'setViewport', 0, 495, 505, 0, 9);
     h.clock.drain();
 
     expect(h.window().cells[250]).toBeUndefined();
   });
 
   it('sends nothing extra when nothing is frozen', () => {
-    command(h.port, 'setViewport', 495, 505, 0, 9);
+    command(h.port, 'setViewport', 0, 495, 505, 0, 9);
     h.clock.drain();
     h.port.clear();
 
-    command(h.port, 'setViewport', 496, 506, 0, 9);
+    command(h.port, 'setViewport', 0, 496, 506, 0, 9);
 
     // The row that arrived, the row that left, and the two bounds —
     // the same four patches a scroll has always cost.

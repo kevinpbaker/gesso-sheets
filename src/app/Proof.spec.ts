@@ -72,7 +72,7 @@ describe('the proof surface', () => {
    */
   it('answers a scroll while it still owes two hundred thousand cells', () => {
     const h = attach();
-    h.service.setViewport(0, 30, 0, 10);
+    h.service.setViewport(0, 0, 30, 0, 10);
     h.document.sheet.setCell(5, 0, 'before');
     h.clock.drain();
 
@@ -81,7 +81,7 @@ describe('the proof surface', () => {
     expect(h.document.sheet.pending).toBeGreaterThan(0);
 
     // Somebody scrolls, mid-recalculation.
-    h.service.setViewport(9_000, 9_030, 0, 10);
+    h.service.setViewport(0, 9_000, 9_030, 0, 10);
     h.clock.tick();
 
     expect(h.document.sheet.pending).toBeGreaterThan(0);
@@ -119,7 +119,7 @@ describe('the proof surface', () => {
    */
   it('sends no window patches for cells nobody is looking at', () => {
     const h = attach();
-    h.service.setViewport(0, 30, 0, 10);
+    h.service.setViewport(0, 0, 30, 0, 10);
     h.clock.drain();
     h.port.clear();
 

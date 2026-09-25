@@ -1973,12 +1973,33 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
   });
 
-  // The round trip: the range the window settled on is what the
-  // application worker is asked for. `range$` emits only when the
-  // range changes, so this is not a command per frame.
-  ctx.effect(sheetWindow.range$, range =>
-    sheet.send.setViewport(range.firstRow, range.lastRow, range.firstColumn, range.lastColumn)
-  );
+  /**
+   * The round trip: the range the window settled on is what the
+   * application worker is asked for, on the sheet it is drawn over.
+   *
+   * `range$` emits only when the range changes, so this is not a
+   * command per frame. The sheet travels with it rather than on a
+   * command of its own, which is what stops every other command
+   * needing to say which sheet it means.
+   */
+  const askForWindow = (range: {
+    firstRow: number;
+    lastRow: number;
+    firstColumn: number;
+    lastColumn: number;
+  }): void => {
+    sheet.send.setViewport(
+      sheet.view.sheets.value.active,
+      range.firstRow,
+      range.lastRow,
+      range.firstColumn,
+      range.lastColumn
+    );
+  };
+  ctx.effect(sheetWindow.range$, askForWindow);
+  // A tab change is a new window over the same range, and the range
+  // did not move — so `range$` says nothing and this has to ask.
+  ctx.effect(sheet.view.sheets, () => askForWindow(sheetWindow.range$.value));
 
   /**
    * Opening and closing a cell, which is the one thing that changes

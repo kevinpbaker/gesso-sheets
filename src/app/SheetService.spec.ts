@@ -37,7 +37,7 @@ describe('SheetService', () => {
     const { service, drain } = harness();
     service.setCell(0, 0, '=1+2');
     drain();
-    service.setViewport(0, 1, 0, 1);
+    service.setViewport(0, 0, 1, 0, 1);
 
     const window = latest<SheetWindow>(service.window);
     expect(cellIn(window, 0, 0)).toBe('3');
@@ -46,7 +46,7 @@ describe('SheetService', () => {
 
   it('shows an error as its code, because the wire carries strings', () => {
     const { service, drain } = harness();
-    service.setViewport(0, 0, 0, 0);
+    service.setViewport(0, 0, 0, 0, 0);
     service.setCell(0, 0, '=1/0');
     drain();
     expect(cellIn(latest<SheetWindow>(service.window), 0, 0)).toBe('#DIV/0!');
@@ -54,7 +54,7 @@ describe('SheetService', () => {
 
   it('moves the formula bar with the selection, and not the window', () => {
     const { service, drain } = harness();
-    service.setViewport(0, 4, 0, 4);
+    service.setViewport(0, 0, 4, 0, 4);
     service.setCell(1, 1, '=2*3');
     drain();
     const windowBefore = latest<SheetWindow>(service.window);
@@ -74,7 +74,7 @@ describe('SheetService', () => {
       document.sheet.setCell(row, 0, `=A${row}+1`);
     }
     document.sheet.recalculate();
-    service.setViewport(0, 4, 0, 0);
+    service.setViewport(0, 0, 4, 0, 0);
 
     service.setCell(0, 0, '2');
 
@@ -99,7 +99,7 @@ describe('SheetService', () => {
 
   it('puts an undone value back in the window', () => {
     const { service, drain } = harness();
-    service.setViewport(0, 0, 0, 0);
+    service.setViewport(0, 0, 0, 0, 0);
     service.setCell(0, 0, 'before');
     drain();
     service.setCell(0, 0, 'after');

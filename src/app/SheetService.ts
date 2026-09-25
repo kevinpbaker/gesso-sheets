@@ -25,6 +25,7 @@ import {
   type SheetFormatWindow,
   type SheetPalette,
   type SheetStatus,
+  type SheetTabs,
   type SheetWindow
 } from './SheetContract';
 import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
@@ -93,6 +94,7 @@ export interface SheetServiceOptions {
  */
 export class SheetService {
   readonly window: Observable<SheetWindow>;
+  readonly sheets: Observable<SheetTabs>;
   readonly geometry: Observable<SheetGeometry>;
   readonly selection: Observable<SheetSelection>;
   readonly editor: Observable<SheetEditor>;
@@ -110,6 +112,7 @@ export class SheetService {
   readonly stats = { slices: 0, publishes: 0 };
 
   private readonly windowSubject = new BehaviorSubject<SheetWindow>(EMPTY_WINDOW);
+  private readonly sheetsSubject: BehaviorSubject<SheetTabs>;
   private readonly geometrySubject: BehaviorSubject<SheetGeometry>;
   private readonly selectionSubject: BehaviorSubject<SheetSelection>;
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
@@ -194,6 +197,7 @@ export class SheetService {
       input: document.activeInput,
       explain: null
     });
+    this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
     this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], refused: '' });
     // Seeded from the document, because a sheet loaded from a file
     // arrives with its names already in it and nothing else would
@@ -202,6 +206,7 @@ export class SheetService {
     this.statusSubject = new BehaviorSubject<SheetStatus>(this.statusNow());
 
     this.window = this.windowSubject;
+    this.sheets = this.sheetsSubject;
     this.geometry = this.geometrySubject;
     this.selection = this.selectionSubject;
     this.editor = this.editorSubject;
@@ -232,10 +237,100 @@ export class SheetService {
    * ones for what it has not — and a stale value on screen for two
    * frames is not a blank sheet for two seconds.
    */
-  setViewport(firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void {
+  setViewport(sheet: number, firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void {
     this.viewport = { firstRow, lastRow, firstColumn, lastColumn };
+    // The sheet arrives with the window, so a scroll and a tab change
+    // are the same message. Published in full when it moved, because
+    // everything below the window is the active sheet's too.
+    if (this.document.activate(sheet)) {
+      this.publishSheet();
+      return;
+    }
     this.publishWindow();
     this.publishFormats();
+  }
+
+  // ---------------------------------------------------------------------
+  // The sheets
+  // ---------------------------------------------------------------------
+
+  activateSheet(sheet: number): void {
+    if (this.document.activate(sheet)) {
+      this.publishSheet();
+    }
+  }
+
+  addSheet(): void {
+    this.document.addSheet();
+    this.publishSheet();
+    this.persist();
+  }
+
+  renameSheet(sheet: number, name: string): void {
+    if (this.document.renameSheet(sheet, name)) {
+      this.publishSheet();
+      this.persist();
+      this.pump();
+    }
+  }
+
+  removeSheet(sheet: number): void {
+    if (this.document.removeSheet(sheet)) {
+      this.publishSheet();
+      this.persist();
+      this.pump();
+    }
+  }
+
+  moveSheet(from: number, to: number): void {
+    if (this.document.moveSheet(from, to)) {
+      this.publishSheet();
+      this.persist();
+    }
+  }
+
+  duplicateSheet(sheet: number): void {
+    if (this.document.duplicateSheet(sheet) !== -1) {
+      this.publishSheet();
+      this.persist();
+      this.pump();
+    }
+  }
+
+  setSheetColour(sheet: number, colour: string | null): void {
+    if (this.document.setSheetColour(sheet, colour)) {
+      this.publishTabs();
+      this.persist();
+    }
+  }
+
+  private tabsNow(): SheetTabs {
+    return { entries: this.document.sheets(), active: this.document.active };
+  }
+
+  private publishTabs(): void {
+    this.sheetsSubject.next(this.tabsNow());
+  }
+
+  /**
+   * Everything that is about *a* sheet, because the sheet changed.
+   *
+   * Every key here is the active sheet's, which is the other half of
+   * the claim this phase defends: the window, the formats and the
+   * geometry describe one sheet, so a sheet nobody is looking at
+   * cannot publish anything — there is no key for it to publish on.
+   */
+  private publishSheet(): void {
+    this.publishTabs();
+    this.publishWindow();
+    this.publishFormats();
+    this.publishPalette();
+    this.publishGeometry();
+    this.selectionSubject.next(this.document.selection);
+    this.publishEditor();
+    this.publishActiveFormat();
+    this.publishStats();
+    this.publishStatus();
   }
 
   setCell(row: number, column: number, input: string): void {

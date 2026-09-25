@@ -57,6 +57,35 @@ export class Formats {
     return this.palette;
   }
 
+  /**
+   * A copy, for duplicating the sheet these formats are drawn on.
+   *
+   * The palette is carried across whole rather than re-interned. Ids
+   * are what the cells, rows and columns hold, so a copy that
+   * renumbered them would have to rewrite all three — and the palette
+   * only ever grows, so there is nothing to be saved by trying.
+   */
+  copy(): Formats {
+    const made = new Formats();
+    made.palette.length = 0;
+    made.palette.push(...this.palette);
+    made.ids.clear();
+    for (const [key, id] of this.ids) {
+      made.ids.set(key, id);
+    }
+    for (const [key, id] of this.cells) {
+      made.cells.set(key, id);
+    }
+    for (const [row, id] of this.rows) {
+      made.rows.set(row, id);
+    }
+    for (const [column, id] of this.columns) {
+      made.columns.set(column, id);
+    }
+    made.sheet = this.sheet;
+    return made;
+  }
+
   get size(): number {
     return this.cells.size;
   }

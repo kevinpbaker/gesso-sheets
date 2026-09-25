@@ -42,7 +42,7 @@ describe('the sheet channel', () => {
     command(h.port, 'setCell', 0, 0, '1');
     command(h.port, 'setCell', 0, 1, '=A1+1');
     h.clock.drain();
-    command(h.port, 'setViewport', 0, 1, 0, 1);
+    command(h.port, 'setViewport', 0, 0, 1, 0, 1);
 
     expect(cellIn(h.window(), 0, 0)).toBe('1');
     expect(cellIn(h.window(), 0, 1)).toBe('2');
@@ -65,7 +65,7 @@ describe('the sheet channel', () => {
     h.document.sheet.recalculate();
 
     // Thirty rows and five columns in view: the shape of a real screen.
-    command(h.port, 'setViewport', 0, 29, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
     h.clock.drain();
     h.port.clear();
 
@@ -86,7 +86,7 @@ describe('the sheet channel', () => {
   });
 
   it('emits one patch when one visible cell changes', () => {
-    command(h.port, 'setViewport', 0, 29, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
     h.clock.drain();
     h.port.clear();
 
@@ -111,7 +111,7 @@ describe('the sheet channel', () => {
     h.document.sheet.recalculate();
 
     // A viewport somewhere else entirely.
-    command(h.port, 'setViewport', 2_000, 2_029, 10, 14);
+    command(h.port, 'setViewport', 0, 2_000, 2_029, 10, 14);
     h.clock.drain();
     h.port.clear();
 
@@ -134,11 +134,11 @@ describe('the sheet channel', () => {
         h.document.sheet.setCell(row, column, String(row * 10 + column));
       }
     }
-    command(h.port, 'setViewport', 0, 29, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
     h.clock.drain();
     h.port.clear();
 
-    command(h.port, 'setViewport', 1, 30, 0, 4);
+    command(h.port, 'setViewport', 0, 1, 30, 0, 4);
     h.clock.drain();
 
     const patches = h.port.patchesFor('window');
@@ -150,7 +150,7 @@ describe('the sheet channel', () => {
   });
 
   it('keeps the keys apart, so a keystroke does not walk the geometry', () => {
-    command(h.port, 'setViewport', 0, 9, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 9, 0, 4);
     h.clock.drain();
     h.port.clear();
 
@@ -166,7 +166,7 @@ describe('the sheet channel', () => {
     // `provide` runs `requirePlainData` once per key and reports over
     // the port rather than throwing, so a rich value would surface as
     // a 'channel:error' — which `patches()` turns into a failure.
-    command(h.port, 'setViewport', 0, 4, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 4, 0, 4);
     command(h.port, 'setCell', 0, 0, '=1/0');
     h.clock.drain();
     expect(() => h.port.patches()).not.toThrow();
@@ -192,7 +192,7 @@ describe('a recalculation while the viewport moves', () => {
       h.document.sheet.setCell(row, 0, `=A${row}+1`);
     }
     h.document.sheet.recalculate();
-    command(h.port, 'setViewport', 0, 29, 0, 4);
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
     h.clock.drain();
     h.port.clear();
 
@@ -204,7 +204,7 @@ describe('a recalculation while the viewport moves', () => {
 
     // The scroll arrives in the gap the pump left, and is served.
     h.port.clear();
-    command(h.port, 'setViewport', 5_000, 5_029, 0, 4);
+    command(h.port, 'setViewport', 0, 5_000, 5_029, 0, 4);
 
     const answered = h.port.patchesFor('window');
     expect(answered.length).toBeGreaterThan(0);
@@ -223,12 +223,12 @@ describe('a recalculation while the viewport moves', () => {
       h.document.sheet.setCell(row, 0, `=A${row}+1`);
     }
     h.document.sheet.recalculate();
-    command(h.port, 'setViewport', 4_990, 5_000, 0, 0);
+    command(h.port, 'setViewport', 0, 4_990, 5_000, 0, 0);
     h.clock.drain();
 
     command(h.port, 'setCell', 0, 0, '2');
     h.clock.tick();
-    command(h.port, 'setViewport', 4_990, 5_000, 0, 0);
+    command(h.port, 'setViewport', 0, 4_990, 5_000, 0, 0);
     h.clock.drain();
 
     expect(h.document.sheet.pending).toBe(0);
@@ -243,7 +243,7 @@ describe('a recalculation while the viewport moves', () => {
       h.document.sheet.setCell(row, 0, `=A${row}+1`);
     }
     h.document.sheet.recalculate();
-    command(h.port, 'setViewport', 0, 9, 0, 0);
+    command(h.port, 'setViewport', 0, 0, 9, 0, 0);
     h.clock.drain();
 
     const before = h.service.stats.slices;
@@ -252,5 +252,110 @@ describe('a recalculation while the viewport moves', () => {
 
     expect(slices).toBe(5);
     expect(h.service.stats.slices - before).toBe(5);
+  });
+});
+
+/**
+ * Phase 13's exit criterion, in Phase 2's shape.
+ *
+ * "A formula on Sheet 1 depending on 50,000 cells on Sheet 2
+ * publishes **nothing** while Sheet 2 is not the sheet in view."
+ * Cross-sheet references are exactly where a naive implementation
+ * starts publishing the whole workbook, and the failure is invisible
+ * until the workbook is large.
+ *
+ * The counts are what a `postMessage` would carry. The recalculation
+ * is real and is asserted separately, so a spec that passed because
+ * nothing happened would fail on the line above it.
+ */
+describe('a workbook of several sheets', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = attach();
+  });
+
+  const DEPENDENTS = 50_000;
+
+  /**
+   * A column of 50,000 chained formulas on Sheet 2, hanging from a
+   * cell on Sheet 1 and read back by another one.
+   *
+   * Built this way round so the whole thing can be set off by a
+   * keystroke through the real command path, on the sheet in view.
+   * That is also the shape of the case worth worrying about: nobody
+   * edits a sheet they are not looking at, but plenty of sheets feed
+   * one.
+   */
+  function acrossTheBook(): void {
+    command(h.port, 'addSheet');
+    const second = h.document.sheet;
+    second.setCell(0, 0, '=Sheet1!A1+1');
+    for (let row = 1; row <= DEPENDENTS - 1; row++) {
+      second.setCell(row, 0, `=A${row}+1`);
+    }
+    h.document.activate(0);
+    h.document.sheet.setCell(0, 1, `=Sheet2!A${DEPENDENTS}`);
+    h.document.book.recalculate();
+  }
+
+  it('publishes nothing for a recalculation on a sheet nobody is looking at', () => {
+    acrossTheBook();
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
+    h.clock.drain();
+    h.port.clear();
+
+    const before = h.document.book.stats.evaluated;
+    // One keystroke, on the sheet in view, with 50,000 cells on the
+    // sheet that is not.
+    command(h.port, 'setCell', 0, 0, '2');
+    h.clock.drain();
+
+    // The work really happened: the whole column on Sheet 2, and the
+    // cell on Sheet 1 that reads the far end of it.
+    expect(h.document.book.stats.evaluated - before).toBe(DEPENDENTS + 1);
+
+    // And the wire carried two cells — the one typed into and the one
+    // whose answer changed. Not fifty thousand, and nothing at all
+    // for the sheet that did the work.
+    const patches = h.port.patchesFor('window');
+    expect(patches).toHaveLength(2);
+    expect(patches.every(patch => patch.path[0] === 'cells')).toBe(true);
+    expect(cellIn(h.window(), 0, 1)).toBe('50002');
+    expect(h.port.patchesFor('geometry')).toEqual([]);
+    expect(h.port.patchesFor('sheets')).toEqual([]);
+  });
+
+  it('sends the tab strip once, and not again for an edit', () => {
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
+    command(h.port, 'addSheet');
+    h.clock.drain();
+    h.port.clear();
+
+    command(h.port, 'setCell', 0, 0, 'hello');
+    h.clock.drain();
+    expect(h.port.patchesFor('sheets')).toEqual([]);
+  });
+
+  it('prices a tab change at the window, not at the workbook', () => {
+    command(h.port, 'addSheet');
+    command(h.port, 'setViewport', 1, 0, 29, 0, 4);
+    h.clock.drain();
+    // Something to see on each sheet, so the change is not free by
+    // being a change between two empty grids.
+    h.document.sheet.setCell(0, 0, 'on two');
+    h.document.activate(0);
+    h.document.sheet.setCell(0, 0, 'on one');
+    h.document.activate(1);
+    h.clock.drain();
+    h.port.clear();
+
+    command(h.port, 'setViewport', 0, 0, 29, 0, 4);
+    h.clock.drain();
+
+    expect(cellIn(h.window(), 0, 0)).toBe('on one');
+    // One cell differed between the two sheets, so one patch.
+    expect(h.port.patchesFor('window')).toHaveLength(1);
+    expect(h.port.patchesFor('sheets')).toHaveLength(1);
   });
 });

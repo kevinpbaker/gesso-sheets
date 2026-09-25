@@ -291,8 +291,25 @@ export interface SheetStatus {
 }
 
 export interface SheetCommands {
-  /** The range the render worker has mounted. Sent when it changes. */
-  setViewport(firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void;
+  /**
+   * The range the render worker has mounted, on the sheet it is
+   * mounted over.
+   *
+   * The viewport **names its sheet**, and that is how the application
+   * worker knows which one is showing. The alternative was a sheet
+   * argument on every one of the forty commands below, which says the
+   * same thing forty times and gets it wrong once.
+   */
+  setViewport(sheet: number, firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void;
+  /** Shows a sheet, without waiting for its viewport to arrive. */
+  activateSheet(sheet: number): void;
+  /** Adds a sheet at the end and shows it. */
+  addSheet(): void;
+  renameSheet(sheet: number, name: string): void;
+  removeSheet(sheet: number): void;
+  moveSheet(from: number, to: number): void;
+  duplicateSheet(sheet: number): void;
+  setSheetColour(sheet: number, colour: string | null): void;
   /** Commits what was typed into a cell. */
   setCell(row: number, column: number, input: string): void;
   setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void;
@@ -530,8 +547,38 @@ export type NumberFormatPatch =
   | { readonly kind: 'datetime'; readonly date: 'ymd' | 'dmy' | 'mdy'; readonly time: 'hm' | 'hms' }
   | { readonly kind: 'text' };
 
+/** The tab strip, as the render worker draws it. */
+export interface SheetTabs {
+  readonly entries: readonly SheetTab[];
+  /** Which one is showing, as an index into `entries`. */
+  readonly active: number;
+}
+
+export interface SheetTab {
+  readonly name: string;
+  /** A tab colour somebody chose, or null for the plain one. */
+  readonly colour: string | null;
+}
+
 export interface SheetView {
   readonly window: SheetWindow;
+  /**
+   * The tabs along the bottom: every sheet, and which one is shown.
+   *
+   * A list and an index rather than a key per sheet, because it is
+   * one question — "what are the tabs" — and a workbook holds tens of
+   * sheets rather than thousands. It changes when somebody adds,
+   * renames, moves, colours or removes one, which is a thing a person
+   * does by hand.
+   *
+   * What it deliberately does **not** carry is anything about the
+   * sheets nobody is looking at. The window, the formats, the
+   * geometry and the rest are all the *active* sheet's, so a formula
+   * depending on fifty thousand cells on another sheet publishes
+   * nothing at all while that sheet is out of view — which is the
+   * claim this phase exists to defend.
+   */
+  readonly sheets: SheetTabs;
   readonly geometry: SheetGeometry;
   readonly selection: SheetSelection;
   readonly editor: SheetEditor;
@@ -612,6 +659,7 @@ export function cellIn(window: SheetWindow, row: number, column: number): string
 
 export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   window: EMPTY_WINDOW,
+  sheets: { entries: [{ name: 'Sheet1', colour: null }], active: 0 },
   geometry: {
     rowCount: 0,
     columnCount: 0,

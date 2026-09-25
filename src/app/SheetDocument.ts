@@ -19,6 +19,19 @@ import { shiftIndex, type Shift } from '../sheet/Shift';
 type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit;
 
 /**
+ * Where an edit was made, which every kind of edit has to say.
+ *
+ * Undo is the workbook's rather than the sheet's — ctrl-Z takes back
+ * the last thing you did, wherever you did it — so taking a step back
+ * means going to the sheet it was made on first. A stack per sheet
+ * would be a ctrl-Z whose meaning depended on which tab happened to
+ * be showing.
+ */
+interface OnASheet {
+  readonly sheet: number;
+}
+
+/**
  * A name defined, redefined or removed.
  *
  * The whole table either side rather than the one entry that changed,
@@ -28,7 +41,7 @@ type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit;
  * inverse wrong. The row and column are the range's corner, so
  * undoing a definition puts the selection back on what was named.
  */
-interface NamesEdit {
+interface NamesEdit extends OnASheet {
   readonly kind: 'names';
   readonly row: number;
   readonly column: number;
@@ -36,7 +49,7 @@ interface NamesEdit {
   readonly after: readonly NamedRange[];
 }
 
-interface TextEdit {
+interface TextEdit extends OnASheet {
   readonly kind: 'text';
   readonly row: number;
   readonly column: number;
@@ -47,7 +60,7 @@ interface TextEdit {
 /** A cell's palette id, before and after. Ids, not formats: the
  * palette only grows, so an id undoes to an entry that is still
  * there, and a step stays four numbers however large the format is. */
-interface FormatEdit {
+interface FormatEdit extends OnASheet {
   readonly kind: 'format';
   readonly row: number;
   readonly column: number;
@@ -72,7 +85,7 @@ interface FormatEdit {
  * which is how much information the edit really changed and the price
  * of being able to take it back.
  */
-interface StructureEdit {
+interface StructureEdit extends OnASheet {
   readonly kind: 'structure';
   readonly row: number;
   readonly column: number;
@@ -97,7 +110,7 @@ interface StructureEdit {
  * so that making a sheet bold keeps the currency in column C. It is
  * bounded by how many cells anybody has actually formatted.
  */
-interface RegionEdit {
+interface RegionEdit extends OnASheet {
   readonly kind: 'region';
   readonly scope: 'sheet' | 'row' | 'column';
   readonly index: number;
@@ -131,9 +144,22 @@ type Step = readonly Edit[];
  * already has its own; what belongs here is the commit, which is the
  * unit a person means when they press ctrl-Z in a spreadsheet.
  */
-export class SheetDocument {
-  readonly sheet = new Workbook().sheet(0);
-  readonly formats = new Formats();
+/**
+ * Everything about one sheet that is not its cells.
+ *
+ * All of it is per sheet and none of it is shared, which is the
+ * answer to the question this phase kept asking: column widths,
+ * hidden rows, freezes, merges, formats and where the selection sits
+ * are facts about *a* sheet. Two things are the workbook's instead —
+ * the names, because `=SUM(Sales)` has to mean the same cells
+ * wherever it is written, and the undo stack, because ctrl-Z takes
+ * back the last thing you did rather than the last thing you did
+ * here.
+ */
+interface Page {
+  readonly sheet: Sheet;
+  readonly formats: Formats;
+  readonly merges: Merges;
   /**
    * How wide each column is drawn.
    *
@@ -141,10 +167,9 @@ export class SheetDocument {
    * the reason is undo. A column insert moves the widths along with
    * the columns they describe, and taking that back has to move them
    * back — so the widths have to be somewhere the undo stack can
-   * reach. Phase 6 had already made them the document's as far as the
-   * *file* was concerned; this finishes the move.
+   * reach.
    */
-  columnWidths: number[] = [];
+  columnWidths: number[];
   /**
    * The rows somebody has hidden.
    *
@@ -152,7 +177,7 @@ export class SheetDocument {
    * `UiVirtualSheetOptions.rowHeights` is sparse: a sheet is ten
    * thousand rows tall and all but a handful are the same.
    */
-  readonly hiddenRows = new Set<number>();
+  readonly hiddenRows: Set<number>;
   /**
    * Rows a filter is hiding, kept apart from the ones somebody hid.
    *
@@ -161,18 +186,108 @@ export class SheetDocument {
    * on purpose, and showing a hidden row must not fight the filter
    * that is hiding it. What the screen sees is the union.
    */
-  readonly filteredRows = new Set<number>();
+  readonly filteredRows: Set<number>;
   /** How many rows and columns stay put while the rest scrolls. */
-  frozenRows = 0;
-  frozenColumns = 0;
-  readonly merges = new Merges();
+  frozenRows: number;
+  frozenColumns: number;
+  selection: { row: number; column: number; anchorRow: number; anchorColumn: number };
+}
+
+function newPage(sheet: Sheet): Page {
+  return {
+    sheet,
+    formats: new Formats(),
+    merges: new Merges(),
+    columnWidths: [],
+    hiddenRows: new Set<number>(),
+    filteredRows: new Set<number>(),
+    frozenRows: 0,
+    frozenColumns: 0,
+    selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 }
+  };
+}
+
+export class SheetDocument {
+  readonly book = new Workbook();
+  private readonly pages: Page[] = [newPage(this.book.sheet(0))];
+  /**
+   * Which sheet the tabs are showing, and which one every command
+   * without a sheet of its own means.
+   *
+   * One field rather than a sheet argument on forty commands, which
+   * is the trade the roadmap called for: the viewport names its sheet
+   * and everything else follows it.
+   */
+  private activeSheet = 0;
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
   /** Edits collected by an open `transact`, or null outside one. */
   private collecting: Edit[] | null = null;
 
-  selection = { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 };
+  // ---------------------------------------------------------------------
+  // The active page, which is what every unqualified call means
+  // ---------------------------------------------------------------------
+
+  get active(): number {
+    return this.activeSheet;
+  }
+
+  get page(): Page {
+    return this.pages[this.activeSheet];
+  }
+
+  get sheet(): Sheet {
+    return this.page.sheet;
+  }
+
+  get formats(): Formats {
+    return this.page.formats;
+  }
+
+  get merges(): Merges {
+    return this.page.merges;
+  }
+
+  get hiddenRows(): Set<number> {
+    return this.page.hiddenRows;
+  }
+
+  get filteredRows(): Set<number> {
+    return this.page.filteredRows;
+  }
+
+  get columnWidths(): number[] {
+    return this.page.columnWidths;
+  }
+
+  set columnWidths(widths: number[]) {
+    this.page.columnWidths = widths;
+  }
+
+  get frozenRows(): number {
+    return this.page.frozenRows;
+  }
+
+  set frozenRows(rows: number) {
+    this.page.frozenRows = rows;
+  }
+
+  get frozenColumns(): number {
+    return this.page.frozenColumns;
+  }
+
+  set frozenColumns(columns: number) {
+    this.page.frozenColumns = columns;
+  }
+
+  get selection(): { row: number; column: number; anchorRow: number; anchorColumn: number } {
+    return this.page.selection;
+  }
+
+  set selection(at: { row: number; column: number; anchorRow: number; anchorColumn: number }) {
+    this.page.selection = at;
+  }
 
   get canUndo(): boolean {
     return this.undoStack.length > 0;
@@ -199,7 +314,7 @@ export class SheetDocument {
     // undoing it has to take both back.
     this.transact(() => {
       this.writeCell(row, column, input);
-      this.record({ kind: 'text', row, column, before, after: input });
+      this.record({ kind: 'text', sheet: this.activeSheet, row, column, before, after: input });
       this.formatTypedDate(row, column, input);
     });
   }
@@ -270,7 +385,7 @@ export class SheetDocument {
       return;
     }
     this.applyFormat(row, column, after);
-    this.record({ kind: 'format', row, column, before, after });
+    this.record({ kind: 'format', sheet: this.activeSheet, row, column, before, after });
   }
 
   /**
@@ -301,6 +416,7 @@ export class SheetDocument {
     this.writeRegion(scope, index, after, overrides.map(entry => ({ key: entry.key, id: entry.after })));
     this.record({
       kind: 'region',
+      sheet: this.activeSheet,
       scope,
       index,
       row: scope === 'row' ? index : 0,
@@ -422,6 +538,11 @@ export class SheetDocument {
     // in the order they were made or the earlier one wins.
     for (let at = step.length - 1; at >= 0; at--) {
       const edit = step[at];
+      // The sheet the edit was made on, before anything is written:
+      // `this.sheet`, `this.formats` and `this.merges` all mean the
+      // active page, and undoing on the wrong one would write the old
+      // text into the same address on whatever tab happened to show.
+      this.activeSheet = edit.sheet;
       if (edit.kind === 'text') {
         this.writeCell(edit.row, edit.column, edit.before);
       } else if (edit.kind === 'region') {
@@ -450,6 +571,7 @@ export class SheetDocument {
       return false;
     }
     for (const edit of step) {
+      this.activeSheet = edit.sheet;
       if (edit.kind === 'text') {
         this.writeCell(edit.row, edit.column, edit.after);
       } else if (edit.kind === 'region') {
@@ -512,6 +634,7 @@ export class SheetDocument {
     }
     this.record({
       kind: 'names',
+      sheet: this.activeSheet,
       row: Math.min(range.start.row, range.end.row),
       column: Math.min(range.start.column, range.end.column),
       before,
@@ -531,6 +654,7 @@ export class SheetDocument {
     this.sheet.names.remove(name);
     this.record({
       kind: 'names',
+      sheet: this.activeSheet,
       row: Math.min(range.start.row, range.end.row),
       column: Math.min(range.start.column, range.end.column),
       before,
@@ -546,6 +670,10 @@ export class SheetDocument {
   }
 
   private selectStep(step: Step): void {
+    const edit = step[0];
+    if (edit !== undefined) {
+      this.activeSheet = edit.sheet;
+    }
     let firstRow = Number.POSITIVE_INFINITY;
     let lastRow = Number.NEGATIVE_INFINITY;
     let firstColumn = Number.POSITIVE_INFINITY;
@@ -606,6 +734,7 @@ export class SheetDocument {
 
     this.record({
       kind: 'structure',
+      sheet: this.activeSheet,
       row: shift.axis === 'row' ? shift.at : 0,
       column: shift.axis === 'column' ? shift.at : 0,
       shift,
@@ -615,7 +744,138 @@ export class SheetDocument {
     });
   }
 
-  /** Every non-empty cell, for a repository or a search. */
+  // ---------------------------------------------------------------------
+  // The sheets
+  // ---------------------------------------------------------------------
+
+  get sheetCount(): number {
+    return this.pages.length;
+  }
+
+  /** Every sheet's name and colour, in tab order. */
+  sheets(): { name: string; colour: string | null }[] {
+    return this.pages.map(page => ({ name: page.sheet.name, colour: page.sheet.colour }));
+  }
+
+  pageAt(index: number): Page | undefined {
+    return this.pages[index];
+  }
+
+  /** Shows a sheet. Not an edit: looking at something is not a change. */
+  activate(index: number): boolean {
+    if (this.pages[index] === undefined || index === this.activeSheet) {
+      return false;
+    }
+    this.activeSheet = index;
+    return true;
+  }
+
+  /**
+   * Adds a sheet at the end and shows it.
+   *
+   * **Not undoable, and nor are the other four.** An undo entry for a
+   * deleted sheet would have to carry every cell, format, merge,
+   * width and freeze on it, and — worse — the entries already on the
+   * stack name their sheet by index, which removing or moving one
+   * renumbers. So the stack is dropped instead, which is what Excel
+   * does with a sheet delete and for the same reason. Saying it is
+   * gone is better than a ctrl-Z that puts text back on the wrong
+   * tab.
+   */
+  addSheet(name = `Sheet${this.pages.length + 1}`): number {
+    const index = this.book.addSheet(name);
+    this.pages.push(newPage(this.book.sheet(index)));
+    this.forgetHistory();
+    this.activeSheet = index;
+    return index;
+  }
+
+  renameSheet(index: number, to: string): boolean {
+    if (this.pages[index] === undefined) {
+      return false;
+    }
+    // The name is in the text of every formula that reads across, so
+    // the rename rewrites them — and the undo stack holds the text
+    // they had before, under the old name.
+    this.book.renameSheet(index, to);
+    this.forgetHistory();
+    return true;
+  }
+
+  removeSheet(index: number): boolean {
+    if (!this.book.removeSheet(index)) {
+      return false;
+    }
+    this.pages.splice(index, 1);
+    this.repage();
+    this.activeSheet = Math.min(this.activeSheet, this.pages.length - 1);
+    this.forgetHistory();
+    return true;
+  }
+
+  moveSheet(from: number, to: number): boolean {
+    if (!this.book.moveSheet(from, to)) {
+      return false;
+    }
+    const [page] = this.pages.splice(from, 1);
+    this.pages.splice(to, 0, page);
+    this.repage();
+    this.activeSheet = to;
+    this.forgetHistory();
+    return true;
+  }
+
+  /**
+   * Copies a sheet, its cells and everything drawn over them.
+   *
+   * The cells are the workbook's to copy; the formats, merges,
+   * widths, freezes and hidden rows are this layer's, and a duplicate
+   * that brought the cells without them would be a copy that did not
+   * look like the thing it copied.
+   */
+  duplicateSheet(index: number): number {
+    const from = this.pages[index];
+    if (from === undefined) {
+      return -1;
+    }
+    const at = this.book.duplicateSheet(index);
+    this.pages.push({
+      ...newPage(this.book.sheet(at)),
+      formats: from.formats.copy(),
+      merges: from.merges.copy(),
+      columnWidths: [...from.columnWidths],
+      hiddenRows: new Set(from.hiddenRows),
+      filteredRows: new Set(from.filteredRows),
+      frozenRows: from.frozenRows,
+      frozenColumns: from.frozenColumns
+    });
+    this.forgetHistory();
+    this.activeSheet = at;
+    return at;
+  }
+
+  setSheetColour(index: number, colour: string | null): boolean {
+    const page = this.pages[index];
+    if (page === undefined) {
+      return false;
+    }
+    page.sheet.colour = colour;
+    return true;
+  }
+
+  /** Re-binds each page to the sheet now at its index. */
+  private repage(): void {
+    for (let index = 0; index < this.pages.length; index++) {
+      this.pages[index] = { ...this.pages[index], sheet: this.book.sheet(index) };
+    }
+  }
+
+  private forgetHistory(): void {
+    this.undoStack.length = 0;
+    this.redoStack.length = 0;
+  }
+
+  /** Every non-empty cell of the active sheet, for a repository or a search. */
   *entries(): Generator<{ row: number; column: number; input: string }> {
     yield* this.sheet.entries();
   }
