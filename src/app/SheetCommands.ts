@@ -58,7 +58,13 @@ export type CommandId =
   | 'insertColumnLeft'
   | 'insertColumnRight'
   | 'deleteRows'
-  | 'deleteColumns';
+  | 'deleteColumns'
+  | 'borderAll'
+  | 'borderOutline'
+  | 'borderTop'
+  | 'borderBottom'
+  | 'borderThickBottom'
+  | 'borderNone';
 
 /**
  * How long a chain the proof command builds.
@@ -190,6 +196,22 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     label: 'Delete columns',
     accelerator: { key: '-', ctrl: true, alt: true, shift: true, shifted: '_' }
   },
+
+  /**
+   * Six borders and not a grid of sixteen buttons.
+   *
+   * What people actually draw is a box round a block, a rule under a
+   * heading and a heavy rule above a total; everything else in a
+   * border picker is there because the picker exists. These six are
+   * those three, their obvious neighbours, and the one that takes
+   * them off again.
+   */
+  borderAll: { id: 'borderAll', label: 'All borders' },
+  borderOutline: { id: 'borderOutline', label: 'Outline' },
+  borderTop: { id: 'borderTop', label: 'Top border' },
+  borderBottom: { id: 'borderBottom', label: 'Bottom border' },
+  borderThickBottom: { id: 'borderThickBottom', label: 'Thick bottom border' },
+  borderNone: { id: 'borderNone', label: 'No borders' },
 
   bold: { id: 'bold', label: 'Bold', accelerator: { key: 'b', ctrl: true } },
   italic: { id: 'italic', label: 'Italic', accelerator: { key: 'i', ctrl: true } },
@@ -340,6 +362,13 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'moreDecimals',
       'fewerDecimals',
+      SEPARATOR,
+      'borderAll',
+      'borderOutline',
+      'borderTop',
+      'borderBottom',
+      'borderThickBottom',
+      'borderNone',
       SEPARATOR,
       'clearFormat'
     ]

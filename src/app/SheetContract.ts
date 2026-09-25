@@ -1,6 +1,6 @@
 import { channel } from 'gesso-framework';
 
-import type { CellPaint } from '../sheet/Format';
+import { NO_BORDERS, type CellPaint } from '../sheet/Format';
 import { NO_STATS, type SheetStats } from './Statistics';
 
 /**
@@ -282,7 +282,19 @@ export interface SheetCommands {
   deleteRows(at: number, count: number): void;
   insertColumns(at: number, count: number): void;
   deleteColumns(at: number, count: number): void;
+  /**
+   * Draws borders over the selection.
+   *
+   * A named pattern rather than four edges, because the interesting
+   * part is what "outline" means over a *range*: the outer edge of
+   * the block and not a box round every cell in it. Only this side
+   * knows where the block's edges are.
+   */
+  setBorders(pattern: BorderPattern, width: number, color: string): void;
 }
+
+/** What a border command draws. */
+export type BorderPattern = 'all' | 'outline' | 'top' | 'bottom' | 'none';
 
 /**
  * What one press of a formatting control means.
@@ -303,8 +315,27 @@ export interface SheetFormatChange {
   readonly fill?: string;
   readonly align?: 'auto' | 'start' | 'center' | 'end';
   readonly wrap?: boolean;
+  /**
+   * Which edges to set, and to what.
+   *
+   * An edge named is an edge changed; an edge absent is left alone,
+   * on the same rule as everything else here — putting a rule under a
+   * row must not remove the box somebody drew around it.
+   */
+  readonly borders?: {
+    readonly top?: SheetEdge;
+    readonly right?: SheetEdge;
+    readonly bottom?: SheetEdge;
+    readonly left?: SheetEdge;
+  };
   /** More or fewer decimal places, relative to what each cell has. */
   readonly places?: number;
+}
+
+/** One edge, as it crosses. Width 0 is no border. */
+export interface SheetEdge {
+  readonly width: number;
+  readonly color: string;
 }
 
 /**
@@ -367,7 +398,8 @@ export const PLAIN_PAINT: CellPaint = {
   color: '',
   fill: '',
   align: 'auto',
-  wrap: false
+  wrap: false,
+  borders: NO_BORDERS
 };
 
 export const NO_FIND: SheetFindView = {

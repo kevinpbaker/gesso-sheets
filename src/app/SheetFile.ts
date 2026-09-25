@@ -1,4 +1,15 @@
-import { DEFAULT_FORMAT, GENERAL, PLAIN, type CellFormat, type CellPaint, type NumberFormat } from '../sheet/Format';
+import {
+  DEFAULT_FORMAT,
+  GENERAL,
+  NO_BORDERS,
+  NO_EDGE,
+  PLAIN,
+  type CellBorders,
+  type CellEdge,
+  type CellFormat,
+  type CellPaint,
+  type NumberFormat
+} from '../sheet/Format';
 import { COLUMN_WIDTH } from './dimensions';
 import type { SheetDocument } from './SheetDocument';
 
@@ -260,7 +271,33 @@ function paintFrom(stored: unknown): CellPaint {
     color: typeof paint.color === 'string' ? paint.color : '',
     fill: typeof paint.fill === 'string' ? paint.fill : '',
     align: align === 'start' || align === 'center' || align === 'end' ? align : 'auto',
-    wrap: paint.wrap === true
+    wrap: paint.wrap === true,
+    borders: bordersFrom(paint.borders)
+  };
+}
+
+function bordersFrom(stored: unknown): CellBorders {
+  if (typeof stored !== 'object' || stored === null) {
+    return NO_BORDERS;
+  }
+  const borders = stored as Partial<CellBorders>;
+  return {
+    top: edgeFrom(borders.top),
+    right: edgeFrom(borders.right),
+    bottom: edgeFrom(borders.bottom),
+    left: edgeFrom(borders.left)
+  };
+}
+
+function edgeFrom(stored: unknown): CellEdge {
+  if (typeof stored !== 'object' || stored === null) {
+    return NO_EDGE;
+  }
+  const edge = stored as Partial<CellEdge>;
+  const width = edge.width;
+  return {
+    width: typeof width === 'number' && Number.isFinite(width) && width > 0 ? Math.min(width, 8) : 0,
+    color: typeof edge.color === 'string' ? edge.color : ''
   };
 }
 

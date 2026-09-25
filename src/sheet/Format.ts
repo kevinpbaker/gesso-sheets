@@ -49,6 +49,34 @@ export type NumberFormat =
 export type DatePattern = 'ymd' | 'dmy' | 'mdy';
 export type TimePattern = 'hm' | 'hms';
 
+/**
+ * One edge of a cell.
+ *
+ * A width and a colour rather than a boolean, because the useful
+ * borders in a spreadsheet are not all the same: a hairline under a
+ * header and a heavy rule above a total are the two everybody draws,
+ * and a border model that could only say "on" would draw them the
+ * same.
+ *
+ * Width 0 is no border at all, which is why this is not optional —
+ * a cell always has four edges and most of them are nothing.
+ */
+export interface CellEdge {
+  readonly width: number;
+  /** A colour, or '' for the theme's own border colour. */
+  readonly color: string;
+}
+
+export interface CellBorders {
+  readonly top: CellEdge;
+  readonly right: CellEdge;
+  readonly bottom: CellEdge;
+  readonly left: CellEdge;
+}
+
+export const NO_EDGE: CellEdge = { width: 0, color: '' };
+export const NO_BORDERS: CellBorders = { top: NO_EDGE, right: NO_EDGE, bottom: NO_EDGE, left: NO_EDGE };
+
 /** How a cell is painted. Everything here crosses to the render worker. */
 export interface CellPaint {
   readonly bold: boolean;
@@ -68,6 +96,18 @@ export interface CellPaint {
    */
   readonly align: 'auto' | 'start' | 'center' | 'end';
   readonly wrap: boolean;
+  /**
+   * The four edges.
+   *
+   * Drawn by the grid as four thin rectangles rather than as the
+   * node's own border, because `borderWidth` in the engine is one
+   * number for all four sides. A border there is paint-only — it
+   * touches no layout — and the `decorated` modifier already takes a
+   * list of arbitrary coloured rectangles drawn in the node's own
+   * paint pass, so four edges cost four draw instances and *no extra
+   * nodes*. See `CellBorders` in `Grid.tsx`.
+   */
+  readonly borders: CellBorders;
 }
 
 export interface CellFormat {
@@ -85,7 +125,8 @@ export const PLAIN: CellPaint = {
   color: '',
   fill: '',
   align: 'auto',
-  wrap: false
+  wrap: false,
+  borders: NO_BORDERS
 };
 
 export const DEFAULT_FORMAT: CellFormat = { number: GENERAL, paint: PLAIN };
@@ -130,8 +171,16 @@ export function keyOf(format: CellFormat): string {
     p.color,
     p.fill,
     p.align,
-    p.wrap ? 'w' : ''
+    p.wrap ? 'w' : '',
+    edgeKey(p.borders.top),
+    edgeKey(p.borders.right),
+    edgeKey(p.borders.bottom),
+    edgeKey(p.borders.left)
   ].join('|');
+}
+
+function edgeKey(edge: CellEdge): string {
+  return edge.width === 0 ? '' : `${edge.width}:${edge.color}`;
 }
 
 /**

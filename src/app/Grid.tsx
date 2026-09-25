@@ -3,12 +3,14 @@ import { map } from 'rxjs/operators';
 
 import {
   Box,
+  decorated,
   EditableText,
   editorFor,
   LazySheet,
   percent,
   Row,
   Text,
+  type DecorationShape,
   type UiElement,
   type UiKeyboardEvent,
   type UiNode,
@@ -30,7 +32,7 @@ import {
   ROW_COUNT,
   ROW_HEIGHT
 } from './dimensions';
-import type { CellPaint } from '../sheet/Format';
+import type { CellEdge, CellPaint } from '../sheet/Format';
 import { cellIn, PLAIN_PAINT, Sheet, type SheetSelection, type SheetWindow } from './SheetContract';
 import { commandFor } from './SheetCommands';
 import { keyAction } from './SheetKeys';
@@ -87,6 +89,16 @@ interface MountedCell {
    * by scanning that list.
    */
   readonly paint: BehaviorSubject<CellPaint>;
+  /**
+   * The cell's border rectangles, pushed in like everything else.
+   *
+   * Piped instead — `combineLatest([paint, width])` per cell — this
+   * cost 0.2ms of median frame and five milliseconds of input
+   * latency, measured. It is the same lesson the value and the
+   * standing learned in Phase 0 and Phase 3: a cell subscribes to its
+   * own subjects, and one writer fills them.
+   */
+  readonly shapes: BehaviorSubject<readonly DecorationShape[]>;
 }
 
 const SELECTED_WASH = 'selectionBackground';
@@ -196,7 +208,24 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       if (next !== mounted.paint.value) {
         mounted.paint.next(next);
       }
+      refreshShapes(mounted);
     }
+  };
+
+  /**
+   * A cell's borders, recomputed only when they could have changed.
+   *
+   * `bordersOf` hands back the *same* empty array for a cell with no
+   * borders, so the comparison below is a pointer check that is true
+   * for almost every cell on the screen and pushes nothing at all.
+   */
+  const refreshShapes = (mounted: MountedCell): void => {
+    const width = columnWidths.get(mounted.column)?.value ?? COLUMN_WIDTH;
+    const next = bordersOf(mounted.paint.value, width);
+    if (next === NO_SHAPES && mounted.shapes.value === NO_SHAPES) {
+      return;
+    }
+    mounted.shapes.next(next);
   };
 
   ctx.effect(sheet.view.formats, current => {
@@ -240,23 +269,80 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     return width;
   };
   ctx.effect(widths, all => {
+    const moved = new Set<number>();
     for (const [column, width] of columnWidths) {
       const next = all[column] ?? COLUMN_WIDTH;
       if (next !== width.value) {
         width.next(next);
+        moved.add(column);
+      }
+    }
+    if (moved.size === 0) {
+      return;
+    }
+    // A right-hand border is drawn at the far side of the cell, so a
+    // column that changed width has to redraw the borders in it —
+    // and only in it.
+    for (const mounted of cells.values()) {
+      if (moved.has(mounted.column)) {
+        refreshShapes(mounted);
       }
     }
   });
+
+  /**
+   * A cell's borders, as rectangles.
+   *
+   * **Four thin rects and not four child boxes.** A border in the
+   * engine is one `borderWidth` for all four sides, so a cell cannot
+   * have a heavy rule above it and a hairline below by that route.
+   * What it *can* have is decorations: the `decorated` modifier takes
+   * an Observable of arbitrary coloured rectangles, drawn in the
+   * node's own paint pass, clipped by its ancestors and transformed
+   * with it — with nothing to lay out and nothing to hit test. So the
+   * cost of a bordered cell is four draw instances and no extra
+   * nodes, which is the number that matters on this surface.
+   *
+   * The rects are drawn *inside* the cell, as the engine's own border
+   * is and as CSS draws one, so a border never encroaches on the
+   * neighbour and two adjacent cells can each have their own.
+   */
+  const bordersOf = (paint: CellPaint, width: number): readonly DecorationShape[] => {
+    const edges = paint.borders;
+    if (edges.top.width === 0 && edges.right.width === 0 && edges.bottom.width === 0 && edges.left.width === 0) {
+      // The common case by a very long way, and it allocates nothing.
+      return NO_SHAPES;
+    }
+    const shapes: DecorationShape[] = [];
+    const edge = (e: CellEdge, box: { x: number; y: number; width: number; height: number }): void => {
+      if (e.width > 0) {
+        shapes.push({ kind: 'fill', ...box, radius: 0, color: e.color === '' ? 'text' : e.color, after: 'children' });
+      }
+    };
+    edge(edges.top, { x: 0, y: 0, width, height: edges.top.width });
+    edge(edges.bottom, { x: 0, y: ROW_HEIGHT - edges.bottom.width, width, height: edges.bottom.width });
+    edge(edges.left, { x: 0, y: 0, width: edges.left.width, height: ROW_HEIGHT });
+    edge(edges.right, { x: width - edges.right.width, y: 0, width: edges.right.width, height: ROW_HEIGHT });
+    return shapes;
+  };
 
   const buildCell = (
     row: number,
     column: number,
     value: Observable<string | null>,
     state: Observable<Standing>,
-    paint: Observable<CellPaint>
+    paint: Observable<CellPaint>,
+    shapes: Observable<readonly DecorationShape[]>
   ): UiElement => {
     return Text({
       key: column,
+      /**
+       * Borders follow the paint *and* the column's width, because a
+       * right edge is drawn at the far side of a cell and a drag
+       * moves it. Both are the cell's own subjects, so this is one
+       * more subscriber on each and not one on anything shared.
+       */
+      modifiers: [decorated(shapes)],
       text: value.pipe(map(text => text ?? '')),
       // A cell the application worker has not sent yet is drawn as a
       // rule rather than left blank, so a gap on a fling reads as
@@ -365,8 +451,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       latestSelection === null ? 0 : standingOf(latestSelection, row, column)
     );
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
-    const element = buildCell(row, column, value, standing, paint);
-    cells.set(key, { row, column, element, value, standing, paint });
+    const shapes = new BehaviorSubject<readonly DecorationShape[]>(
+      bordersOf(paint.value, columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH)
+    );
+    const element = buildCell(row, column, value, standing, paint, shapes);
+    cells.set(key, { row, column, element, value, standing, paint, shapes });
     return element;
   };
 
@@ -1009,3 +1098,6 @@ function isNumeric(text: string | null): boolean {
 }
 
 export type { SheetWindow };
+
+/** Shared, because the overwhelming majority of cells have no border. */
+const NO_SHAPES: DecorationShape[] = [];

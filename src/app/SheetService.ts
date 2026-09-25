@@ -12,7 +12,9 @@ import {
   type SheetFindView,
   type SheetGeometry,
   type SheetSelection,
+  type BorderPattern,
   type SheetActiveFormat,
+  type SheetEdge,
   type SheetFormatChange,
   type SheetFormatWindow,
   type SheetPalette,
@@ -531,6 +533,58 @@ export class SheetService {
   }
 
   /**
+   * Borders over the selection, cell by cell.
+   *
+   * Always cell by cell, even when the selection is a whole column,
+   * because a border pattern is *about* where each cell sits in the
+   * block: `outline` puts an edge on the outer rim and nothing in the
+   * middle, so two cells in the same column get different answers and
+   * a region format — which by definition cannot vary inside itself —
+   * is the wrong shape for it.
+   *
+   * The cost is a cell entry per bordered cell, which is what the
+   * person asked for: they can see the border, so they can see what
+   * it cost. A whole-sheet outline is four edges, not a million.
+   */
+  setBorders(pattern: BorderPattern, width: number, color: string): void {
+    const rect = rectOf(this.document.selection);
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const lastRow = Math.min(rect.lastRow, rowCount - 1);
+    const lastColumn = Math.min(rect.lastColumn, columnCount - 1);
+    const edge: SheetEdge = { width, color };
+    const off: SheetEdge = { width: 0, color: '' };
+
+    this.document.transact(() => {
+      for (let row = rect.firstRow; row <= lastRow; row++) {
+        for (let column = rect.firstColumn; column <= lastColumn; column++) {
+          const top = row === rect.firstRow;
+          const bottom = row === lastRow;
+          const left = column === rect.firstColumn;
+          const right = column === lastColumn;
+          const borders =
+            pattern === 'none'
+              ? { top: off, right: off, bottom: off, left: off }
+              : pattern === 'all'
+                ? { top: edge, right: edge, bottom: edge, left: edge }
+                : pattern === 'outline'
+                  ? {
+                      top: top ? edge : off,
+                      right: right ? edge : off,
+                      bottom: bottom ? edge : off,
+                      left: left ? edge : off
+                    }
+                  : pattern === 'top'
+                    ? { top: top ? edge : off }
+                    : { bottom: bottom ? edge : off };
+          const held = this.document.formatAt(row, column);
+          this.document.setFormat(row, column, applyChange(held, { borders }));
+        }
+      }
+    });
+    this.afterFormat();
+  }
+
+  /**
    * Runs a formatting change over the selection, as regions where it
    * can and cell by cell where it cannot.
    *
@@ -916,7 +970,16 @@ function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat 
       color: change.color ?? format.paint.color,
       fill: change.fill ?? format.paint.fill,
       align: change.align ?? format.paint.align,
-      wrap: change.wrap ?? format.paint.wrap
+      wrap: change.wrap ?? format.paint.wrap,
+      borders:
+        change.borders === undefined
+          ? format.paint.borders
+          : {
+              top: change.borders.top ?? format.paint.borders.top,
+              right: change.borders.right ?? format.paint.borders.right,
+              bottom: change.borders.bottom ?? format.paint.borders.bottom,
+              left: change.borders.left ?? format.paint.borders.left
+            }
     }
   };
 }

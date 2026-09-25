@@ -4,7 +4,8 @@ import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
-import { GENERAL, PLAIN, type CellFormat } from '../sheet/Format';
+import { GENERAL, NO_BORDERS, PLAIN, type CellFormat } from '../sheet/Format';
+import { ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
@@ -141,3 +142,126 @@ describe('what the grid draws a formatted cell with', () => {
     expect(propertyOf('Region', 'fontWeight')).toBe('bold');
   });
 });
+
+/**
+ * Borders, which are four rectangles and not a border.
+ *
+ * `borderWidth` in the engine is one number for all four sides, so a
+ * cell cannot have a heavy rule above and a hairline below by that
+ * route. The `decorated` modifier takes arbitrary coloured rectangles
+ * drawn in the node's own paint pass — nothing to lay out, nothing to
+ * hit test — so four edges cost four draw instances and no extra
+ * nodes. These assert the shapes that reach the renderer.
+ */
+describe('the borders a cell draws', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  /** The decoration rectangles on the cell holding `text`. */
+  function shapesOn(text: string): readonly { x: number; y: number; width: number; height: number }[] {
+    const node = h.ui.getByRole('cell', { name: text });
+    return (node.decorations ?? []) as readonly {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    }[];
+  }
+
+  it('draws nothing at all for a cell with no borders', async () => {
+    h = await mount(d => d.setCell(0, 0, 'plain'));
+    expect(shapesOn('plain')).toHaveLength(0);
+  });
+
+  it('draws one rectangle per edge that has a width', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'ruled');
+      d.setFormat(0, 0, {
+        number: GENERAL,
+        paint: { ...PLAIN, borders: { ...NO_BORDERS, bottom: { width: 2, color: '' } } }
+      });
+    });
+
+    const shapes = shapesOn('ruled');
+    expect(shapes).toHaveLength(1);
+    // Along the bottom, inside the cell, the full width of it.
+    expect(shapes[0].height).toBe(2);
+    expect(shapes[0].y).toBe(ROW_HEIGHT - 2);
+    expect(shapes[0].x).toBe(0);
+  });
+
+  it('draws four for a boxed cell', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'boxed');
+      d.setFormat(0, 0, {
+        number: GENERAL,
+        paint: {
+          ...PLAIN,
+          borders: {
+            top: { width: 1, color: '' },
+            right: { width: 1, color: '' },
+            bottom: { width: 1, color: '' },
+            left: { width: 1, color: '' }
+          }
+        }
+      });
+    });
+    expect(shapesOn('boxed')).toHaveLength(4);
+  });
+
+  /**
+   * Outline over a range means the rim of the *block*, not a box
+   * round every cell in it. Only the application worker knows where
+   * the block's edges are, which is why the pattern crosses as a name
+   * rather than as four edges.
+   */
+  it('puts an outline on the rim of a block and nowhere inside it', async () => {
+    h = await mount(d => {
+      d.setCell(0, 0, 'tl');
+      d.setCell(0, 1, 'tr');
+      d.setCell(1, 0, 'bl');
+      d.setCell(1, 1, 'br');
+    });
+
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid && stops++ < 10) {
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('ArrowDown', { shift: true });
+    h.ui.fireEvent.press('ArrowRight', { shift: true });
+    await h.ui.settle();
+    await h.served.settle();
+
+    await applyOutline(h);
+
+    // Each corner has two edges: the two that face outwards.
+    expect(shapesOn('tl')).toHaveLength(2);
+    expect(shapesOn('br')).toHaveLength(2);
+  });
+});
+
+async function applyOutline(h: Harness): Promise<void> {
+  // Through the menu, so the command is the one a person runs.
+  h.ui.fireEvent.press('F10');
+  await h.ui.settle();
+  h.ui.fireEvent.press('o');
+  await h.ui.settle();
+  for (let step = 0; step < 40; step++) {
+    const active = h.ui.queryByRole('menuitem', { name: 'Outline' });
+    if (active !== null && active.properties.get('backgroundColor') === 'controlBackgroundHovered') {
+      break;
+    }
+    h.ui.fireEvent.press('ArrowDown');
+    await h.ui.settle();
+  }
+  h.ui.fireEvent.press('Enter');
+  await h.ui.settle();
+  await h.served.settle();
+  await h.ui.settle();
+}

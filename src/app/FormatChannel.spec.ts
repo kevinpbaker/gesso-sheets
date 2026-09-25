@@ -305,7 +305,13 @@ describe('formatting a whole region', () => {
     h.clock.drain();
 
     const written = JSON.stringify(h.service.snapshot());
-    expect(written.length).toBeLessThan(1_000);
+    // Two kilobytes against the thirty megabytes the per-cell version
+    // wrote. The bound is loose on purpose: what it is guarding is
+    // the *shape* — a file that grows with the number of distinct
+    // formats and not with the number of cells — and a palette entry
+    // carrying four border edges is a hundred bytes wider than one
+    // that did not.
+    expect(written.length).toBeLessThan(2_000);
   });
 
   /** And the wire is unchanged, which is what makes it all work. */

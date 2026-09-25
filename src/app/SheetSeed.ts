@@ -1,4 +1,4 @@
-import { GENERAL, PLAIN, type CellFormat } from '../sheet/Format';
+import { GENERAL, NO_BORDERS, PLAIN, type CellFormat } from '../sheet/Format';
 import type { SheetDocument } from './SheetDocument';
 
 /**
@@ -55,14 +55,21 @@ export function seed(document: SheetDocument): void {
   // sheet to scroll over.
   const header: CellFormat = {
     number: GENERAL,
-    paint: { ...PLAIN, bold: true, fill: '#eef2f7', align: 'center' }
+    paint: {
+      ...PLAIN,
+      bold: true,
+      fill: '#eef2f7',
+      align: 'center',
+      borders: { ...NO_BORDERS, bottom: { width: 2, color: '' } }
+    }
   };
   const money: CellFormat = {
     number: { kind: 'currency', places: 2, symbol: '$' },
     paint: PLAIN
   };
   const share: CellFormat = { number: { kind: 'number', places: 1, thousands: false }, paint: PLAIN };
-  const total: CellFormat = { number: money.number, paint: { ...PLAIN, bold: true } };
+  const ruledAbove = { ...NO_BORDERS, top: { width: 2, color: '' } };
+  const total: CellFormat = { number: money.number, paint: { ...PLAIN, bold: true, borders: ruledAbove } };
 
   for (let column = 0; column <= 4; column++) {
     document.setFormat(0, column, header);
@@ -72,8 +79,9 @@ export function seed(document: SheetDocument): void {
     document.setFormat(row, 3, row === 6 ? total : money);
     document.setFormat(row, 4, share);
   }
-  document.setFormat(6, 0, { number: GENERAL, paint: { ...PLAIN, bold: true } });
-  document.setFormat(6, 1, { number: GENERAL, paint: { ...PLAIN, bold: true } });
+  document.setFormat(6, 0, { number: GENERAL, paint: { ...PLAIN, bold: true, borders: ruledAbove } });
+  document.setFormat(6, 1, { number: GENERAL, paint: { ...PLAIN, bold: true, borders: ruledAbove } });
+  document.setFormat(6, 4, { number: GENERAL, paint: { ...PLAIN, borders: ruledAbove } });
 
   document.setSelection(1, 1, 1, 1);
 }

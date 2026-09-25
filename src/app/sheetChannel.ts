@@ -52,7 +52,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       insertRows: (at, count) => service.insertRows(at, count),
       deleteRows: (at, count) => service.deleteRows(at, count),
       insertColumns: (at, count) => service.insertColumns(at, count),
-      deleteColumns: (at, count) => service.deleteColumns(at, count)
+      deleteColumns: (at, count) => service.deleteColumns(at, count),
+      setBorders: (pattern, width, color) => service.setBorders(pattern, width, color)
     }
   });
 }

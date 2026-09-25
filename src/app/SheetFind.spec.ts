@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { cellKey } from '../sheet/A1';
+import { PLAIN } from '../sheet/Format';
 import { SheetDocument } from './SheetDocument';
 import { at, DEFAULT_FIND, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 
@@ -143,16 +144,7 @@ describe('searching what the format shows', () => {
     const document = sheetWith({ A1: '1234.5' });
     document.setFormat(0, 0, {
       number: { kind: 'currency', places: 2, symbol: '$' },
-      paint: {
-        bold: false,
-        italic: false,
-        underline: false,
-        fontSize: 0,
-        color: '',
-        fill: '',
-        align: 'auto',
-        wrap: false
-      }
+      paint: PLAIN
     });
 
     expect(findMatches(document, '1,234.50', options({ inFormulas: false }), 100, 26).map(at)).toEqual([

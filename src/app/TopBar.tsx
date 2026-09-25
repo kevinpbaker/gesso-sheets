@@ -359,6 +359,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'deleteColumns':
         sheet.send.deleteColumns(columns().first, columns().count);
         break;
+      case 'borderAll':
+        sheet.send.setBorders('all', 1, '');
+        break;
+      case 'borderOutline':
+        sheet.send.setBorders('outline', 1, '');
+        break;
+      case 'borderTop':
+        sheet.send.setBorders('top', 1, '');
+        break;
+      case 'borderBottom':
+        sheet.send.setBorders('bottom', 1, '');
+        break;
+      case 'borderThickBottom':
+        sheet.send.setBorders('bottom', 2, '');
+        break;
+      case 'borderNone':
+        sheet.send.setBorders('none', 0, '');
+        break;
     }
     edit.focusSheet();
   };
