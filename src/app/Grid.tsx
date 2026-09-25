@@ -26,6 +26,7 @@ import {
   fanOut,
   FocusService,
   internalState,
+  EditingService,
   ShellService,
   TextService,
   type ComponentContext,
@@ -34,6 +35,7 @@ import {
 } from 'gesso-framework';
 
 import { columnName, relativeRef } from '../sheet/A1';
+import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
 import type { Span } from '../sheet/Tokenizer';
 
 import {
@@ -136,6 +138,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const focus = ctx.inject(FocusService);
   const shell = ctx.inject(ShellService);
   const measure = ctx.inject(TextService);
+  const editing = ctx.inject(EditingService);
   const window$ = sheet.view.window;
   const edit = _inputs.editing.value;
   const selection$ = edit.selection;
@@ -773,14 +776,56 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   const editorSpans = new BehaviorSubject<readonly UiTextSpan[] | undefined>(undefined);
 
+  /**
+   * What to offer the person typing: a list of names, or a signature.
+   *
+   * Held beside the runs and refreshed by the same three things,
+   * because it answers the same question — what is under the caret —
+   * and two answers computed at different moments would disagree
+   * about it.
+   */
+  const hint = internalState<FormulaHint>(null);
+  /** Which name in the list is picked out, an index into `names`. */
+  const chosen = internalState(0);
+
   const refreshSpans = (): void => {
     const draft = edit.draftNow();
     if (draft === null) {
       editorSpans.next(undefined);
+      hint.value = null;
       return;
     }
     const caret = editorNode === null ? undefined : editorFor(editorNode).focus;
     editorSpans.next(formulaSpans(draft, caret));
+
+    const next = caret === undefined ? null : hintFor(draft, caret);
+    /**
+     * The choice survives a keystroke that did not change the list.
+     *
+     * Typing another letter of a name usually narrows it, and a list
+     * that jumped back to its first item on every character would be
+     * unusable at exactly the speed people type. It is reset when the
+     * names actually change, because holding an index into a list
+     * that has been replaced points at something nobody chose.
+     */
+    if (!sameNames(hint.value, next)) {
+      chosen.value = 0;
+    }
+    /**
+     * A changed hint rebuilds the rows, because the popup is a child
+     * of one.
+     *
+     * Only when it actually changed: typing inside `SUM(` leaves the
+     * signature saying the same thing on most keystrokes, and a
+     * rebuild per character for a hint that did not move is the
+     * expensive half of this feature for none of the benefit. The
+     * comparison is cheap and the rebuild is not.
+     */
+    const changed = !sameHint(hint.value, next);
+    hint.value = next;
+    if (changed) {
+      sheetWindow.invalidate();
+    }
   };
 
   ctx.effect(edit.draft, draft => {
@@ -947,7 +992,21 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
           if (model.text !== text) {
             model.replaceText(text);
           }
-          model.select(text.length);
+          /**
+           * Once per edit, not once per rebuild.
+           *
+           * The caret goes to the end when a cell *opens*. This ref
+           * fires again every time the row is rebuilt — and the row is
+           * rebuilt whenever a hint appears, a choice moves or the
+           * selection changes — so placing the caret here
+           * unconditionally snapped it back to the end on every one of
+           * them. Arrowing left moved the caret and the next frame put
+           * it back, which looks like an arrow key that does not work.
+           */
+          if (!caretPlaced) {
+            caretPlaced = true;
+            model.select(text.length);
+          }
           // Focus follows the edit into the cell — unless the person
           // put the caret in the formula bar, in which case taking it
           // away would bounce them into the cell they chose not to
@@ -1012,6 +1071,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   let editorNode: UiNode | null = null;
   /** The cell the renderer should build as an editor, read while building. */
   let openAt: { row: number; column: number } | null = null;
+  /**
+   * Whether this edit has had its caret placed.
+   *
+   * Reset when a cell opens or closes; see the editor's `ref`.
+   */
+  let caretPlaced = false;
 
   /** The frozen strip at the start of a row: the row's number. */
   const rowHeader = (row: number): UiElement =>
@@ -1079,6 +1144,21 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       }
     }
     /**
+     * The suggestion list takes the keys that are about it.
+     *
+     * Before the accelerators and before `keyAction`, because while a
+     * list is open Enter means "take this name" rather than "commit
+     * the cell", and Escape means "put the list away" rather than
+     * "throw the edit away". That is a mode, and it is a narrow one:
+     * it exists only while a list is on screen, it takes five keys,
+     * and everything else still goes to the text.
+     */
+    if (hint.value?.kind === 'completions' && onHintKey(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    /**
      * F4, which belongs to the cell rather than to the sheet.
      *
      * Handled here and not in the command table because it is only
@@ -1097,6 +1177,64 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       event.preventDefault();
       event.stopPropagation();
     }
+  };
+
+  /**
+   * A key while a list of names is open. Returns whether it was ours.
+   *
+   * Tab as well as Enter, because Tab is what a list of completions
+   * takes everywhere else and a spreadsheet's Tab — commit and move
+   * right — is what somebody who wanted that would press *after*
+   * choosing.
+   */
+  const onHintKey = (event: UiKeyboardEvent): boolean => {
+    const current = hint.value;
+    if (current?.kind !== 'completions') {
+      return false;
+    }
+    const shown = Math.min(current.names.length, 8);
+    switch (event.key) {
+      case 'ArrowDown':
+        chosen.value = (chosen.value + 1) % shown;
+        // The popup is a child of a row and the choice is read while
+        // the row is built, so moving it has to rebuild the row.
+        // Without this the list moves in the state and not on the
+        // screen, which is the same bug as not moving at all.
+        sheetWindow.invalidate();
+        return true;
+      case 'ArrowUp':
+        chosen.value = (chosen.value + shown - 1) % shown;
+        sheetWindow.invalidate();
+        return true;
+      case 'Enter':
+      case 'Tab':
+        acceptHint(current.names[Math.min(chosen.value, shown - 1)], current.span);
+        return true;
+      case 'Escape':
+        // The list goes away and the edit stays. A second Escape is
+        // the one that throws the edit away, which is what Escape
+        // means with no list open.
+        hint.value = null;
+        sheetWindow.invalidate();
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  /** Writes a chosen name into the draft, with its bracket. */
+  const acceptHint = (name: string, span: Span): void => {
+    const draft = edit.draftNow();
+    if (draft === null || editorNode === null) {
+      return;
+    }
+    const written = acceptCompletion(draft, span, name);
+    pickedText = written.text;
+    edit.write(written.text);
+    const model = editorFor(editorNode);
+    model.replaceText(written.text);
+    model.select(written.caret);
+    refreshSpans();
   };
 
   /**
@@ -1211,6 +1349,96 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     return anchorOf(at.row, at.column);
   };
 
+  /**
+   * The hint under the cell being typed into.
+   *
+   * Placed from the caret rather than from the cell's left edge, so a
+   * list of function names appears under the word it is completing
+   * rather than under the start of the formula. The caret's position
+   * is the engine's to know — it depends on the paragraph as it was
+   * laid out — and `EditingService` is where it is asked for.
+   *
+   * A child of the row, like the fill handle, so it travels with a
+   * scroll. It is deliberately not focusable and takes no pointer
+   * events: the keyboard stays in the cell, which is what makes
+   * typing through a list of suggestions feel like typing rather than
+   * like operating a menu.
+   */
+  const hintPopup = (column: number): UiElement => {
+    const current = hint.value;
+    const caret = editing.caretRectOf(editorNode);
+    const left = GUTTER_WIDTH + sheetWindow.offsetOf(column) + (caret?.x ?? 0);
+    const common = {
+      key: 'hint',
+      position: 'absolute' as const,
+      left,
+      top: ROW_HEIGHT,
+      zIndex: 4,
+      backgroundColor: 'surface',
+      borderColor: 'border',
+      borderWidth: 1,
+      paddingTop: 2,
+      paddingBottom: 2,
+      pointerEvents: 'none' as const
+    };
+
+    if (current?.kind === 'signature') {
+      const marked = markedArgument(current.signature, current.argument);
+      return Box(
+        { ...common, paddingLeft: 6, paddingRight: 6, role: 'status', label: `${current.name} signature` },
+        Text({
+          key: 'sig',
+          // The argument being filled in is the only one in the theme's
+          // text colour; the rest are muted. Bold would move the
+          // glyphs, and a hint that reflows as the caret crosses a
+          // comma is a hint that draws the eye for the wrong reason.
+          spans: [
+            { text: `${current.name}(` },
+            ...current.signature.args.flatMap((argument, at) => [
+              { text: at === 0 ? '' : ', ' },
+              { text: argument, color: at === marked ? 'text' : 'textMuted' }
+            ]),
+            { text: ')' }
+          ],
+          fontSize: 11,
+          color: 'textMuted',
+          textWrap: 'none'
+        }),
+        Text({ key: 'summary', text: current.signature.summary, fontSize: 11, color: 'textMuted', textWrap: 'none' })
+      );
+    }
+
+    if (current?.kind !== 'completions') {
+      return Box({ ...common, width: 0, height: 0 });
+    }
+
+    /**
+     * At most eight, because a list longer than the screen is a list
+     * that covers the sheet somebody is reading to decide what to
+     * type.
+     */
+    const shown = current.names.slice(0, 8);
+    const picked = Math.min(chosen.value, shown.length - 1);
+    return Box(
+      { ...common, role: 'listbox', label: 'Functions' },
+      ...shown.map((name, at) =>
+        Text({
+          key: name,
+          text: name,
+          role: 'option',
+          label: name,
+          states: at === picked ? ['selected'] : [],
+          fontSize: 12,
+          paddingLeft: 6,
+          paddingRight: 12,
+          color: 'text',
+          backgroundColor: at === picked ? 'selectionBackground' : undefined,
+          textWrap: 'none'
+        })
+      )
+    );
+  };
+
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
     const line: UiElement[] = [rowHeader(row)];
     // The frozen columns first, which is the order the window's own
@@ -1225,6 +1453,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const corner = cornerAt !== null && cornerAt.row === row;
     if (corner && cornerAt !== null) {
       line.push(fillHandle(cornerAt.column));
+    }
+    // The hint hangs off the row holding the open cell, as the fill
+    // handle hangs off the row holding the corner: a child of the row
+    // travels with it through a scroll and needs nothing kept in step.
+    const hinting = openAt !== null && openAt.row === row && hint.value !== null;
+    if (hinting && openAt !== null) {
+      line.push(hintPopup(openAt.column));
     }
     /**
      * The row clips its own cells, which is what makes a hidden row
@@ -1268,9 +1503,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // formula being typed names something on this row, and an
         // empty array the rest of the time.
         modifiers: outlineFor(row).modifiers,
-        position: stuck ? 'sticky' : corner || spans ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner || spans || hinting ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
-        zIndex: stuck || spans ? 1 : undefined,
+        zIndex: stuck || spans || hinting ? 1 : undefined,
         backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
       },
@@ -1716,6 +1951,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
     openBefore = next;
     openAt = next;
+    // A new edit places its caret once; see the editor's `ref`.
+    caretPlaced = false;
     sheetWindow.invalidate();
   });
 
@@ -1847,4 +2084,26 @@ const OUTLINE = 2;
 
 function sameWidths(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((width, index) => width === b[index]);
+}
+
+/** Whether two hints offer the same list of names, in the same order. */
+function sameNames(before: FormulaHint, after: FormulaHint): boolean {
+  if (before?.kind !== 'completions' || after?.kind !== 'completions') {
+    return false;
+  }
+  return before.names.length === after.names.length && before.names.every((name, at) => name === after.names[at]);
+}
+
+/** Whether two hints would draw the same popup. */
+function sameHint(before: FormulaHint, after: FormulaHint): boolean {
+  if (before === null || after === null) {
+    return before === after;
+  }
+  if (before.kind !== after.kind) {
+    return false;
+  }
+  if (before.kind === 'signature' && after.kind === 'signature') {
+    return before.name === after.name && before.argument === after.argument;
+  }
+  return sameNames(before, after);
 }

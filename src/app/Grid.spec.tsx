@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { editorFor } from 'gesso-core';
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 import { createComponent } from 'gesso-framework';
@@ -1316,5 +1317,241 @@ describe('following the caret with no text change', () => {
     await arrow('ArrowLeft', 3);
     expect(runs().filter(run => run.text === 'A1' || run.text === 'B2')).toHaveLength(2);
     expect(runs().map(run => run.text).join('')).toBe('=SUM(A1)+B2');
+  });
+});
+
+/**
+ * The list of function names, and the signature behind it.
+ *
+ * Driven through the semantics tree: the list is a `listbox` of
+ * `option`s and the chosen one carries `selected`, so a list that is
+ * hard to find here is exactly a list a screen reader cannot read.
+ *
+ * The mode is the risk again. While a list is open, Enter takes a
+ * name rather than committing the cell and Escape puts the list away
+ * rather than throwing the edit away — five keys, only while a list
+ * is on screen, and everything else still goes to the text.
+ */
+describe('suggesting a function while it is typed', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount();
+  });
+
+  async function typing(text: string): Promise<void> {
+    h.service.setSelection(5, 0, 5, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function press(key: string): Promise<void> {
+    h.ui.fireEvent.press(key);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  /**
+   * There is no `queryAllByRole`, and an empty list is half of what
+   * is being asserted here, so the nodes are filtered directly.
+   */
+  const withRole = (role: string) => h.ui.allNodes().filter(node => node.properties.get('role') === role);
+  const options = () => withRole('option').map(node => node.properties.get('label'));
+  const selected = () =>
+    withRole('option').find(node => {
+      const states = node.properties.get('states') as string[] | undefined;
+      return states?.includes('selected') === true;
+    });
+  const editorText = () => h.ui.queryByRole('textbox', { name: 'Cell' })?.properties.get('value');
+
+  it('offers the names that start with what was typed', async () => {
+    await typing('=IF');
+    expect(options()).toEqual(['IF', 'IFERROR', 'IFNA', 'IFS']);
+  });
+
+  /** Prefix, not substring: `SU` offers `SUBSTITUTE` and `SUM` alike. */
+  it('matches the start of the name', async () => {
+    await typing('=SU');
+    expect(options()).toEqual(['SUBSTITUTE', 'SUM', 'SUMIF', 'SUMIFS', 'SUMPRODUCT']);
+  });
+
+  it('picks the first one out to begin with', async () => {
+    await typing('=IF');
+    expect(selected()?.properties.get('label')).toBe('IF');
+  });
+
+  it('moves the choice with the arrow keys', async () => {
+    await typing('=IF');
+    await press('ArrowDown');
+    expect(selected()?.properties.get('label')).toBe('IFERROR');
+    await press('ArrowUp');
+    expect(selected()?.properties.get('label')).toBe('IF');
+  });
+
+  it('wraps round rather than stopping at the ends', async () => {
+    await typing('=IF');
+    await press('ArrowUp');
+    expect(selected()?.properties.get('label')).toBe('IFS');
+  });
+
+  it('writes the chosen name, with its bracket, on Enter', async () => {
+    await typing('=IF');
+    await press('ArrowDown');
+    await press('Enter');
+    expect(editorText()).toBe('=IFERROR(');
+    expect(options()).toEqual([]);
+  });
+
+  it('takes Tab as well, which is what a list takes everywhere else', async () => {
+    await typing('=IF');
+    await press('Tab');
+    expect(editorText()).toBe('=IF(');
+  });
+
+  /** Escape puts the list away; the edit is still open. */
+  it('closes on Escape without throwing the edit away', async () => {
+    await typing('=IF');
+    await press('Escape');
+    expect(options()).toEqual([]);
+    expect(editorText()).toBe('=IF');
+  });
+
+  /**
+   * The narrow half of the mode: Enter with no list open still
+   * commits the cell, as it always did.
+   */
+  it('leaves Enter alone when no list is open', async () => {
+    await typing('=1+1');
+    expect(options()).toEqual([]);
+    await press('Enter');
+    expect(h.ui.queryByRole('textbox', { name: 'Cell' })).toBeNull();
+    expect(h.document.sheet.input(5, 0)).toBe('=1+1');
+  });
+
+  it('offers nothing for a word that is a cell reference', async () => {
+    await typing('=B');
+    expect(options()).toEqual([]);
+  });
+
+  it('shows the signature once the bracket is typed', async () => {
+    await typing('=ROUND(');
+    expect(options()).toEqual([]);
+    expect(withRole('status').some(node => node.properties.get('label') === 'ROUND signature')).toBe(true);
+  });
+
+  /**
+   * A choice is an index, and an index into a list that has been
+   * replaced points at something nobody picked.
+   */
+  it('starts the choice again when the list changes under it', async () => {
+    await typing('=IF');
+    await press('ArrowDown');
+    await press('ArrowDown');
+    expect(selected()?.properties.get('label')).toBe('IFNA');
+
+    h.ui.fireEvent.type('E');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(options()).toEqual(['IFERROR']);
+    expect(selected()?.properties.get('label')).toBe('IFERROR');
+  });
+});
+
+/**
+ * The caret is placed when a cell opens, and not again.
+ *
+ * The editor's `ref` fires on every rebuild of its row, and the row
+ * is rebuilt whenever a hint appears, a choice moves or the selection
+ * changes. Placing the caret there unconditionally snapped it back to
+ * the end on every one of them: an arrow key moved it and the next
+ * frame put it back, which looks exactly like an arrow key that does
+ * not work.
+ */
+describe('where the caret is while a cell is open', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount(document => document.setCell(5, 0, '=SUM(A1)'));
+  });
+
+  async function open(): Promise<void> {
+    h.service.setSelection(5, 0, 5, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  const caret = () => editorFor(h.ui.getByRole('textbox', { name: 'Cell' })).focus;
+
+  it('opens with the caret at the end, as F2 does everywhere', async () => {
+    await open();
+    expect(caret()).toBe('=SUM(A1)'.length);
+  });
+
+  /** The one that was broken: it stays where it was put. */
+  it('leaves the caret where an arrow key moved it', async () => {
+    await open();
+    for (let at = 0; at < 3; at++) {
+      h.ui.fireEvent.press('ArrowLeft');
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+    expect(caret()).toBe('=SUM(A1)'.length - 3);
+  });
+
+  it('still opens the next cell at its own end', async () => {
+    await open();
+    h.ui.fireEvent.press('ArrowLeft');
+    await h.ui.settle();
+    h.ui.fireEvent.press('Escape');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+
+    await open();
+    expect(caret()).toBe('=SUM(A1)'.length);
   });
 });
