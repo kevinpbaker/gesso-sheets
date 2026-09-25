@@ -1,3 +1,5 @@
+import { relativeRef } from '../sheet/A1';
+import { nameProblem } from '../sheet/Names';
 import type { MergeRect } from '../sheet/Merges';
 import {
   DEFAULT_FORMAT,
@@ -62,6 +64,14 @@ export interface SheetSnapshot {
    * be read *wrongly* rather than not at all.
    */
   readonly merges: readonly MergeRect[];
+  /**
+   * The names, each as its text and the four corners it stands for.
+   *
+   * Absent in a file written before they existed, which reads as no
+   * names — so no version bump, on the same rule the merges were
+   * added under: the field's absence already means the right thing.
+   */
+  readonly names: readonly StoredName[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
@@ -133,6 +143,13 @@ export function snapshotOf(
       columns: formats.regions.columns
     },
     merges: document.merges.all.filter(rect => rect.lastRow < rowCount),
+    names: document.sheet.names.all().map(entry => ({
+      name: entry.name,
+      firstRow: Math.min(entry.range.start.row, entry.range.end.row),
+      firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
+      lastRow: Math.max(entry.range.start.row, entry.range.end.row),
+      lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
+    })),
     frozenRows: document.frozenRows,
     frozenColumns: document.frozenColumns,
     hiddenRows: [...document.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
@@ -154,6 +171,15 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   // zeros somebody saved would be gone by the time the format said
   // to keep them.
   document.merges.restore(snapshot.merges);
+  document.sheet.names.restore(
+    snapshot.names.map(stored => ({
+      name: stored.name,
+      range: {
+        start: relativeRef(stored.firstRow, stored.firstColumn),
+        end: relativeRef(stored.lastRow, stored.lastColumn)
+      }
+    }))
+  );
   document.frozenRows = snapshot.frozenRows;
   document.frozenColumns = snapshot.frozenColumns;
   document.hiddenRows.clear();
@@ -222,6 +248,7 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
     formats: formatsFrom(source.formats, palette.length),
     regions: regionsFrom(source.regions, palette.length),
     merges: mergesFrom(source.merges),
+    names: namesFrom(source.names),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     hiddenRows: Array.isArray(source.hiddenRows)
@@ -426,4 +453,49 @@ function widthsFrom(stored: unknown, columnCount: number): number[] {
     }
   }
   return widths;
+}
+
+/** A name as a file holds it: its text and the corners it names. */
+export interface StoredName {
+  readonly name: string;
+  readonly firstRow: number;
+  readonly firstColumn: number;
+  readonly lastRow: number;
+  readonly lastColumn: number;
+}
+
+/**
+ * Names read back out of a file, with the bad ones dropped.
+ *
+ * Checked against the same rules a person's typing is checked
+ * against, because a file is untrusted input in exactly the way a
+ * keystroke is: a name saved by a future version, or edited by hand,
+ * must not become a name this sheet cannot express.
+ */
+function namesFrom(stored: unknown): StoredName[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  const found: StoredName[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const held = entry as Partial<StoredName>;
+    if (typeof held.name !== 'string' || nameProblem(held.name) !== null) {
+      continue;
+    }
+    const corners = [held.firstRow, held.firstColumn, held.lastRow, held.lastColumn];
+    if (!corners.every(value => Number.isInteger(value) && (value as number) >= 0)) {
+      continue;
+    }
+    found.push({
+      name: held.name,
+      firstRow: held.firstRow as number,
+      firstColumn: held.firstColumn as number,
+      lastRow: held.lastRow as number,
+      lastColumn: held.lastColumn as number
+    });
+  }
+  return found;
 }

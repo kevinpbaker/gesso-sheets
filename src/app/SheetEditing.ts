@@ -3,7 +3,7 @@ import { combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs'
 import { internalState, type ChannelReplica, type ComponentContext } from 'gesso-framework';
 
 import type { CommandId } from './SheetCommands';
-import type { SheetCommands, SheetSelection, SheetView } from './SheetContract';
+import type { SheetCommands, SheetNames, SheetSelection, SheetView } from './SheetContract';
 import type { SheetAction } from './SheetKeys';
 
 export interface SheetEditing {
@@ -45,6 +45,10 @@ export interface SheetEditing {
    * shared object would be a second thing to keep in step.
    */
   focusSheet(): void;
+  /** The named ranges, for the name box to resolve and to answer with. */
+  readonly names: Observable<SheetNames>;
+  /** Gives the selection a name. The answer arrives on `names`. */
+  defineName(name: string): void;
   /** The grid, saying which node that is. Called once, on mount. */
   provideFocus(run: () => void): void;
   /**
@@ -248,6 +252,8 @@ export function editing(
   return {
     selection,
     selectionNow: () => selection.value,
+    names: sheet.view.names,
+    defineName: (name: string) => sheet.send.defineName(name),
     draft,
     draftNow: () => draft.value,
     open: draft.pipe(

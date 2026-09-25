@@ -150,6 +150,27 @@ export interface SheetEditor {
   readonly explain: SheetExplain | null;
 }
 
+/**
+ * The names a sheet knows, and what the last attempt to add one said.
+ *
+ * `refused` is a sentence or the empty string, and it travels here
+ * rather than as its own key because it is only ever read beside the
+ * list: it answers "did that work", which is a question about this
+ * list at this moment.
+ */
+export interface SheetNames {
+  readonly entries: readonly SheetName[];
+  readonly refused: string;
+}
+
+export interface SheetName {
+  readonly name: string;
+  readonly firstRow: number;
+  readonly firstColumn: number;
+  readonly lastRow: number;
+  readonly lastColumn: number;
+}
+
 export interface SheetExplain {
   readonly code: string;
   readonly meaning: string;
@@ -417,6 +438,16 @@ export interface SheetCommands {
    * step of undo instead, which is the same promise kept differently.
    */
   mergeCells(): void;
+  /**
+   * Gives the selection a name.
+   *
+   * A command rather than a question, so the render worker does not
+   * have to hold the rules: the answer comes back as the names view
+   * changing, or not changing, and the sentence explaining why is
+   * published beside it.
+   */
+  defineName(name: string): void;
+  removeName(name: string): void;
   unmergeCells(): void;
   /**
    * Asks what the columns would have to be wide enough for.
@@ -504,6 +535,8 @@ export interface SheetView {
   readonly geometry: SheetGeometry;
   readonly selection: SheetSelection;
   readonly editor: SheetEditor;
+  /** The named ranges, for the name box to resolve and to list. */
+  readonly names: SheetNames;
   readonly status: SheetStatus;
   readonly clipboard: SheetClipboard;
   /** Sum, average and count over the selection. */
@@ -592,6 +625,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '', explain: null },
+  names: { entries: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
   stats: NO_STATS,

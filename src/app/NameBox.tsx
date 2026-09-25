@@ -1,9 +1,10 @@
 import { combineLatest, map, type Observable } from 'rxjs';
 
-import { type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } from 'gesso-core';
+import { editorFor, type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } from 'gesso-core';
 import { internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
-import { columnName, parseAddress } from '../sheet/A1';
+import { columnName, parseAddress, relativeRef, type RangeRef } from '../sheet/A1';
+import type { SheetName } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -53,17 +54,54 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
 
   const shown = combineLatest([draft, address]).pipe(map(([typed, where]) => typed ?? where));
 
+  /** The names, kept to hand so a commit can resolve one. */
+  let known: readonly SheetName[] = [];
+  _ctx.effect(edit.names, view => (known = view.entries));
+
+  /**
+   * The range a name stands for, as an address would give one.
+   *
+   * Case-insensitive, because the sheet's names are: somebody who
+   * typed `sales` meant `Sales`, and a name box that disagreed would
+   * define a second name rather than going to the first.
+   */
+  const namedRange = (typed: string): RangeRef | null => {
+    const found = known.find(entry => entry.name.toUpperCase() === typed.trim().toUpperCase());
+    if (found === undefined) {
+      return null;
+    }
+    return {
+      start: relativeRef(found.firstRow, found.firstColumn),
+      end: relativeRef(found.lastRow, found.lastColumn)
+    };
+  };
+
   const commit = (): void => {
     const typed = draft.value;
     draft.value = null;
     if (typed === null) {
       return;
     }
-    const range = parseAddress(typed);
+    const range = parseAddress(typed) ?? namedRange(typed);
     if (range === null) {
-      // Not an address. Put the selection's own address back rather
-      // than jumping somewhere invented, and say nothing: a name box
-      // that argued would be a name box people stop using.
+      /**
+       * Not an address and not a name the sheet knows — so it is
+       * somebody naming the selection.
+       *
+       * This is the whole of `Insert ▸ Name` in one gesture: pick a
+       * range, type what it is, press Enter. The rules live on the
+       * other thread and the answer comes back on the names view, so
+       * nothing here has to know what a legal name looks like.
+       *
+       * A single cell is not named. Naming one is legal and almost
+       * always a slip — the selection was a range a moment ago — and
+       * a name box that silently defined `Sales` as `B7` would be
+       * worse than one that did nothing.
+       */
+      const at = edit.selectionNow();
+      if (at.row !== at.anchorRow || at.column !== at.anchorColumn) {
+        edit.defineName(typed);
+      }
       return;
     }
     // The anchor goes on the *far* corner and the active cell is
@@ -77,6 +115,23 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
       edit.extendTo(range.start.row, range.start.column);
     }
     edit.focusSheet();
+  };
+
+  /**
+   * The node, so focus can select what is in it.
+   *
+   * The parent's own focus path already selects all when it *asks*
+   * for the box — a command that jumps here should not make somebody
+   * delete `B7` before typing. Tabbing in went the other way and left
+   * the caret at the start, so typing `C9` gave `C9B7`, which is not
+   * an address and not a name and does nothing at all.
+   */
+  let node: UiNode | null = null;
+
+  const onFocus = (): void => {
+    if (node !== null) {
+      editorFor(node).selectAll();
+    }
   };
 
   const onKeyDown = (event: UiKeyboardEvent): void => {
@@ -96,7 +151,10 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
 
   return (
     <editabletext
-      ref={inputs.ref.value ?? undefined}
+      ref={found => {
+        node = found;
+        inputs.ref.value?.(found);
+      }}
       value={shown}
       width={92}
       fontSize={12}
@@ -113,6 +171,7 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
       label="Name box"
       onInput={(event: UiTextChangeEvent) => (draft.value = event.value)}
       onKeyDown={onKeyDown}
+      onFocus={onFocus}
     />
   );
 }

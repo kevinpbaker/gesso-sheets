@@ -2,6 +2,8 @@ import { parseTypedDate } from '../sheet/Dates';
 import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format';
 import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
+import type { RangeRef } from '../sheet/A1';
+import type { NamedRange, NameProblem } from '../sheet/Names';
 import { Sheet } from '../sheet/Sheet';
 import { shiftIndex, type Shift } from '../sheet/Shift';
 
@@ -13,7 +15,25 @@ import { shiftIndex, type Shift } from '../sheet/Shift';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit;
+
+/**
+ * A name defined, redefined or removed.
+ *
+ * The whole table either side rather than the one entry that changed,
+ * which is the cheap answer here and not a lazy one: a sheet holds a
+ * handful of names, the table is a list of short strings and four
+ * numbers each, and an edit that carries it whole cannot get the
+ * inverse wrong. The row and column are the range's corner, so
+ * undoing a definition puts the selection back on what was named.
+ */
+interface NamesEdit {
+  readonly kind: 'names';
+  readonly row: number;
+  readonly column: number;
+  readonly before: readonly NamedRange[];
+  readonly after: readonly NamedRange[];
+}
 
 interface TextEdit {
   readonly kind: 'text';
@@ -412,6 +432,8 @@ export class SheetDocument {
         );
       } else if (edit.kind === 'structure') {
         this.undoShift(edit);
+      } else if (edit.kind === 'names') {
+        this.restoreNames(edit.before);
       } else {
         this.applyFormat(edit.row, edit.column, edit.before);
       }
@@ -440,6 +462,8 @@ export class SheetDocument {
         this.sheet.shift(edit.shift);
         this.formats.shift(edit.shift);
         this.columnWidths = shiftWidths(edit.widths, edit.shift);
+      } else if (edit.kind === 'names') {
+        this.restoreNames(edit.after);
       } else {
         this.applyFormat(edit.row, edit.column, edit.after);
       }
@@ -471,6 +495,55 @@ export class SheetDocument {
   }
 
   /** Takes the selection to what a step changed, so it is seen. */
+  /**
+   * Gives a range a name, or says why it cannot have one.
+   *
+   * The rules live in `Names`; this is the half that records the
+   * change so it can be taken back, and tells the sheet to re-read
+   * its formulas — a name changes what they *read*, not only what
+   * they answer.
+   */
+  defineName(name: string, range: RangeRef): NameProblem | null {
+    const before = this.sheet.names.all();
+    const problem = this.sheet.names.define(name, range);
+    if (problem !== null) {
+      return problem;
+    }
+    this.record({
+      kind: 'names',
+      row: Math.min(range.start.row, range.end.row),
+      column: Math.min(range.start.column, range.end.column),
+      before,
+      after: this.sheet.names.all()
+    });
+    this.sheet.namesChanged();
+    return null;
+  }
+
+  /** Takes a name away. False when there was no such name. */
+  removeName(name: string): boolean {
+    const range = this.sheet.names.rangeOf(name);
+    if (range === null) {
+      return false;
+    }
+    const before = this.sheet.names.all();
+    this.sheet.names.remove(name);
+    this.record({
+      kind: 'names',
+      row: Math.min(range.start.row, range.end.row),
+      column: Math.min(range.start.column, range.end.column),
+      before,
+      after: this.sheet.names.all()
+    });
+    this.sheet.namesChanged();
+    return true;
+  }
+
+  private restoreNames(entries: readonly NamedRange[]): void {
+    this.sheet.names.restore(entries);
+    this.sheet.namesChanged();
+  }
+
   private selectStep(step: Step): void {
     let firstRow = Number.POSITIVE_INFINITY;
     let lastRow = Number.NEGATIVE_INFINITY;

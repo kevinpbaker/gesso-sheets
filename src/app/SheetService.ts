@@ -1,6 +1,8 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
+import { relativeRef } from '../sheet/A1';
 import { addressOf, explainCell } from '../sheet/Explain';
+import { nameProblemText } from '../sheet/Names';
 import { aggregateOf } from './Aggregate';
 import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
 import {
@@ -10,6 +12,7 @@ import {
   PLAIN_PAINT,
   type SheetClipboard,
   type SheetEditor,
+  type SheetNames,
   type SheetExplain,
   type SheetFindView,
   type SheetGeometry,
@@ -93,6 +96,7 @@ export class SheetService {
   readonly geometry: Observable<SheetGeometry>;
   readonly selection: Observable<SheetSelection>;
   readonly editor: Observable<SheetEditor>;
+  readonly names: Observable<SheetNames>;
   readonly status: Observable<SheetStatus>;
   readonly clipboard: Observable<SheetClipboard>;
   readonly selectionStats: Observable<SheetStats>;
@@ -109,6 +113,7 @@ export class SheetService {
   private readonly geometrySubject: BehaviorSubject<SheetGeometry>;
   private readonly selectionSubject: BehaviorSubject<SheetSelection>;
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
+  private readonly namesSubject: BehaviorSubject<SheetNames>;
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
@@ -189,12 +194,18 @@ export class SheetService {
       input: document.activeInput,
       explain: null
     });
+    this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], refused: '' });
+    // Seeded from the document, because a sheet loaded from a file
+    // arrives with its names already in it and nothing else would
+    // ever tell the other thread they exist.
+    this.publishNames('');
     this.statusSubject = new BehaviorSubject<SheetStatus>(this.statusNow());
 
     this.window = this.windowSubject;
     this.geometry = this.geometrySubject;
     this.selection = this.selectionSubject;
     this.editor = this.editorSubject;
+    this.names = this.namesSubject;
     this.status = this.statusSubject;
     this.clipboard = this.clipboardSubject;
     this.selectionStats = this.statsSubject;
@@ -817,6 +828,50 @@ export class SheetService {
     this.document.merges.add(merged);
     this.publishGeometry();
     this.afterEdit();
+  }
+
+  /**
+   * Gives the selection a name, or publishes why it cannot have one.
+   *
+   * The refusal travels with the list rather than coming back as a
+   * return value, because the render worker asked over a channel and
+   * a channel command answers by the view changing. A name box that
+   * argued in a dialog would be worse than one that shows a line of
+   * text under itself.
+   */
+  defineName(name: string): void {
+    const rect = rectOf(this.document.selection);
+    const range = {
+      start: relativeRef(rect.firstRow, rect.firstColumn),
+      end: relativeRef(rect.lastRow, rect.lastColumn)
+    };
+    const problem = this.document.defineName(name, range);
+    if (problem !== null) {
+      this.publishNames(nameProblemText(problem));
+      return;
+    }
+    this.publishNames('');
+    this.afterEdit();
+  }
+
+  removeName(name: string): void {
+    if (this.document.removeName(name)) {
+      this.publishNames('');
+      this.afterEdit();
+    }
+  }
+
+  private publishNames(refused: string): void {
+    this.namesSubject.next({
+      entries: this.document.sheet.names.all().map(entry => ({
+        name: entry.name,
+        firstRow: Math.min(entry.range.start.row, entry.range.end.row),
+        firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
+        lastRow: Math.max(entry.range.start.row, entry.range.end.row),
+        lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
+      })),
+      refused
+    });
   }
 
   /**
