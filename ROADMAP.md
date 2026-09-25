@@ -908,12 +908,35 @@ Carried forward from the head of this file, with what Part Two adds:
 - **A floating object layer over a scroll surface.** Selectable,
   movable, resizable things in a scrolled coordinate space, which
   charts need and images would reuse. Phase 15.
-- **Per-edge borders.** `borderWidth` is one number and `borderColor`
-  one colour, so a cell cannot have a heavy bottom edge and a hairline
-  top. Found in Phase 9, which left borders out because of it. The
-  alternative inside the application is four child boxes per bordered
-  cell, which is four times the nodes on the one surface whose node
-  count is a budget.
+- **Per-edge borders — and the note this used to be was wrong.**
+  `borderWidth` is one number and `borderColor` one colour, so a cell
+  cannot have a heavy bottom edge and a hairline top. This file then
+  said the only way round it was four child boxes per cell, four times
+  the nodes on the one surface whose node count is a budget. That is
+  not true. A border in Gesso is paint-only — `toHtml.ts` says so
+  outright, and `paintBorder` strokes *inside* the box — so it touches
+  no layout at all, and the `decorated` modifier already takes an
+  Observable of arbitrary coloured rectangles drawn in the node's own
+  paint pass with **nothing to lay out and nothing to hit test**. Four
+  thin rects per bordered cell is four draw instances and zero nodes.
+  Phase 10 can have borders without an engine change.
+
+  What is genuinely missing is smaller and only matters to a general
+  `borders()` modifier: `decorationRect` resolves `x`/`y` from the
+  node's top-left and defaults `width`/`height` to the node's own, so
+  a shape cannot say "the bottom edge" without already knowing the
+  height. An application that knows its own geometry — this one knows
+  `ROW_HEIGHT` and its column widths — does not need it. An anchoring
+  convention on `DecorationBox` would close it in about ten lines.
+
+  First-class `borderTopWidth` props are a different and much larger
+  change, and the cost is not where it looks: the property, the paint
+  state and the Canvas2D stroke are easy, but the WebGPU instance
+  packs `radius, opacity, borderWidth` as one `float32x3`, the
+  fragment shader draws the border as an isotropic SDF band, and one
+  instance carries one colour — so four widths need a wider vertex
+  format, an anisotropic inner rect in the shader, and up to four
+  instances when the colours differ.
 - **Two-axis touch scroll.** Still open, from Phase 0.
 
 ---
