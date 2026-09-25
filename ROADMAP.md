@@ -806,7 +806,7 @@ property was, and zero is exactly what they got. The row clips itself
 now, and only the hidden ones do, because clipping every row would
 cut off the fill handle that deliberately hangs outside its cell.
 
-### Phase 11 — The library, and dates
+### Phase 11 — The library, and dates — **done**
 
 Headless, in `src/sheet`, under vitest in node. `boundaries.spec.ts`
 guards the whole phase.
@@ -853,6 +853,82 @@ it did rather than that it was assumed to.
 literal — covering every function and its error cases; and a budget
 spec saying a `VLOOKUP` down a full column evaluates once per edit
 inside that column and not once per row.
+
+**Met, both halves.** `Functions.spec.ts` is 210 cases over eighty-odd
+functions, every answer a literal, run through parse → graph →
+recalculate → read rather than against the function table, because
+that is the path a formula actually takes and the wiring is where the
+mistakes were. Its last spec fails the build if a name is added to
+the library with no case asserting what it does.
+`Library.budget.spec.ts` holds the other half: a `VLOOKUP` down a
+full column is **one evaluation per edit** — `toBe`, not
+`toBeLessThan` — and a thousand edits are a thousand, not a million.
+All six frame budgets are unchanged at 2.0–2.6 ms.
+
+**A date is a number with a format, and that is the whole design.**
+No date type, because one would break the three things that make
+dates work: `=B2-B1` giving a count of days, a date sorting with the
+numbers, and `EOMONTH` returning something you can still add 7 to.
+The serials are asserted against Excel's, including the phantom
+1900-02-29 that this declines to invent — a serial that disagreed
+would make every file leaving here wrong by a day, in silence,
+forever. Typing one is a single undo step writing both halves, and
+the format goes on only over `General`: a cell somebody deliberately
+formatted has been answered already.
+
+The parse refuses a date with no year. Excel reads `1/2` as this
+January, which makes the stored value depend on the day it was typed.
+`3/4/2026` is March the fourth because with no locale there is no
+evidence in the text — but `24/9/2026` is read day-first, because the
+other reading is not a date at all.
+
+**The three dangers this file named were all real, and all three were
+found by a spec rather than by reasoning.**
+
+*Volatiles* wake on every edit, and so does everything downstream of
+them — the half that was missing at first. A `=TODAY()` redone while
+the `=A1+1` beside it is not leaves two cells disagreeing about the
+date, which is worse than either being stale because one of them
+looks right. `NOW()` is read once per recalculation rather than once
+per call: the first version handed out a live clock and two cells in
+one pass disagreed by however long the pass took.
+
+*`INDIRECT` and `OFFSET`* run with their reads recorded and their
+edges rebuilt from what they actually touched, so editing the cell an
+`INDIRECT` landed on wakes the formula that read it. A formula that
+read something still dirty is redone once it settles — *once*,
+because two of them pointing at each other would otherwise chase each
+other for as long as anybody watched. Making that terminate meant
+teaching `recalculate()` with no budget to keep going when new work
+appears during a pass, which it did not do.
+
+*`A:A`* is watched, not expanded: 1,048,576 edges is not a thing to
+store, so the graph keeps one entry per column per formula and
+`dependentsOf` unions the watchers in. That is the interval index
+this repository has wanted since Phase 1, built for the one case that
+cannot live without it. Kahn's in-degree had to be counted forwards
+through `dependentsOf` rather than backwards through `precedentsOf`,
+because the backwards spelling cannot see a watch and there is no
+entry for it to find. Reads stop at a high-water mark of what has
+ever been written, which errs high and only ever costs a few blank
+cells.
+
+**`#N/A` is a sixth error value**, and the count in `Values.ts`
+changed with it. It came with the lookups because a `VLOOKUP` that
+found nothing has not failed — the formula is fine and the table
+simply has no such row — and calling that `#VALUE!` sends somebody to
+debug a formula that is correct. `IFNA` is only a coherent function
+if the code is its own. `#NUM!` is still absent on purpose: `SQRT(-1)`
+is `#VALUE!`, which says the true thing, and a seventh code earns
+less than it costs.
+
+**What `TEXT` cannot do is stated rather than half-done.** Excel takes
+a format language here and this application deliberately has none —
+see `NumberFormat`. So `TEXT` accepts the pattern strings that name
+the formats it has and answers `#VALUE!` to anything else. A
+half-implemented pattern language that ignored the parts it could not
+do would produce text that is wrong rather than absent, which is worse
+in a cell nobody is checking.
 
 ### Phase 12 — The formula editor
 
