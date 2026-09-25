@@ -236,3 +236,177 @@ describe('guessing at a heading', () => {
     expect(looksLikeHeader(document, { firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 0 })).toBe(false);
   });
 });
+
+/**
+ * The hazard: a sort that quietly destroys the formulas it moved.
+ *
+ * `sortRect` rewrote every moved formula by how far its row travelled,
+ * which is right for a fill and wrong for a sort. A fill makes a *new*
+ * formula one row down, so its references should follow it. A sort
+ * *permutes rows that already exist* — the cells a reference names
+ * have not gone anywhere unless the sort itself moved them.
+ *
+ * Both of these came out of the demo sheet, twice, by accident.
+ */
+describe('what a sort must not do to a formula', () => {
+  /** Data rows, then a total that adds them up. */
+  const table = () =>
+    sheetOf([
+      ['Region', 'Units'],
+      ['North', '120'],
+      ['South', '157'],
+      ['West', '194'],
+      ['Total', '=SUM(B2:B4)']
+    ]);
+
+  const whole = rect(0, 4, 0, 1);
+  const header = { hasHeader: true };
+
+  it('leaves a total summing the same rows when the total moves up', () => {
+    const document = table();
+    expect(document.sheet.display(4, 1)).toBe('471');
+
+    // Descending puts "Total" at the top: it moves three rows, and the
+    // old rewrite took `B2:B4` three rows with it, to `B-1:B1`.
+    sortRect(document, whole, { column: 0, ascending: false, ...header });
+    document.sheet.recalculate();
+
+    const at = totalRow(document);
+    expect(document.sheet.input(at, 1)).not.toContain('#REF!');
+    expect(document.sheet.display(at, 1)).toBe('471');
+  });
+
+  it('leaves it summing the same rows when the total moves up one', () => {
+    const document = table();
+    // Ascending, "Total" sorts before "West": it moves one row, and the
+    // old rewrite made it `=SUM(B1:B3)` — no error, no complaint, and
+    // adding up the wrong three cells. Worse than #REF! precisely
+    // because nothing on the screen says so.
+    sortRect(document, whole, { column: 0, ascending: true, ...header });
+    document.sheet.recalculate();
+
+    expect(document.sheet.display(totalRow(document), 1)).toBe('471');
+  });
+
+  it('still moves a reference that names a row the sort moved', () => {
+    // The part that must keep working: a formula reading its own row.
+    const document = sheetOf([
+      ['Region', 'Units', 'Doubled'],
+      ['West', '194', '=B2*2'],
+      ['North', '120', '=B3*2']
+    ]);
+    sortRect(document, rect(0, 2, 0, 2), { column: 0, ascending: true, ...header });
+    document.sheet.recalculate();
+
+    // Each row's formula still reads its own row — which, the rows
+    // having swapped, means each one points somewhere new.
+    expect(document.sheet.input(1, 2)).toContain('B2');
+    expect(document.sheet.display(1, 2)).toBe('240');
+    expect(document.sheet.input(2, 2)).toContain('B3');
+    expect(document.sheet.display(2, 2)).toBe('388');
+  });
+});
+
+function totalRow(document: SheetDocument): number {
+  for (let row = 0; row <= 4; row++) {
+    if (document.sheet.input(row, 0) === 'Total') {
+      return row;
+    }
+  }
+  throw new Error('the sort lost the total row');
+}
+
+/**
+ * A total is a statement *about* the rows, not one of them.
+ *
+ * `currentRegion` widens a single cell to the whole table, total row
+ * and all, so this is the ordinary case rather than an odd one: click
+ * a region name, press sort, and the total is in the block.
+ */
+describe('a summary row at the foot of a block', () => {
+  const table = () =>
+    sheetOf([
+      ['Region', 'Units'],
+      ['North', '120'],
+      ['South', '157'],
+      ['West', '194'],
+      ['Total', '=SUM(B2:B4)']
+    ]);
+
+  it('stays at the foot however the rows above it are sorted', () => {
+    const document = table();
+    sortRect(document, rect(0, 4, 0, 1), { column: 0, ascending: false, hasHeader: true });
+
+    expect(column(document, 0, 5)).toEqual(['Region', 'West', 'South', 'North', 'Total']);
+    document.sheet.recalculate();
+    expect(document.sheet.display(4, 1)).toBe('471');
+  });
+
+  it('does not stop the rows above it from sorting', () => {
+    const document = table();
+    sortRect(document, rect(0, 4, 0, 1), { column: 1, ascending: false, hasHeader: true });
+    expect(column(document, 0, 5)).toEqual(['Region', 'West', 'South', 'North', 'Total']);
+  });
+
+  it('is not what an ordinary row reading its own line looks like', () => {
+    const document = sheetOf([
+      ['Region', 'Units', 'Doubled'],
+      ['North', '120', '=B2*2'],
+      ['West', '194', '=B3*2']
+    ]);
+    sortRect(document, rect(0, 2, 0, 2), { column: 0, ascending: false, hasHeader: true });
+    // The last row sorted like any other; it reads only itself.
+    expect(column(document, 0, 3)).toEqual(['Region', 'West', 'North']);
+  });
+
+  it('pins every summary row at the foot, not just the last one', () => {
+    const document = sheetOf([
+      ['North', '120'],
+      ['South', '157'],
+      ['Total', '=SUM(B1:B2)'],
+      ['Mean', '=AVERAGE(B1:B2)']
+    ]);
+    sortRect(document, rect(0, 3, 0, 1), { column: 0, ascending: false, hasHeader: false });
+    expect(column(document, 0, 4)).toEqual(['South', 'North', 'Total', 'Mean']);
+  });
+
+  /**
+   * The narrowness of the rule, and why it is narrow.
+   *
+   * Every data row of the demo sheet holds a share of the total, so a
+   * rule reading "this row mentions another row of the block" made all
+   * five of them summaries and pinned the whole table: the sort ran and
+   * did nothing at all. A single reference is not a summary — it can
+   * follow its cell wherever the sort puts it, and does.
+   */
+  it('sorts a data row that reads the total below it', () => {
+    const document = sheetOf([
+      ['Region', 'Units', 'Share'],
+      ['North', '120', '=B2/$B$4*100'],
+      ['South', '157', '=B3/$B$4*100'],
+      ['Total', '=SUM(B2:B3)', '']
+    ]);
+    sortRect(document, rect(0, 3, 0, 2), { column: 1, ascending: false, hasHeader: true });
+    document.sheet.recalculate();
+
+    expect(column(document, 0, 4)).toEqual(['Region', 'South', 'North', 'Total']);
+    // Each share still divides its own row by the total, which did not
+    // move — so the numbers follow the rows they belong to.
+    expect(document.sheet.value(1, 2)).toBeCloseTo((157 / 277) * 100);
+    expect(document.sheet.value(2, 2)).toBeCloseTo((120 / 277) * 100);
+    expect(document.sheet.display(3, 1)).toBe('277');
+  });
+
+  /**
+   * A formula reading rows outside the block is not a summary of it,
+   * and the row holding it is ordinary data.
+   */
+  it('sorts a row whose formula reads somewhere else entirely', () => {
+    const document = sheetOf([
+      ['Total', '=SUM(B5:B7)'],
+      ['Count', '=SUM(B5:B7)']
+    ]);
+    sortRect(document, rect(0, 1, 0, 1), { column: 0, ascending: true, hasHeader: false });
+    expect(column(document, 0, 2)).toEqual(['Count', 'Total']);
+  });
+});
