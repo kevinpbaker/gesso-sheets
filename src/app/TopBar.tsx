@@ -15,6 +15,7 @@ import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
+import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
 import { Sheet } from './SheetContract';
 import { acceleratorLabel, COMMANDS, menusFor, offers, STRESS_CELLS, type CommandId } from './SheetCommands';
@@ -129,6 +130,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   ];
 
   const finding = internalState<Finding>('closed');
+  /** Which half of the rules bar is showing, or neither. */
+  const ruling = internalState<'closed' | RulesTab>('closed');
   const shortcutsOpen = internalState(false);
   /**
    * The line under the bar: what the name box is waiting for, or why
@@ -156,7 +159,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * callback honours it the moment the node arrives — which is the
    * exact moment, rather than a plausible one.
    */
-  let wanted: 'name' | 'find' | null = null;
+  let rulesFieldNode: UiNode | null = null;
+  let wanted: 'name' | 'find' | 'rules' | null = null;
 
   /**
    * Focus a field and select what is in it.
@@ -187,21 +191,23 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * waiting for a node that had already arrived. Ctrl+F opened a bar
    * and left the person typing into the sheet behind it.
    */
-  const askFor = (which: 'name' | 'find', open?: () => void): void => {
+  const askFor = (which: 'name' | 'find' | 'rules', open?: () => void): void => {
     wanted = which;
     open?.();
-    const node = which === 'name' ? nameBoxNode : findFieldNode;
+    const node = which === 'name' ? nameBoxNode : which === 'find' ? findFieldNode : rulesFieldNode;
     if (wanted === which && node !== null) {
       wanted = null;
       take(node);
     }
   };
 
-  const arrived = (which: 'name' | 'find') => (node: UiNode | null) => {
+  const arrived = (which: 'name' | 'find' | 'rules') => (node: UiNode | null) => {
     if (which === 'name') {
       nameBoxNode = node;
-    } else {
+    } else if (which === 'find') {
       findFieldNode = node;
+    } else {
+      rulesFieldNode = node;
     }
     if (node !== null && wanted === which) {
       wanted = null;
@@ -313,6 +319,13 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'replace':
         askFor('find', () => (finding.value = id));
         return;
+      case 'conditionalFormat':
+      case 'dataValidation':
+        askFor('rules', () => (ruling.value = id === 'conditionalFormat' ? 'format' : 'validation'));
+        return;
+      case 'clearRules':
+        sheet.send.clearRules();
+        break;
       case 'gotoCell':
         notice.value = '';
         askFor('name');
@@ -601,6 +614,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       pasteHint.value = false;
       return true;
     }
+    if (ruling.value !== 'closed') {
+      ruling.value = 'closed';
+      return true;
+    }
     if (finding.value !== 'closed') {
       sheet.send.clearFind();
       finding.value = 'closed';
@@ -731,7 +748,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
            */
           onDismiss={() => {
             const claimed = focus.focused.value;
-            if (wanted === null && claimed !== nameBoxNode && claimed !== findFieldNode) {
+            if (
+              wanted === null &&
+              claimed !== nameBoxNode &&
+              claimed !== findFieldNode &&
+              claimed !== rulesFieldNode
+            ) {
               edit.focusSheet();
             }
           }}
@@ -772,6 +794,23 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           onBlur={refreshFormulaSpans}
         />
       </row>
+      {ruling.pipe(
+        map(which =>
+          which === 'closed'
+            ? []
+            : [
+                <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
+                <RulesBar
+                  key="rules"
+                  editing={edit}
+                  tab={ruling.pipe(map(open => (open === 'validation' ? 'validation' : 'format')))}
+                  onTab={(next: RulesTab) => (ruling.value = next)}
+                  onClose={() => (ruling.value = 'closed')}
+                  ref={arrived('rules')}
+                />
+              ]
+        )
+      )}
       {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />

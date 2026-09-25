@@ -364,6 +364,8 @@ export interface SheetCommands {
   /** Adds a validation over the selection. */
   addValidation(rule: SheetValidationRule, strict: boolean, message: string): void;
   removeValidation(at: number): void;
+  /** Takes every rule off the sheet, which is the only bulk one. */
+  clearRules(): void;
   /** Shows a sheet, without waiting for its viewport to arrive. */
   activateSheet(sheet: number): void;
   /** Adds a sheet at the end and shows it. */

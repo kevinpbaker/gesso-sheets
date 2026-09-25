@@ -767,6 +767,17 @@ export class SheetDocument {
     return true;
   }
 
+  /** Every rule off this sheet, as one step. */
+  clearRules(): void {
+    if (this.page.conditional.length === 0 && this.page.validations.length === 0) {
+      return;
+    }
+    this.changeRules(page => {
+      page.conditional.length = 0;
+      page.validations.length = 0;
+    }, this.page.selection.row, this.page.selection.column);
+  }
+
   /** The validation over a cell, or null. The first one wins. */
   validationAt(row: number, column: number): Validation | null {
     for (const validation of this.page.validations) {

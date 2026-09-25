@@ -55,6 +55,9 @@ export type CommandId =
   | 'moreDecimals'
   | 'fewerDecimals'
   | 'clearFormat'
+  | 'conditionalFormat'
+  | 'dataValidation'
+  | 'clearRules'
   | 'insertRowAbove'
   | 'insertRowBelow'
   | 'insertColumnLeft'
@@ -264,6 +267,17 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * worse than no shortcut at all.
    */
   defineName: { id: 'defineName', label: 'Name the selection…' },
+
+  /**
+   * Formats that think, and what a cell is allowed to hold.
+   *
+   * Both open the same bar on different halves, because they are the
+   * same gesture — pick a range, say what about it, press Enter — and
+   * two bars would be two places to learn it.
+   */
+  conditionalFormat: { id: 'conditionalFormat', label: 'Conditional formatting…' },
+  dataValidation: { id: 'dataValidation', label: 'Data validation…' },
+  clearRules: { id: 'clearRules', label: 'Clear rules from this sheet' },
 
   /**
    * The sheets, as commands as well as tabs.
@@ -527,6 +541,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'mergeCells',
       'unmergeCells',
       SEPARATOR,
+      'conditionalFormat',
+      SEPARATOR,
       'clearFormat'
     ]
   },
@@ -573,6 +589,9 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'fillDown',
       'fillRight',
+      SEPARATOR,
+      'dataValidation',
+      'clearRules',
       SEPARATOR,
       'autofitColumns',
       SEPARATOR,

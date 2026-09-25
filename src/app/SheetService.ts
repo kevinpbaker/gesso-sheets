@@ -396,6 +396,20 @@ export class SheetService {
   }
 
   /**
+   * Every rule off the sheet, as one step.
+   *
+   * The only bulk command here, and it exists because the bar has no
+   * list of rules to pick from: rules are a fact about ranges that
+   * overlap, and a list of them is a screen of its own. Clearing and
+   * starting again is the honest small version, and it is one press
+   * of ctrl-Z away from being taken back.
+   */
+  clearRules(): void {
+    this.document.clearRules();
+    this.rulesChanged();
+  }
+
+  /**
    * The rules changed, so everything they decide has to be asked
    * again.
    *
@@ -1550,7 +1564,7 @@ export class SheetService {
     // A rule that asked for a colour nothing has used yet has just
     // put it in the palette, and an index into a palette the other
     // side has not been sent is an index it cannot draw.
-    if (this.extraPaints.length !== grew || this.document.formats.size !== this.publishedBase) {
+    if (this.extraPaints.length !== grew || this.paletteBase() !== this.publishedBase) {
       this.publishPalette();
     }
   }
@@ -1586,7 +1600,7 @@ export class SheetService {
     // A *position* in the extras, resolved against the document's
     // palette at publish time — so the document growing a format
     // moves every extra index and the palette goes out with it.
-    return this.document.formats.size + this.internPaint(painted);
+    return this.paletteBase() + this.internPaint(painted);
   }
 
   /**
@@ -1598,6 +1612,18 @@ export class SheetService {
    * however many cells it covers, so scrolling a million-cell rule
    * reuses entries rather than making them.
    */
+  /**
+   * Where the conditional entries start in the published palette.
+   *
+   * The document's palette length, which is **not** `Formats.size` —
+   * that counts the cells somebody has formatted. Using it put every
+   * painted cell's index at zero on an unformatted sheet, which reads
+   * as the default format and paints nothing at all.
+   */
+  private paletteBase(): number {
+    return this.document.formats.entries.length;
+  }
+
   private internPaint(paint: CellPaint): number {
     const key = JSON.stringify(paint);
     const held = this.extraIds.get(key);
@@ -1620,7 +1646,7 @@ export class SheetService {
    * locale.
    */
   private publishPalette(): void {
-    this.publishedBase = this.document.formats.size;
+    this.publishedBase = this.paletteBase();
     this.paletteSubject.next({
       entries: [...this.document.formats.entries.map(format => format.paint), ...this.extraPaints]
     });

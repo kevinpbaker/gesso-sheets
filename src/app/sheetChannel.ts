@@ -37,6 +37,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       removeConditional: at => service.removeConditional(at),
       addValidation: (rule, strict, message) => service.addValidation(rule, strict, message),
       removeValidation: at => service.removeValidation(at),
+      clearRules: () => service.clearRules(),
       activateSheet: sheet => service.activateSheet(sheet),
       addSheet: () => service.addSheet(),
       renameSheet: (sheet, name) => service.renameSheet(sheet, name),

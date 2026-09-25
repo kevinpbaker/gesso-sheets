@@ -268,7 +268,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   const refreshShapes = (mounted: MountedCell): void => {
     const width = columnWidths.get(mounted.column)?.value ?? COLUMN_WIDTH;
-    const next = bordersOf(mounted.paint.value, width);
+    const next = bordersOf(mounted.paint.value, width, isFlagged(mounted.row, mounted.column));
     if (next === NO_SHAPES && mounted.shapes.value === NO_SHAPES) {
       return;
     }
@@ -277,6 +277,23 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
 
   ctx.effect(sheet.view.formats, current => {
     latestFormats = current;
+    repaint();
+  });
+
+  /**
+   * The cells in view that break a rule.
+   *
+   * Held rather than piped into the cells, on the rule this file has
+   * followed since Phase 0: one reader, and a push into the cells
+   * that changed. A sheet with no validations publishes an empty
+   * object and `isFlagged` is one lookup that misses.
+   */
+  let latestValidation: Readonly<Record<string, Readonly<Record<string, string>>>> = {};
+  const isFlagged = (row: number, column: number): boolean =>
+    latestValidation[row]?.[column] !== undefined;
+
+  ctx.effect(sheet.view.validation, current => {
+    latestValidation = current.cells;
     repaint();
   });
 
@@ -436,13 +453,39 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * is and as CSS draws one, so a border never encroaches on the
    * neighbour and two adjacent cells can each have their own.
    */
-  const bordersOf = (paint: CellPaint, width: number): readonly DecorationShape[] => {
+  const bordersOf = (paint: CellPaint, width: number, flagged: boolean): readonly DecorationShape[] => {
     const edges = paint.borders;
-    if (edges.top.width === 0 && edges.right.width === 0 && edges.bottom.width === 0 && edges.left.width === 0) {
+    if (
+      !flagged &&
+      edges.top.width === 0 &&
+      edges.right.width === 0 &&
+      edges.bottom.width === 0 &&
+      edges.left.width === 0
+    ) {
       // The common case by a very long way, and it allocates nothing.
       return NO_SHAPES;
     }
     const shapes: DecorationShape[] = [];
+    if (flagged) {
+      /**
+       * A corner mark for a cell that breaks its rule.
+       *
+       * In the cell's own paint pass like the borders, so a sheet
+       * full of marked cells costs one draw instance each and no
+       * extra nodes — which is what makes marking every cell in the
+       * *window* the affordable thing it needs to be.
+       */
+      shapes.push({
+        kind: 'fill',
+        x: width - MARK_SIZE - 1,
+        y: 1,
+        width: MARK_SIZE,
+        height: MARK_SIZE,
+        radius: MARK_SIZE / 2,
+        color: 'danger',
+        after: 'children'
+      });
+    }
     const edge = (e: CellEdge, box: { x: number; y: number; width: number; height: number }): void => {
       if (e.width > 0) {
         shapes.push({ kind: 'fill', ...box, radius: 0, color: e.color === '' ? 'text' : e.color, after: 'children' });
@@ -956,7 +999,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const standing = standings.for(key, { row, column });
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(
-      bordersOf(paint.value, columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH)
+      bordersOf(
+        paint.value,
+        columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH,
+        isFlagged(row, column)
+      )
     );
     const element = buildCell(row, column, value, standing, paint, shapes);
     cells.set(key, { row, column, element, value, standing, paint, shapes });
@@ -2172,6 +2219,9 @@ function isNumeric(text: string | null): boolean {
 export type { SheetWindow };
 
 /** Shared, because the overwhelming majority of cells have no border. */
+/** The dot in a cell's corner when it breaks its validation rule. */
+const MARK_SIZE = 6;
+
 const NO_SHAPES: DecorationShape[] = [];
 
 /**
