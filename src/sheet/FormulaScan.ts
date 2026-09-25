@@ -232,6 +232,33 @@ export function matchingBracket(scan: FormulaScan, caret: number): { here: Span;
   return null;
 }
 
+/**
+ * The bare word the caret is at the end of, if there is one.
+ *
+ * What a function name looks like while it is being typed: a word
+ * with the caret against its right-hand edge and no `(` after it.
+ * A word the caret merely sits inside does not count — somebody
+ * editing the middle of `SUM` is not asking for a list of names —
+ * and neither does one already turned into a call.
+ *
+ * Words that are cell references are skipped, or typing `A1` would
+ * offer to complete it to nothing and `B` would offer every function
+ * beginning with B while somebody is typing an address.
+ */
+export function wordAt(scan: FormulaScan, caret: number): Span | null {
+  for (let at = 0; at < scan.tokens.length; at++) {
+    const token = scan.tokens[at];
+    if (token.kind !== 'word' || token.end !== caret) {
+      continue;
+    }
+    if (scan.tokens[at + 1]?.kind === 'open') {
+      return null;
+    }
+    return parseRef(token.value) === null ? { start: token.start, end: token.end } : null;
+  }
+  return null;
+}
+
 /** The range a scanned reference covers, for outlining it in the grid. */
 export function rangeOf(reference: ScannedReference): RangeRef {
   return { start: reference.from, end: reference.to };
