@@ -758,17 +758,18 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * The runs the open cell draws itself in.
    *
    * A subject rather than a pipe off the draft, because the runs
-   * depend on the *caret* as well as the text — the bracket beside it
-   * and the one that closes it are washed — and the caret lives in
-   * the editor's model, which has no stream to follow.
+   * depend on the *caret* as well as the text: the bracket beside it
+   * and the one that closes it are washed.
    *
-   * **The limit that follows, stated rather than hidden:** the runs
-   * are recomputed when the text changes and when a pick or an F4
-   * moves the caret deliberately. Arrowing onto a bracket without
-   * typing does not light it up until the next keystroke. The case
-   * that matters — typing a `)` and seeing which `(` it closed — is
-   * a text change, so it works; the rest waits on the engine growing
-   * a signal for a selection that moved.
+   * Fed from three places, which between them are every way a caret
+   * moves. The draft changing covers typing; `onSelectionChange`
+   * covers arrows, clicks into the text and select-all, which change
+   * no text at all and which nothing else reports; and a pick or an
+   * F4 refreshes directly, because both move the caret by hand after
+   * writing.
+   *
+   * The middle one is an engine signal added for this. Before it, a
+   * bracket arrowed onto stayed dark until the next keystroke.
    */
   const editorSpans = new BehaviorSubject<readonly UiTextSpan[] | undefined>(undefined);
 
@@ -999,6 +1000,10 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       role: 'textbox',
       label: 'Cell',
       onInput: (event: UiTextChangeEvent) => edit.write(event.value),
+      // The caret moving with the text unchanged: an arrow key, a
+      // click into the text, select-all. Nothing else reports it, and
+      // the bracket beside the caret depends on it.
+      onSelectionChange: () => refreshSpans(),
       onKeyDown: onKey
     });
   };

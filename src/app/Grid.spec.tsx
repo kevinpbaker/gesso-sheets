@@ -1219,3 +1219,102 @@ describe('cycling a reference with F4', () => {
     expect(runs?.map(run => run.text)).toEqual(['=', '$B$2']);
   });
 });
+
+/**
+ * The bracket beside the caret, lit by moving the caret alone.
+ *
+ * This was a stated limitation until the engine grew a signal for a
+ * selection that moved: the runs were recomputed when the *text*
+ * changed, so arrowing onto a bracket left it dark until the next
+ * keystroke. `onSelectionChange` is what closes it.
+ */
+describe('following the caret with no text change', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  beforeEach(async () => {
+    h = await mount();
+  });
+
+  const runs = () =>
+    (h.ui.getByRole('textbox', { name: 'Cell' }).properties.get('spans') ?? []) as readonly {
+      text: string;
+      backgroundColor?: string;
+    }[];
+
+  const washed = () => runs().filter(run => run.backgroundColor !== undefined).map(run => run.text);
+
+  async function typing(text: string): Promise<void> {
+    h.service.setSelection(5, 0, 5, 0);
+    await h.served.settle();
+    await h.ui.settle();
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 8) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F2');
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+    h.ui.fireEvent.type(text);
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function arrow(key: 'ArrowLeft' | 'ArrowRight', times = 1): Promise<void> {
+    for (let at = 0; at < times; at++) {
+      h.ui.fireEvent.press(key);
+      await h.ui.settle();
+      await h.served.settle();
+      await h.ui.settle();
+    }
+  }
+
+  it('lights the pair when the caret arrives by typing', async () => {
+    await typing('=SUM(A1)');
+    expect(washed()).toEqual(['(', ')']);
+  });
+
+  /** The case that did not work before the engine signal. */
+  it('lights the pair when the caret arrives by arrow key', async () => {
+    await typing('=SUM(A1)+1');
+    expect(washed()).toEqual([]);
+
+    // Back over the `1` and the `+`, landing just after the `)`.
+    await arrow('ArrowLeft', 2);
+    expect(washed()).toEqual(['(', ')']);
+  });
+
+  /**
+   * Two arrows, not one. A caret resting on either side of a bracket
+   * lights it, which is what every editor does — so stepping off it
+   * means stepping past it.
+   */
+  it('puts it out again when the caret moves off', async () => {
+    await typing('=SUM(A1)');
+    expect(washed()).toEqual(['(', ')']);
+
+    await arrow('ArrowLeft');
+    expect(washed()).toEqual(['(', ')']);
+
+    await arrow('ArrowLeft');
+    expect(washed()).toEqual([]);
+  });
+
+  it('keeps the references coloured while the caret wanders', async () => {
+    await typing('=SUM(A1)+B2');
+    await arrow('ArrowLeft', 3);
+    expect(runs().filter(run => run.text === 'A1' || run.text === 'B2')).toHaveLength(2);
+    expect(runs().map(run => run.text).join('')).toBe('=SUM(A1)+B2');
+  });
+});
