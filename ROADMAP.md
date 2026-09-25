@@ -15,15 +15,17 @@ themselves rather than take a benchmark's word for it.
 **Status:** Part One is done — eight phases, eight exit criteria met —
 and [Part Two](#part-two--a-spreadsheet-rather-than-a-demonstration),
 which turns the proof into a spreadsheet somebody would keep a budget
-in, is two phases into nine: the top bar and the format axis are
-done, and structural edits are next. `pnpm test` is 475 specs and
-`pnpm proof` is five budgets. Phase
+in, is two and a half phases into nine: the top bar and the format
+axis are done, and Phase 10 has landed insert, delete, borders and
+sort but waits on two engine gaps for merging, freezing and hiding
+rows. `pnpm test` is 554 specs and `pnpm proof` is six budgets. Phase
 0's findings are in [`PHASE0.md`](PHASE0.md); the sheet model is in
 `src/sheet`, the contract, the application worker, the grid, the
 editor and the chrome in `src/app`, and the proof strip in
 `src/shell`. `pnpm dev` is a spreadsheet you can type into, copy out
-of and paste into, find and replace across, fill down, format, and
-navigate by typing an address — and which remembers what you typed.
+of and paste into, find and replace across, fill down, format, rule
+with borders, sort, insert and delete rows and columns, and navigate
+by typing an address — and which remembers what you typed.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -638,39 +640,85 @@ And **a custom number-format pattern language**, Excel's
 `#,##0.00;[Red](#,##0.00)`, which is a parser, a spec and a class of
 bugs; the eight named formats cover what people pick.
 
-### Phase 10 — Rows, columns, and cells that span
+### Phase 10 — Rows, columns, and borders — **partly done**
 
-Insert and delete rows and columns, hide and unhide, autofit, freeze
-at an arbitrary cell rather than only at the headers, sort a range,
-filter, and merge.
-
-The hard half is references, and it is a different rewrite from the
-one `Rewrite.ts` already does. A fill moves relative references and
-pins absolute ones; an insert moves *both*, because `$A$1` is
-absolute against a fill and not against a column that appeared to its
-left. References into a deleted region become `#REF!`; a range that
-spans the boundary grows or shrinks rather than moving. That one
-distinction is what every implementation gets wrong exactly once.
-
-The cost to watch is that an insert rewrites every formula below the
-line and rebuilds their edges — on a 200,000-cell chain, that is the
-whole graph in one call. It has to go through the same resumable
-queue the recalc uses, or an insert is a five-second freeze on the
-one thread in this application that is not allowed to have one.
-
-Merging is here rather than in its own phase because merging is a
-structural edit, and because the objection recorded against it is no
-longer the real one. The real cost is that `UiVirtualSheet` mounts
-the cells the window covers, and a merge whose anchor has scrolled
-off the top must still paint into the window — so the mounted set has
-to be widened by the merges intersecting it. That is engine work, and
-it is the first thing in this project that makes what is mounted
-depend on what the document says.
+Insert and delete rows and columns with reference rewriting, per-edge
+cell borders, sorting a range, and hiding columns. **Merged cells,
+freeze panes at an arbitrary cell, hiding rows, autofit and filtering
+are not done**, and the reasons are two engine gaps rather than five
+separate ones — see below and the list at the end of this file.
 
 **Exit:** a rewrite-count spec in Phase 1's style — inserting a row
 above a column of 50,000 formulas rewrites exactly the formulas that
 reference it, `toBe` and not `toBeLessThan`. And an insert performed
 mid-scroll that does not drop a frame, asserted by `pnpm proof`.
+
+**Met, both halves.** `Structure.budget.spec.ts`: 50,000 formulas, a
+row inserted at the top, **49,999 rewritten** — `toBe` — and a row
+inserted below everything rewrites none. `pnpm proof` grew a sixth
+budget: a row inserted into the two-hundred-thousand-formula chain,
+with the scroll running across it, costs 2.6 ms against 2.0 ms idle
+where 4 ms is the allowance. The most expensive thing the application
+thread does does not reach the frame.
+
+**`Shift` is not `Rewrite`, and the difference is the thing every
+implementation gets wrong exactly once.** A fill pins `$A$1`; an
+insert moves it. The dollar sign says "do not move when I am copied",
+not "do not notice the sheet" — and a reference that ignored an
+insert would quietly point at somebody else's data. Shifting is
+positional rather than relative, too: a formula in row 1 reading
+`=A900` is rewritten by an insert at row 500 although it did not
+move, which is why the walk is over the whole store. Ranges grow when
+a row goes in, shrink when one comes out, clamp when a corner goes,
+and break only when every cell they named is gone.
+
+The store and the graph are **rebuilt rather than patched**, because
+after a shift every key on the moved side is wrong and a patched
+version can only ever be half right. Undo records what a shift
+destroyed — the cells in a deleted row and the formulas it turned
+into `#REF!` — because an opposite shift brings back neither.
+
+**Borders needed no engine change, and this file was wrong to say
+they would.** A border in Gesso is paint-only and the `decorated`
+modifier already takes an Observable of arbitrary coloured
+rectangles, drawn in the node's own paint pass with nothing to lay
+out and nothing to hit test. A bordered cell is four draw instances
+and no extra nodes. The shapes are *pushed* into a per-cell subject:
+piped as a `combineLatest` per cell they cost 0.2 ms of median frame
+and five milliseconds of input latency, measured — the same lesson
+the value and the standing learned in Phases 0 and 3.
+
+Three things found by using it rather than by writing it.
+
+**A single-cell sort widened to the whole sheet.** It swept three
+unrelated tables into one ordering and dragged formulas across each
+other until some pointed off the sheet and said `#REF!`. One press of
+ctrl-Z put it back, and it should never have been offered: "sort the
+table I am standing in" means the *current region*, the block that
+stops at the blank row, and where that block stops is a question only
+the application worker can answer — the render worker holds the rows
+it has mounted and the block may be bigger or smaller.
+
+**A sort moved the values and left the formats behind**, so the
+sorted table kept its bold total row where the total had been,
+against somebody else's numbers. Formats travel with their rows now.
+
+**`wrap` shipped in Phase 9 and did nothing.** The format was stored,
+the toolbar showed itself pressed, and `Grid` drew `textWrap: 'none'`
+regardless — and even wired, `LazySheet` takes one row height for
+every row, so a wrapped cell has nowhere to put its second line. The
+property is bound correctly now and the control is out of the
+toolbar, on this file's own rule: a control that silently does
+nothing is worse than one that is missing.
+
+**What is left, and why it is two things and not five.** Merged cells
+and freeze-at-an-arbitrary-cell both need the mounted set to include
+something outside the window — a merge whose anchor has scrolled off,
+a frozen row that is far away. Hiding rows, autofit and a visible
+`wrap` all need `rowHeight` to be an array as `columnWidth` already
+is; filtering hides rows, so it waits on the same thing. Two engine
+changes, both named below, and the application work behind each of
+them is small once they land.
 
 ### Phase 11 — The library, and dates
 
@@ -903,8 +951,18 @@ Carried forward from the head of this file, with what Part Two adds:
   is missing is only that the body must not itself become a stop.
 - **A mounted set that depends on the document.** `UiVirtualSheet`
   mounts what the window covers, and a merged cell anchored above the
-  window still has to paint into it. Phase 10, and it is the deepest
-  of the three.
+  window still has to paint into it — as does a frozen row the sheet
+  has scrolled far past. *Confirmed by Phase 10*, which left merged
+  cells and freeze panes undone because of it, and it is the deepest
+  of the gaps here.
+- **One row height for every row.** `columnWidth` on
+  `UiVirtualSheetOptions` is a number *or an array*, and the prefix
+  sum that makes a resizable column work is already written;
+  `rowHeight` is only a number. So a column can be hidden by setting
+  its width to zero and a row cannot, autofit has nothing to set, and
+  wrapped text has nowhere to put its second line. *Found by Phase
+  10*, which is three of its five unfinished items. The change is the
+  one already made on the other axis.
 - **A floating object layer over a scroll surface.** Selectable,
   movable, resizable things in a scrolled coordinate space, which
   charts need and images would reuse. Phase 15.

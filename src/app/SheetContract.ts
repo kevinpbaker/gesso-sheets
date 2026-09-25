@@ -291,6 +291,27 @@ export interface SheetCommands {
    * knows where the block's edges are.
    */
   setBorders(pattern: BorderPattern, width: number, color: string): void;
+  /**
+   * Reorders the rows of the selection by one of its columns.
+   *
+   * Whole rows, always. Sorting one column of a block and leaving the
+   * rest where it was is the most destructive thing a spreadsheet can
+   * do quietly, so the selection *is* the block — a selection of one
+   * cell is widened to the run of columns around it before this is
+   * sent, which the screen does because only it knows what somebody
+   * can see.
+   */
+  sortRange(column: number, ascending: boolean, hasHeader: boolean): void;
+  /**
+   * Hides the columns the selection covers, or shows what is hidden.
+   *
+   * A hidden column is one of width zero, which is all it takes: the
+   * widths are already an array and the offsets already a prefix sum.
+   * Rows cannot be hidden the same way — `LazySheet` takes one height
+   * for every row — and that is recorded with the phase.
+   */
+  hideColumns(first: number, last: number): void;
+  showColumns(first: number, last: number): void;
 }
 
 /** What a border command draws. */

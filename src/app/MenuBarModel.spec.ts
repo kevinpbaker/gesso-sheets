@@ -76,8 +76,9 @@ describe('the bar with nothing open', () => {
 
   it('opens a menu by its letter', () => {
     const { state } = press(CLOSED, ['d']);
-    expect(state.focused).toBe(MENUS.findIndex(menu => menu.id === 'data'));
-    expect(highlighted(state)).toBe('fillDown');
+    const data = MENUS.findIndex(menu => menu.id === 'data');
+    expect(state.focused).toBe(data);
+    expect(highlighted(state)).toBe(MENUS[data].entries[0]);
   });
 
   it('gives the keyboard back on Escape', () => {

@@ -370,10 +370,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       paddingLeft: 6,
       paddingRight: 6,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? 12 : how.fontSize))),
+      /**
+       * Wired, and not yet visible.
+       *
+       * `LazySheet` takes one `rowHeight` for every row — a number
+       * and not an array, where `columnWidth` is already either — so
+       * a wrapped cell has nowhere to put its second line and shows
+       * the first, which is what clipping shows too. The property is
+       * correct here so that the day row heights vary, this does not
+       * have to be found and fixed; the control that set it is out of
+       * the toolbar until then, on the rule that a control which
+       * silently does nothing is worse than one that is missing.
+       */
+      textWrap: paint.pipe(map(how => (how.wrap ? 'word' : 'none'))),
       fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
       fontStyle: paint.pipe(map(how => (how.italic ? 'italic' : 'normal'))),
       textDecoration: paint.pipe(map(how => (how.underline ? 'underline' : 'none'))),
-      textWrap: 'none',
       textOverflow: 'clip',
       verticalAlign: 'middle',
       /**

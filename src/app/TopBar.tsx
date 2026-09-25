@@ -90,7 +90,6 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       pressed: on(p => p.align === 'end'),
       onRun: () => run('alignRight')
     },
-    { id: 'wrap', text: '\u21b5', label: 'Wrap text', pressed: on(p => p.wrap), onRun: () => run('wrap') },
     { id: 'currency', text: '$', label: 'Currency', startsGroup: true, onRun: () => run('formatCurrency') },
     { id: 'percent', text: '%', label: 'Percent', onRun: () => run('formatPercent') },
     { id: 'fewerDecimals', text: '.0\u2190', label: 'Fewer decimal places', onRun: () => run('fewerDecimals') },
@@ -213,6 +212,21 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   };
 
   const format = (change: SheetFormatChange): void => sheet.send.format(change);
+
+  /**
+   * Sorting, with the block left to the other side to find.
+   *
+   * A selection of one cell means "sort the table I am standing in",
+   * which is how everybody sorts. Where that table stops is not
+   * something this thread can see — it holds the rows it has mounted
+   * and nothing else — so the question crosses as a flag and the
+   * application worker answers it.
+   */
+  const sortBy = (ascending: boolean): void => {
+    const at = edit.selectionNow();
+    const single = at.row === at.anchorRow && at.column === at.anchorColumn;
+    sheet.send.sortRange(single ? at.column : Math.min(at.column, at.anchorColumn), ascending, single);
+  };
 
   const run = (id: CommandId): void => {
     switch (id) {
@@ -376,6 +390,18 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'borderNone':
         sheet.send.setBorders('none', 0, '');
+        break;
+      case 'sortAscending':
+        sortBy(true);
+        break;
+      case 'sortDescending':
+        sortBy(false);
+        break;
+      case 'hideColumns':
+        sheet.send.hideColumns(columns().first, columns().last);
+        break;
+      case 'showColumns':
+        sheet.send.showColumns(columns().first, columns().last);
         break;
     }
     edit.focusSheet();

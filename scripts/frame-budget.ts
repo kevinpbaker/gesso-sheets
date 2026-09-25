@@ -192,7 +192,7 @@ async function main(): Promise<void> {
     // or a menu whose items bind to the selection — arrow keys move
     // the selection, so every item would rebuild its bindings on every
     // keystroke, which is Phase 0's cell-binding bug wearing a hat.
-    await openTheEditMenu(devtools);
+    await openMenu(devtools, 'Edit');
     const withMenu = report(
       'scrolling with a menu open',
       await scrollRun(devtools, 'scrolling with a menu open'),
@@ -213,6 +213,36 @@ async function main(): Promise<void> {
     if ((await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`)) !== 0) {
       throw new Error('The menu would not close.');
     }
+
+    // --------------------------------------------------------------
+    // A row inserted into two hundred thousand dependent formulas
+    // --------------------------------------------------------------
+    //
+    // Phase 10's half of the exit criterion. An insert is the most
+    // expensive thing the application thread does: it carries every
+    // cell on the moved side of the line to a new key, offers every
+    // formula in the sheet the shift, and rebuilds the dependency
+    // graph from what comes back. With the proof chain in place that
+    // is two hundred thousand formulas, and it is *not* sliced.
+    //
+    // What this measures is whether that reaches the frame. It should
+    // not: the work is on the other thread, and the only thing that
+    // crosses is a window. The scroll below happens with the insert
+    // landing in the middle of it.
+    await openMenu(devtools, 'Insert');
+    await chooseItem(devtools, 'Row above');
+
+    const inserted = report(
+      'scrolling across an insert into 200,000 formulas',
+      await scrollRun(devtools, 'scrolling across an insert into 200,000 formulas'),
+      failures
+    );
+    check(
+      failures,
+      `an insert during a scroll: median frame ${inserted.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms idle`,
+      inserted.median - idle.median <= BUDGET.costOfRecalculating,
+      BUDGET.costOfRecalculating
+    );
 
     // --------------------------------------------------------------
     // Five seconds with no main thread at all
@@ -320,21 +350,21 @@ async function main(): Promise<void> {
  * burst of a hundred wheel events in one tick measures coalescing.
  */
 /**
- * Opens the Edit menu, by clicking where the word "Edit" is.
+ * Opens a menu, by clicking the title with that name.
  *
  * Through the accessibility tree and a real click, like the
  * recalculate button above, and for the same reason: a menu opened by
  * poking the application's own state would prove that the state can
  * be poked.
  */
-async function openTheEditMenu(devtools: DevTools): Promise<void> {
+async function openMenu(devtools: DevTools, name: string): Promise<void> {
   const title = await devtools.evaluate<{ x: number; y: number } | null>(
     `(() => {
        const bar = document.querySelector('[role="menubar"]');
        if (bar === null) { return null; }
-       const box = bar.getBoundingClientRect();
-       // The first menu title, a few pixels in from the bar's edge.
-       return { x: box.x + 24, y: box.y + box.height / 2 };
+       const title = [...bar.querySelectorAll('*')].find(el => (el.textContent ?? '').trim() === ${JSON.stringify(name)});
+       const box = (title ?? bar).getBoundingClientRect();
+       return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
      })()`
   );
   if (title === null) {
@@ -344,8 +374,25 @@ async function openTheEditMenu(devtools: DevTools): Promise<void> {
   await sleep(120);
   const open = await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`);
   if (open === 0) {
-    throw new Error('Clicking the menu bar did not open a menu.');
+    throw new Error(`Clicking ${name} did not open a menu.`);
   }
+}
+
+/** Chooses an item out of the menu that is open. */
+async function chooseItem(devtools: DevTools, label: string): Promise<void> {
+  const item = await devtools.evaluate<{ x: number; y: number } | null>(
+    `(() => {
+       const el = document.querySelector('[role="menuitem"][aria-label=${JSON.stringify(label)}]');
+       if (el === null) { return null; }
+       const box = el.getBoundingClientRect();
+       return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+     })()`
+  );
+  if (item === null) {
+    throw new Error(`No menu item called ${label} is open.`);
+  }
+  await devtools.click(item.x, item.y);
+  await sleep(60);
 }
 
 async function scrollRun(devtools: DevTools, what: string): Promise<ProofFrame[]> {

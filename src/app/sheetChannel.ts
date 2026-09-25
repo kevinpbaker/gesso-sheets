@@ -53,7 +53,10 @@ export function sheetChannel(service: SheetService): ServedChannel {
       deleteRows: (at, count) => service.deleteRows(at, count),
       insertColumns: (at, count) => service.insertColumns(at, count),
       deleteColumns: (at, count) => service.deleteColumns(at, count),
-      setBorders: (pattern, width, color) => service.setBorders(pattern, width, color)
+      setBorders: (pattern, width, color) => service.setBorders(pattern, width, color),
+      sortRange: (column, ascending, hasHeader) => service.sortRange(column, ascending, hasHeader),
+      hideColumns: (first, last) => service.hideColumns(first, last),
+      showColumns: (first, last) => service.showColumns(first, last)
     }
   });
 }

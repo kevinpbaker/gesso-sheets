@@ -160,3 +160,109 @@ export function fillTarget(source: Rect, toRow: number, toColumn: number): Rect 
     lastColumn: Math.max(source.lastColumn, toColumn)
   };
 }
+
+/**
+ * The block of data a cell is standing in.
+ *
+ * Excel calls this the current region, and it is what "sort my table"
+ * has to mean when somebody has selected one cell — which is how
+ * everybody sorts. It grows outwards from the cell while the next row
+ * or column along has anything in it, and stops at the blank line
+ * that separates one table from the next.
+ *
+ * Getting this wrong is not a small thing. Widening a single cell to
+ * the *whole sheet* — which this did, once — sorts three unrelated
+ * tables into one, and drags formulas across each other until some of
+ * them point off the sheet and say `#REF!`. It was undone by one
+ * press of ctrl-Z, and it should never have been offered.
+ *
+ * It is here and not on the screen because the screen cannot see
+ * where the data stops: the render worker holds the rows it has
+ * mounted, and the block may be larger or smaller than that.
+ */
+export function currentRegion(
+  document: SheetDocument,
+  row: number,
+  column: number,
+  rowCount: number,
+  columnCount: number
+): Rect {
+  let rect: Rect = { firstRow: row, lastRow: row, firstColumn: column, lastColumn: column };
+  for (;;) {
+    const grown = grow(document, rect, rowCount, columnCount);
+    if (
+      grown.firstRow === rect.firstRow &&
+      grown.lastRow === rect.lastRow &&
+      grown.firstColumn === rect.firstColumn &&
+      grown.lastColumn === rect.lastColumn
+    ) {
+      return rect;
+    }
+    rect = grown;
+  }
+}
+
+function grow(document: SheetDocument, rect: Rect, rowCount: number, columnCount: number): Rect {
+  const filledRow = (at: number): boolean => {
+    if (at < 0 || at >= rowCount) {
+      return false;
+    }
+    for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+      if (document.sheet.input(at, column) !== '') {
+        return true;
+      }
+    }
+    return false;
+  };
+  const filledColumn = (at: number): boolean => {
+    if (at < 0 || at >= columnCount) {
+      return false;
+    }
+    for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+      if (document.sheet.input(row, at) !== '') {
+        return true;
+      }
+    }
+    return false;
+  };
+  return {
+    firstRow: filledRow(rect.firstRow - 1) ? rect.firstRow - 1 : rect.firstRow,
+    lastRow: filledRow(rect.lastRow + 1) ? rect.lastRow + 1 : rect.lastRow,
+    firstColumn: filledColumn(rect.firstColumn - 1) ? rect.firstColumn - 1 : rect.firstColumn,
+    lastColumn: filledColumn(rect.lastColumn + 1) ? rect.lastColumn + 1 : rect.lastColumn
+  };
+}
+
+/**
+ * Whether a block's first row reads as a heading.
+ *
+ * The guess every spreadsheet makes, and it makes it because asking
+ * is worse: a dialog in front of a sort is a dialog people dismiss
+ * without reading. Text over anything that is not all text is a
+ * heading; a column of names under the word `Name` is not, which is
+ * why the row below has to disagree with it for this to say yes.
+ */
+export function looksLikeHeader(document: SheetDocument, rect: Rect): boolean {
+  if (rect.lastRow <= rect.firstRow) {
+    return false;
+  }
+  let sawText = false;
+  for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+    const head = document.sheet.value(rect.firstRow, column);
+    const below = document.sheet.value(rect.firstRow + 1, column);
+    if (head === null) {
+      continue;
+    }
+    if (typeof head !== 'string') {
+      return false;
+    }
+    sawText = true;
+    if (typeof below !== 'string' && below !== null) {
+      return true;
+    }
+  }
+  // Every column is text all the way down, or the block is one row of
+  // text: no evidence either way, and leaving the first row in place
+  // is the answer that cannot scramble a heading into the data.
+  return sawText;
+}

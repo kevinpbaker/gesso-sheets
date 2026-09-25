@@ -24,6 +24,7 @@ import {
 import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
 import type { Shift } from '../sheet/Shift';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
+import { sortRect } from './SheetSort';
 import { NO_STATS, type SheetStats } from './Statistics';
 import type { SheetDocument } from './SheetDocument';
 import { cellKey, columnName } from '../sheet/A1';
@@ -32,8 +33,10 @@ import type { SheetRepository } from './SheetRepository';
 import {
   clearRect,
   copyRect,
+  currentRegion,
   fillRect,
   fillTarget,
+  looksLikeHeader,
   pasteBlock,
   rectOf,
   type CopyOrigin,
@@ -123,6 +126,8 @@ export class SheetService {
    * longer says what they searched for.
    */
   private found: number[] = [];
+  /** How wide a hidden column was, so showing it puts that back. */
+  private readonly hiddenWidths = new Map<number, number>();
   /**
    * What this sheet last copied, and from where.
    *
@@ -657,6 +662,74 @@ export class SheetService {
   // ---------------------------------------------------------------------
   // Phase 10: rows and columns
   // ---------------------------------------------------------------------
+
+  /**
+   * Sorts the selection, or the block around it.
+   *
+   * `widen` is what a selection of one cell means: sort the table I
+   * am standing in. Where that table *stops* is this side's question
+   * — the render worker holds the rows it has mounted and the block
+   * may be bigger or smaller — so the widening is here, and so is the
+   * guess about whether the first row is a heading.
+   */
+  sortRange(column: number, ascending: boolean, widen: boolean): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const at = this.document.selection;
+    const selected = rectOf(at);
+    const rect = widen
+      ? currentRegion(this.document, at.row, at.column, rowCount, columnCount)
+      : { ...selected, lastRow: Math.min(selected.lastRow, rowCount - 1) };
+
+    sortRect(this.document, rect, {
+      column,
+      ascending,
+      hasHeader: widen && looksLikeHeader(this.document, rect)
+    });
+    // The block that was sorted is what is now selected, so it is
+    // plain what moved — and so a second sort does not have to guess
+    // again.
+    this.document.setSelection(rect.firstRow, rect.firstColumn, rect.lastRow, rect.lastColumn);
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
+  }
+
+  /**
+   * A hidden column is one of width zero.
+   *
+   * That is the whole implementation, and it works because the widths
+   * are already an array and the offsets already a prefix sum — Phase
+   * 3 paid for both. The width it had is remembered so that showing
+   * it again does not make it the default width instead of the one
+   * somebody dragged.
+   */
+  hideColumns(first: number, last: number): void {
+    const widths = [...this.document.columnWidths];
+    for (let column = first; column <= last && column < widths.length; column++) {
+      if (widths[column] > 0) {
+        this.hiddenWidths.set(column, widths[column]);
+        widths[column] = 0;
+      }
+    }
+    this.document.columnWidths = widths;
+    this.publishGeometry();
+    this.persist();
+  }
+
+  showColumns(first: number, last: number): void {
+    const widths = [...this.document.columnWidths];
+    // Widened by one on each side, so that selecting the columns
+    // either side of a hidden one and asking to show it works — which
+    // is the only way to select a column you cannot see.
+    for (let column = Math.max(0, first - 1); column <= last + 1 && column < widths.length; column++) {
+      if (widths[column] === 0) {
+        widths[column] = this.hiddenWidths.get(column) ?? COLUMN_WIDTH;
+        this.hiddenWidths.delete(column);
+      }
+    }
+    this.document.columnWidths = widths;
+    this.publishGeometry();
+    this.persist();
+  }
 
   insertRows(at: number, count: number): void {
     this.structural({ axis: 'row', at, by: Math.max(1, count) });

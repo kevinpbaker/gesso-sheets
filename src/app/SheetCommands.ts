@@ -64,7 +64,11 @@ export type CommandId =
   | 'borderTop'
   | 'borderBottom'
   | 'borderThickBottom'
-  | 'borderNone';
+  | 'borderNone'
+  | 'sortAscending'
+  | 'sortDescending'
+  | 'hideColumns'
+  | 'showColumns';
 
 /**
  * How long a chain the proof command builds.
@@ -213,13 +217,33 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   borderThickBottom: { id: 'borderThickBottom', label: 'Thick bottom border' },
   borderNone: { id: 'borderNone', label: 'No borders' },
 
+  sortAscending: { id: 'sortAscending', label: 'Sort A to Z' },
+  sortDescending: { id: 'sortDescending', label: 'Sort Z to A' },
+  hideColumns: { id: 'hideColumns', label: 'Hide columns', accelerator: { key: '0', ctrl: true, alt: true } },
+  showColumns: {
+    id: 'showColumns',
+    label: 'Show columns',
+    accelerator: { key: '0', ctrl: true, alt: true, shift: true, shifted: ')' }
+  },
+
   bold: { id: 'bold', label: 'Bold', accelerator: { key: 'b', ctrl: true } },
   italic: { id: 'italic', label: 'Italic', accelerator: { key: 'i', ctrl: true } },
   underline: { id: 'underline', label: 'Underline', accelerator: { key: 'u', ctrl: true } },
   alignLeft: { id: 'alignLeft', label: 'Align left', accelerator: { key: 'l', ctrl: true, shift: true } },
   alignCenter: { id: 'alignCenter', label: 'Align centre', accelerator: { key: 'e', ctrl: true, shift: true } },
   alignRight: { id: 'alignRight', label: 'Align right', accelerator: { key: 'r', ctrl: true, shift: true } },
-  wrap: { id: 'wrap', label: 'Wrap text', accelerator: { key: 'w', ctrl: true, shift: true } },
+  /**
+   * Set by nothing, for now.
+   *
+   * The format travels and the file keeps it, and `Grid` binds it —
+   * but `LazySheet` takes one row height for every row, so a wrapped
+   * cell has nowhere to put its second line. It is `hidden` rather
+   * than deleted because the model is right and only the engine is
+   * missing: when row heights vary, it goes back in the menu and
+   * nothing else has to change. A control that silently does nothing
+   * is worse than one that is not there.
+   */
+  wrap: { id: 'wrap', label: 'Wrap text', accelerator: { key: 'w', ctrl: true, shift: true }, hidden: true },
   /**
    * The number formats take Ctrl+Shift+1 through 7, which is what
    * every spreadsheet binds them to and the one part of this table
@@ -349,7 +373,6 @@ export const MENUS: readonly MenuDefinition[] = [
       'alignLeft',
       'alignCenter',
       'alignRight',
-      'wrap',
       SEPARATOR,
       'formatGeneral',
       'formatNumber',
@@ -377,7 +400,18 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'data',
     label: 'Data',
     mnemonic: 'd',
-    entries: ['fillDown', 'fillRight', SEPARATOR, 'recalculate']
+    entries: [
+      'sortAscending',
+      'sortDescending',
+      SEPARATOR,
+      'fillDown',
+      'fillRight',
+      SEPARATOR,
+      'hideColumns',
+      'showColumns',
+      SEPARATOR,
+      'recalculate'
+    ]
   },
   {
     id: 'help',
