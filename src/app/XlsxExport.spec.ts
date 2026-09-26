@@ -108,8 +108,9 @@ describe('a workbook written as an .xlsx', () => {
   it('says what it cannot carry', () => {
     const document = new SheetDocument();
     seed(document);
-    // Validations are written since Phase 23; the seed's all fit.
-    expect(xlsxOfDocument(document, ROWS).leftOut.sort()).toEqual(['conditional formats']);
+    // Validations and conditional formats are written since Phase 23,
+    // and the seed's all fit: nothing it has is left out any more.
+    expect(xlsxOfDocument(document, ROWS).leftOut).toEqual([]);
   });
 
   it('writes an array that spills over the cells it fills, and back', async () => {
@@ -264,5 +265,44 @@ describe('validations in an exported workbook', () => {
     const out = xlsxOfDocument(document, ROWS);
     expect(out.leftOut).toEqual(['some validations']);
     expect(xlsxParts(out.book).find(part => part.name === 'xl/worksheets/sheet1.xml')!.text).not.toContain('dataValidation');
+  });
+});
+
+/**
+ * Conditional formats out and back — Phase 23.
+ */
+describe('conditional formats in an exported workbook', () => {
+  const column = (at: number) => ({
+    start: { row: 1, column: at, rowAbsolute: false, columnAbsolute: false },
+    end: { row: 30, column: at, rowAbsolute: false, columnAbsolute: false }
+  });
+
+  function ruled(): SheetDocument {
+    const document = new SheetDocument();
+    const red = { fill: '#fce8e6', color: '#c5221f' };
+    document.addConditional({ range: column(0), test: { kind: 'greaterThan', value: 100 }, paint: red });
+    document.addConditional({ range: column(1), test: { kind: 'between', low: 1, high: 5 }, paint: { bold: true } });
+    document.addConditional({ range: column(2), test: { kind: 'equalTo', value: 'Held' }, paint: { fill: '#e6f4ea' } });
+    document.addConditional({ range: column(3), test: { kind: 'textContains', text: 'Below' }, paint: { color: '#c5221f', italic: true } });
+    document.addConditional({ range: column(4), test: { kind: 'isEmpty' }, paint: red });
+    document.addConditional({ range: column(5), test: { kind: 'formula', input: '=F2>E2*2' }, paint: red });
+    document.addConditional({ range: column(6), test: null, scale: { from: '#fde2e2', middle: '#fff4cc', to: '#d9efdc' } });
+    document.addConditional({ range: column(7), test: null, scale: { from: '#ffffff', to: '#1967d2' } });
+    return document;
+  }
+
+  it('come back as the rules they were, in the same order', async () => {
+    const back = await roundTrip(ruled());
+    expect(back.conditional.map(rule => ({ test: rule.test, paint: rule.paint, scale: rule.scale }))).toEqual(
+      ruled().conditional.map(rule => ({ test: rule.test, paint: rule.paint, scale: rule.scale }))
+    );
+    expect(back.conditional[5].range.start).toMatchObject({ row: 1, column: 5 });
+  });
+
+  it('write one differential format for a paint two rules share', () => {
+    const styles = xlsxParts(xlsxOfDocument(ruled(), ROWS).book).find(part => part.name === 'xl/styles.xml')!.text;
+    // Red three times, bold, green, italic red: four paints, not six.
+    expect(styles.match(/<dxf>/g)?.length).toBe(4);
+    expect(styles).toContain('<bgColor rgb="FFFCE8E6"/>');
   });
 });

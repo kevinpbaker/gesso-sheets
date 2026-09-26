@@ -9,7 +9,8 @@ import { withIntersections } from './Legacy';
 import { literalOf } from './Workbook';
 import type { Validation } from './Validation';
 import { child, children, parseXml, type XmlElement } from './Xml';
-import { readValidations, type PendingList } from './XlsxRules';
+import { readConditionals, readValidations, type PendingList } from './XlsxRules';
+import type { ConditionalPaint, ConditionalRule } from './Conditional';
 import { zipEntries, zipRead, type Inflate } from './Zip';
 
 /**
@@ -94,6 +95,8 @@ export interface XlsxSheet {
   readonly notes: readonly { readonly row: number; readonly column: number; readonly text: string }[];
   /** What the sheet's cells may hold; see `XlsxRules.readValidations`. */
   readonly validations: readonly Validation[];
+  /** The formats that think; see `XlsxRules.readConditionals`. */
+  readonly conditional: readonly ConditionalRule[];
 }
 
 export interface XlsxName {
@@ -181,7 +184,9 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const workbook = parseXml(workbookText);
   const targets = relationships(read('xl/_rels/workbook.xml.rels'));
   const strings = sharedStrings(read('xl/sharedStrings.xml'));
-  const formats = styles(read('xl/styles.xml'), themeColours(read('xl/theme/theme1.xml')));
+  const theme = themeColours(read('xl/theme/theme1.xml'));
+  const formats = styles(read('xl/styles.xml'), theme);
+  const dxfs = differentialFormats(read('xl/styles.xml'), theme);
 
   const names: XlsxName[] = [];
   let namesSkipped = 0;
@@ -216,13 +221,14 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const sheets: XlsxSheet[] = [];
   const lists: { sheet: number; pending: readonly PendingList[] }[] = [];
   let validationsLeftOut = 0;
+  let conditionalLeftOut = 0;
   for (const entry of children(child(workbook, 'sheets'), 'sheet')) {
     const target = targets.get(entry.attributes.id ?? '');
     const text = target === undefined ? null : read(target);
     if (text === null) {
       continue;
     }
-    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, { known, ranged }, date1904);
+    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, { known, ranged }, date1904, dxfs);
     valuesKept += sheet.valuesKept;
     cut.rows = Math.max(cut.rows, sheet.cutRows);
     cut.columns = Math.max(cut.columns, sheet.cutColumns);
@@ -232,6 +238,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     );
     lists.push({ sheet: sheets.length, pending: sheet.pendingLists });
     validationsLeftOut += sheet.validationsSkipped;
+    conditionalLeftOut += sheet.conditionalSkipped;
     sheets.push({ ...sheet.sheet, notes });
   }
   // A list whose values are a range of cells, filled from those cells
@@ -279,7 +286,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const iteration = iterate
     ? { count: Number.isInteger(count) && count > 0 ? count : 100, delta: delta > 0 ? delta : 0.001 }
     : null;
-  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut } };
+  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut, 'conditional formats': conditionalLeftOut } };
 }
 
 // ---------------------------------------------------------------------------
@@ -444,6 +451,34 @@ function stringOf(item: XmlElement): string {
  * the ids either way — LibreOffice writes `applyFont="false"` on a
  * bold style, and the bold is real.
  */
+/**
+ * The styles' differential formats, which is what a conditional
+ * format paints with: a `dxf` says only what it changes. Its fill is
+ * the pattern's *background* colour, where a cell style's is its
+ * foreground — the one place the format reverses the two.
+ */
+function differentialFormats(text: string | null, theme: readonly string[]): ConditionalPaint[] {
+  if (text === null) {
+    return [];
+  }
+  return children(child(parseXml(text), 'dxfs'), 'dxf').map(dxf => {
+    const font = child(dxf, 'font');
+    const pattern = child(child(dxf, 'fill'), 'patternFill');
+    const fill = colourIn(child(pattern, 'bgColor') ?? child(pattern, 'fgColor'), theme);
+    const color = colourIn(child(font, 'color'), theme);
+    const flag = (name: string): boolean => {
+      const node = child(font, name);
+      return node !== null && node.attributes.val !== '0' && node.attributes.val !== 'false';
+    };
+    return {
+      ...(fill === '' ? {} : { fill }),
+      ...(color === '' ? {} : { color }),
+      ...(flag('b') ? { bold: true } : {}),
+      ...(flag('i') ? { italic: true } : {})
+    };
+  });
+}
+
 function styles(text: string | null, theme: readonly string[]): CellFormat[] {
   if (text === null) {
     return [DEFAULT_FORMAT];
@@ -766,6 +801,7 @@ interface ReadSheet {
   readonly sheet: XlsxSheet;
   readonly pendingLists: readonly PendingList[];
   readonly validationsSkipped: number;
+  readonly conditionalSkipped: number;
   readonly valuesKept: number;
   readonly cutRows: number;
   readonly cutColumns: number;
@@ -822,7 +858,8 @@ function worksheet(
   formats: readonly CellFormat[],
   limits: XlsxLimits,
   { known, ranged }: { known: ReadonlySet<string>; ranged: ReadonlySet<string> },
-  date1904: boolean
+  date1904: boolean,
+  dxfs: readonly ConditionalPaint[] = []
 ): ReadSheet {
   const cells: XlsxCell[] = [];
   const styled: { row: number; column: number; style: number }[] = [];
@@ -943,6 +980,7 @@ function worksheet(
   }
 
   const validated = readValidations(root, date1904);
+  const conditioned = readConditionals(root, dxfs, text => `=${clean(text)}`);
   return {
     // The notes are in a part of their own, read beside this one.
     sheet: {
@@ -957,10 +995,12 @@ function worksheet(
       frozenRows,
       frozenColumns,
       notes: [],
-      validations: validated.validations
+      validations: validated.validations,
+      conditional: conditioned.rules
     },
     pendingLists: validated.pending,
     validationsSkipped: validated.skipped,
+    conditionalSkipped: conditioned.skipped,
     valuesKept,
     cutRows,
     cutColumns

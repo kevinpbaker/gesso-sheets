@@ -114,3 +114,71 @@ describe('validations from an .xlsx', () => {
     expect(read.leftOut.validations).toBe(4);
   });
 });
+
+/** Conditional formats read from an `.xlsx` as Excel writes them — Phase 23. */
+describe('conditional formats from an .xlsx', () => {
+  const STYLES =
+    '<styleSheet><cellXfs count="1"><xf/></cellXfs><dxfs count="2">' +
+    '<dxf><font><b/><color rgb="FF9C0006"/></font><fill><patternFill><bgColor rgb="FFFFC7CE"/></patternFill></fill></dxf>' +
+    '<dxf><font><i/></font></dxf>' +
+    '</dxfs></styleSheet>';
+
+  function conditional(blocks: string) {
+    const parts: Record<string, string> = {
+      'xl/workbook.xml': '<workbook><sheets><sheet name="One" r:id="rId1"/></sheets></workbook>',
+      'xl/_rels/workbook.xml.rels': '<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>',
+      'xl/styles.xml': STYLES,
+      'xl/worksheets/sheet1.xml': `<worksheet><sheetData/>${blocks}</worksheet>`
+    };
+    return readXlsx(path => parts[path] ?? null, LIMITS);
+  }
+
+  it('reads the shorthands as themselves, in priority order, with their paint', () => {
+    const read = conditional(
+      '<conditionalFormatting sqref="A1:A9"><cfRule type="cellIs" dxfId="1" priority="2" operator="lessThan"><formula>0</formula></cfRule></conditionalFormatting>' +
+        '<conditionalFormatting sqref="B1:B9"><cfRule type="containsText" dxfId="0" priority="1" operator="containsText" text="late"><formula>NOT(ISERROR(SEARCH("late",B1)))</formula></cfRule></conditionalFormatting>'
+    );
+    expect(read.sheets[0].conditional.map(rule => [rule.test, rule.paint])).toEqual([
+      [{ kind: 'textContains', text: 'late' }, { fill: '#ffc7ce', color: '#9c0006', bold: true }],
+      [{ kind: 'lessThan', value: 0 }, { italic: true }]
+    ]);
+  });
+
+  it('keeps what has no shorthand as the formula it means', () => {
+    const read = conditional(
+      '<conditionalFormatting sqref="C2:C9"><cfRule type="cellIs" dxfId="0" priority="1" operator="greaterThanOrEqual"><formula>$Z$1</formula></cfRule>' +
+        '<cfRule type="beginsWith" dxfId="0" priority="2" operator="beginsWith" text="N"><formula>LEFT(C2,1)="N"</formula></cfRule></conditionalFormatting>'
+    );
+    expect(read.sheets[0].conditional.map(rule => rule.test)).toEqual([
+      { kind: 'formula', input: '=C2>=$Z$1' },
+      { kind: 'formula', input: '=LEFT(C2,1)="N"' }
+    ]);
+  });
+
+  it('gives a second range the formula moved to its own first cell', () => {
+    const read = conditional(
+      '<conditionalFormatting sqref="A2:A5 C2:C5"><cfRule type="expression" dxfId="0" priority="1"><formula>A2&gt;B2</formula></cfRule></conditionalFormatting>'
+    );
+    expect(read.sheets[0].conditional.map(rule => rule.test)).toEqual([
+      { kind: 'formula', input: '=A2>B2' },
+      { kind: 'formula', input: '=C2>D2' }
+    ]);
+  });
+
+  it('reads a colour scale of two or three colours', () => {
+    const read = conditional(
+      '<conditionalFormatting sqref="D1:D9"><cfRule type="colorScale" priority="1"><colorScale><cfvo type="min"/><cfvo type="percentile" val="50"/><cfvo type="max"/>' +
+        '<color rgb="FFF8696B"/><color rgb="FFFFEB84"/><color rgb="FF63BE7B"/></colorScale></cfRule></conditionalFormatting>'
+    );
+    expect(read.sheets[0].conditional[0].scale).toEqual({ from: '#f8696b', middle: '#ffeb84', to: '#63be7b' });
+  });
+
+  it('counts what has no formula and no counterpart here', () => {
+    const read = conditional(
+      '<conditionalFormatting sqref="E1:E9"><cfRule type="dataBar" priority="1"><dataBar><cfvo type="min"/><cfvo type="max"/><color rgb="FF638EC6"/></dataBar></cfRule>' +
+        '<cfRule type="top10" dxfId="0" priority="2" rank="3"/><cfRule type="duplicateValues" dxfId="0" priority="3"/></conditionalFormatting>'
+    );
+    expect(read.sheets[0].conditional).toEqual([]);
+    expect(read.leftOut['conditional formats']).toBe(3);
+  });
+});

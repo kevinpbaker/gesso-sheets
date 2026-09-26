@@ -89,7 +89,7 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
     formats,
     regions: { sheet: 0, rows: [], columns: [] },
     merges: sheet.merges,
-    conditional: [],
+    conditional: [...sheet.conditional],
     validations: [...sheet.validations],
     charts: [],
     notes: sheet.notes,

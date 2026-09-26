@@ -1,6 +1,7 @@
 import { columnName, quoteSheetName } from './A1';
 import type { Validation } from './Validation';
-import { writeValidations } from './XlsxRules';
+import { dxfOf, writeConditionals, writeValidations } from './XlsxRules';
+import type { ConditionalPaint, ConditionalRule } from './Conditional';
 import type { CellEdge, CellFormat, NumberFormat } from './Format';
 import { withIntersections } from './Legacy';
 import type { MergeRect } from './Merges';
@@ -66,6 +67,8 @@ export interface XlsxOutSheet {
   readonly notes?: readonly { readonly row: number; readonly column: number; readonly text: string }[];
   /** What the cells may hold; see `XlsxRules.writeValidations`. */
   readonly validations?: readonly Validation[];
+  /** The formats that think; see `XlsxRules.writeConditionals`. */
+  readonly conditional?: readonly ConditionalRule[];
 }
 
 export interface XlsxOutName {
@@ -102,7 +105,22 @@ export async function writeXlsx(book: XlsxOut, deflate?: Deflate): Promise<Uint8
 /** The parts of the package, as text: separate from the zip so a spec can read them. */
 export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
   const sheets = book.sheets.length === 0 ? [emptySheet()] : book.sheets;
-  const styles = stylesOf(book.formats);
+  // Every conditional format's paint, once, in the order first met:
+  // the workbook's `dxfs`, which each rule points into by index.
+  const dxfs: string[] = [];
+  const dxfIdOf = (paint: ConditionalPaint): number => {
+    const written = dxfOf(paint);
+    const at = dxfs.indexOf(written);
+    if (at !== -1) {
+      return at;
+    }
+    dxfs.push(written);
+    return dxfs.length - 1;
+  };
+  const priority = { next: 1 };
+  const ruled = (book.sheets.length === 0 ? [] : book.sheets).map(sheet =>
+    writeConditionals(sheet.conditional ?? [], dxfIdOf, input => excelFormula(input, false), priority)
+  );
   const ranged = new Set(
     book.names
       .filter(name => name.firstRow !== name.lastRow || name.firstColumn !== name.lastColumn)
@@ -128,11 +146,11 @@ export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
           .join('')}<Relationship Id="rId${sheets.length + 1}" Type="${RELATIONSHIPS}/styles" Target="styles.xml"/></Relationships>`
       )
     },
-    { name: 'xl/styles.xml', text: styles }
+    { name: 'xl/styles.xml', text: stylesOf(book.formats, dxfs) }
   ];
   sheets.forEach((sheet, at) => {
     const noted = (sheet.notes?.length ?? 0) > 0;
-    parts.push({ name: `xl/worksheets/sheet${at + 1}.xml`, text: worksheetOf(sheet, ranged, noted) });
+    parts.push({ name: `xl/worksheets/sheet${at + 1}.xml`, text: worksheetOf(sheet, ranged, noted, ruled[at] ?? '') });
     if (noted) {
       parts.push(...notesOf(sheet.notes ?? [], at + 1));
     }
@@ -248,7 +266,7 @@ function argb(colour: string): string | null {
   return /^#[0-9a-f]{6}$/i.test(colour) ? `FF${colour.slice(1).toUpperCase()}` : null;
 }
 
-function stylesOf(formats: readonly CellFormat[]): string {
+function stylesOf(formats: readonly CellFormat[], dxfs: readonly string[] = []): string {
   const numFmts: string[] = [];
   const numIds = new Map<string, number>([
     ['General', 0],
@@ -310,6 +328,7 @@ function stylesOf(formats: readonly CellFormat[]): string {
       `<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>` +
       `<cellXfs count="${xfs.length}">${xfs.join('')}</cellXfs>` +
       `<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>` +
+      (dxfs.length === 0 ? '' : `<dxfs count="${dxfs.length}">${dxfs.join('')}</dxfs>`) +
       `</styleSheet>`
   );
 }
@@ -359,7 +378,7 @@ function borderOf(format: CellFormat | undefined): string {
 
 const address = (row: number, column: number): string => `${columnName(column)}${row + 1}`;
 
-function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = false): string {
+function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = false, conditional = ''): string {
   const byRow = new Map<number, XlsxOutCell[]>();
   let lastRow = 0;
   let lastColumn = 0;
@@ -414,6 +433,7 @@ function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = f
       (merges === '' ? '' : `<mergeCells count="${sheet.merges.length}">${merges}</mergeCells>`) +
       // After the merges and before the drawing, which is the order the
       // schema has them in and the order Excel refuses a file without.
+      conditional +
       writeValidations(sheet.validations ?? []).xml +
       // The comments' drawing: Excel shows a comment only through the
       // shape this names; see `notesOf`.

@@ -40,9 +40,7 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
     if (page === undefined) {
       continue;
     }
-    if (page.conditional.length > 0) {
-      leftOut.add('conditional formats');
-    }
+
     // Written since Phase 23; only a rule the format cannot say — a
     // list longer than Excel allows, or one with a comma in a value —
     // is left out, and then it is said.
@@ -133,7 +131,8 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       notes: page.notes.all().filter(note => note.row < rowCount),
-      validations: [...page.validations]
+      validations: [...page.validations],
+      conditional: [...page.conditional]
     });
   }
 

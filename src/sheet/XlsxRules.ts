@@ -1,4 +1,6 @@
 import { columnName, parseAddress, relativeRef, type RangeRef } from './A1';
+import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } from './Conditional';
+import { rewriteFormula } from './Rewrite';
 import type { Validation, ValidationRule } from './Validation';
 import { child, children, type XmlElement } from './Xml';
 
@@ -281,4 +283,243 @@ function escapeText(text: string): string {
 
 function escapeAttribute(text: string): string {
   return escapeText(text).replace(/"/g, '&quot;').replace(/\n/g, '&#10;');
+}
+
+// ---------------------------------------------------------------------------
+// Conditional formats
+// ---------------------------------------------------------------------------
+
+/**
+ * Excel's `<conditionalFormatting>` as this sheet's rules — Phase 23.
+ *
+ * A `cfRule` is a type, maybe an operator, one or more formulas, and a
+ * `dxfId` into the styles' differential formats for what it paints.
+ * The shorthands Phase 14 has — greater, less, between, equal, contains
+ * text, blank, not blank — are read as themselves, because they are
+ * answered without an evaluator and a formula would cost the frame
+ * budget they exist to save. Almost everything else Excel writes comes
+ * with the formula it means, even the rules with names of their own
+ * (`beginsWith`, `containsErrors`, `notContainsText`), and is kept as
+ * that formula. A two- or three-colour scale is a scale. What has no
+ * formula and no counterpart — data bars, icon sets, top ten, above
+ * average, duplicates — is counted and left out.
+ */
+export function readConditionals(
+  root: XmlElement,
+  dxfs: readonly ConditionalPaint[],
+  inputOf: (excel: string) => string
+): { rules: ConditionalRule[]; skipped: number } {
+  const found: { priority: number; order: number; rule: ConditionalRule }[] = [];
+  let skipped = 0;
+  let order = 0;
+  for (const block of children(root, 'conditionalFormatting')) {
+    const ranges = (block.attributes.sqref ?? '')
+      .split(/\s+/)
+      .filter(part => part !== '')
+      .map(part => parseAddress(part))
+      .filter((range): range is RangeRef => range !== null);
+    if (ranges.length === 0) {
+      skipped += children(block, 'cfRule').length;
+      continue;
+    }
+    const anchor = ranges[0].start;
+    for (const cfRule of children(block, 'cfRule')) {
+      const read = cfRuleOf(cfRule, dxfs, inputOf, `${columnName(anchor.column)}${anchor.row + 1}`);
+      if (read === null) {
+        skipped++;
+        continue;
+      }
+      const priority = Number(cfRule.attributes.priority ?? Number.MAX_SAFE_INTEGER);
+      for (const range of ranges) {
+        // A formula is written for the first range's first cell, so a
+        // second range is given it moved to its own first cell.
+        const test =
+          read.test?.kind === 'formula'
+            ? { kind: 'formula' as const, input: rewriteFormula(read.test.input, range.start.row - anchor.row, range.start.column - anchor.column) }
+            : read.test;
+        found.push({ priority, order: order++, rule: { range, test, ...(read.paint === undefined ? {} : { paint: read.paint }), ...(read.scale === undefined ? {} : { scale: read.scale }) } });
+      }
+    }
+  }
+  // Excel's priority is the order the rules are tried in, the lowest
+  // first — which is this sheet's order too.
+  found.sort((a, b) => a.priority - b.priority || a.order - b.order);
+  return { rules: found.map(entry => entry.rule), skipped };
+}
+
+function cfRuleOf(
+  cfRule: XmlElement,
+  dxfs: readonly ConditionalPaint[],
+  inputOf: (excel: string) => string,
+  anchor: string
+): { test: ConditionalTest | null; paint?: ConditionalPaint; scale?: ColourScale } | null {
+  const type = cfRule.attributes.type ?? '';
+  if (type === 'colorScale') {
+    const colours = children(child(cfRule, 'colorScale'), 'color').map(rgbOf);
+    if (colours.length < 2 || colours.some(colour => colour === null)) {
+      return null;
+    }
+    const [from, middle, to] = colours.length === 2 ? [colours[0], undefined, colours[1]] : colours;
+    return { test: null, scale: { from: from!, to: to!, ...(middle == null ? {} : { middle }) } };
+  }
+  const dxf = dxfs[Number(cfRule.attributes.dxfId ?? -1)];
+  const paint = dxf === undefined || Object.keys(dxf).length === 0 ? undefined : dxf;
+  if (paint === undefined) {
+    // A rule that paints nothing does nothing here.
+    return null;
+  }
+  const formulas = children(cfRule, 'formula').map(formula => formula.text.trim());
+  const test = testOf(type, cfRule, formulas, inputOf, anchor);
+  return test === null ? null : { test, paint };
+}
+
+function testOf(
+  type: string,
+  cfRule: XmlElement,
+  formulas: readonly string[],
+  inputOf: (excel: string) => string,
+  anchor: string
+): ConditionalTest | null {
+  const [first = '', second = ''] = formulas;
+  const number = (text: string): number | null => (/^-?\d+(\.\d+)?(E[+-]?\d+)?$/i.test(text) ? Number(text) : null);
+  switch (type) {
+    case 'cellIs': {
+      const operator = cfRule.attributes.operator ?? '';
+      const a = number(first);
+      const b = number(second);
+      if (operator === 'greaterThan' && a !== null) {
+        return { kind: 'greaterThan', value: a };
+      }
+      if (operator === 'lessThan' && a !== null) {
+        return { kind: 'lessThan', value: a };
+      }
+      if (operator === 'between' && a !== null && b !== null) {
+        return { kind: 'between', low: Math.min(a, b), high: Math.max(a, b) };
+      }
+      if (operator === 'equal') {
+        if (a !== null) {
+          return { kind: 'equalTo', value: a };
+        }
+        if (/^"(?:[^"]|"")*"$/.test(first)) {
+          return { kind: 'equalTo', value: first.slice(1, -1).replace(/""/g, '"') };
+        }
+      }
+      // Anything else a comparison can say, as the comparison.
+      const comparisons: Record<string, (x: string, y: string) => string> = {
+        greaterThan: x => `${anchor}>${x}`,
+        lessThan: x => `${anchor}<${x}`,
+        greaterThanOrEqual: x => `${anchor}>=${x}`,
+        lessThanOrEqual: x => `${anchor}<=${x}`,
+        equal: x => `${anchor}=${x}`,
+        notEqual: x => `${anchor}<>${x}`,
+        between: (x, y) => `AND(${anchor}>=MIN(${x},${y}),${anchor}<=MAX(${x},${y}))`,
+        notBetween: (x, y) => `OR(${anchor}<MIN(${x},${y}),${anchor}>MAX(${x},${y}))`
+      };
+      const write = comparisons[operator];
+      return write === undefined || first === '' ? null : { kind: 'formula', input: inputOf(write(first, second)) };
+    }
+    case 'containsText': {
+      const text = cfRule.attributes.text;
+      return text === undefined || text === '' ? null : { kind: 'textContains', text };
+    }
+    case 'containsBlanks':
+      return { kind: 'isEmpty' };
+    case 'notContainsBlanks':
+      return { kind: 'notEmpty' };
+    default:
+      // `expression`, and every named kind that carries the formula it
+      // means. One without a formula is one this sheet cannot answer.
+      return first === '' ? null : { kind: 'formula', input: inputOf(first) };
+  }
+}
+
+/** An `rgb="FFRRGGBB"` colour as `#rrggbb`, or null for a theme colour a scale here cannot name. */
+function rgbOf(element: XmlElement): string | null {
+  const rgb = element.attributes.rgb;
+  return rgb !== undefined && /^[0-9a-f]{8}$/i.test(rgb) ? `#${rgb.slice(2).toLowerCase()}` : null;
+}
+
+/**
+ * The sheet's rules as `<conditionalFormatting>` blocks, one per rule,
+ * with their paints' ids into the workbook's `dxfs`. `priority` counts
+ * across the workbook, which is how Excel numbers it.
+ */
+export function writeConditionals(
+  rules: readonly ConditionalRule[],
+  dxfIdOf: (paint: ConditionalPaint) => number,
+  excelOf: (input: string) => string,
+  priority: { next: number }
+): string {
+  return rules
+    .map(rule => {
+      const sqref = sqrefOf(rule.range);
+      const anchor = `${columnName(Math.min(rule.range.start.column, rule.range.end.column))}${Math.min(rule.range.start.row, rule.range.end.row) + 1}`;
+      const at = priority.next++;
+      if (rule.scale !== undefined) {
+        const scale = rule.scale;
+        const middle = scale.middle === undefined ? '' : '<cfvo type="percentile" val="50"/>';
+        const colours = [scale.from, ...(scale.middle === undefined ? [] : [scale.middle]), scale.to]
+          .map(colour => `<color rgb="${argbOf(colour)}"/>`)
+          .join('');
+        return `<conditionalFormatting sqref="${sqref}"><cfRule type="colorScale" priority="${at}"><colorScale><cfvo type="min"/>${middle}<cfvo type="max"/>${colours}</colorScale></cfRule></conditionalFormatting>`;
+      }
+      if (rule.test === null || rule.paint === undefined) {
+        return '';
+      }
+      const dxf = dxfIdOf(rule.paint);
+      const head = (type: string, extra = '') => `<cfRule type="${type}" dxfId="${dxf}" priority="${at}"${extra}>`;
+      const formula = (text: string) => `<formula>${escapeText(text)}</formula>`;
+      const test = rule.test;
+      let body: string;
+      switch (test.kind) {
+        case 'greaterThan':
+        case 'lessThan':
+          body = `${head('cellIs', ` operator="${test.kind}"`)}${formula(String(test.value))}</cfRule>`;
+          break;
+        case 'between':
+          body = `${head('cellIs', ' operator="between"')}${formula(String(test.low))}${formula(String(test.high))}</cfRule>`;
+          break;
+        case 'equalTo':
+          body = `${head('cellIs', ' operator="equal"')}${formula(
+            typeof test.value === 'number' ? String(test.value) : `"${test.value.replace(/"/g, '""')}"`
+          )}</cfRule>`;
+          break;
+        case 'textContains':
+          body = `${head('containsText', ` operator="containsText" text="${escapeAttribute(test.text)}"`)}${formula(
+            `NOT(ISERROR(SEARCH("${test.text.replace(/"/g, '""')}",${anchor})))`
+          )}</cfRule>`;
+          break;
+        case 'isEmpty':
+          body = `${head('containsBlanks')}${formula(`LEN(TRIM(${anchor}))=0`)}</cfRule>`;
+          break;
+        case 'notEmpty':
+          body = `${head('notContainsBlanks')}${formula(`LEN(TRIM(${anchor}))>0`)}</cfRule>`;
+          break;
+        case 'formula':
+          body = `${head('expression')}${formula(excelOf(test.input))}</cfRule>`;
+          break;
+      }
+      return `<conditionalFormatting sqref="${sqref}">${body}</conditionalFormatting>`;
+    })
+    .join('');
+}
+
+/** A paint as a differential format: only what it changes. */
+export function dxfOf(paint: ConditionalPaint): string {
+  const font = [
+    paint.bold === true ? '<b/>' : '',
+    paint.italic === true ? '<i/>' : '',
+    paint.color === undefined || paint.color === '' ? '' : `<color rgb="${argbOf(paint.color)}"/>`
+  ].join('');
+  const fill =
+    paint.fill === undefined || paint.fill === ''
+      ? ''
+      : `<fill><patternFill patternType="solid"><bgColor rgb="${argbOf(paint.fill)}"/></patternFill></fill>`;
+  return `<dxf>${font === '' ? '' : `<font>${font}</font>`}${fill}</dxf>`;
+}
+
+/** `#rrggbb` as Excel's opaque `FFRRGGBB`. */
+function argbOf(colour: string): string {
+  const hex = /^#?([0-9a-f]{6})$/i.exec(colour.trim())?.[1] ?? '000000';
+  return `FF${hex.toUpperCase()}`;
 }
