@@ -1092,6 +1092,45 @@ select.
 
 ## What Gesso still does not have
 
+### A bar switched in by a menu choice is never laid out — **open**
+
+Found in Phase 14, and it predates it: `Edit ▸ Find…` has been giving
+a find bar of zero height since Phase 8, for anybody using a mouse.
+Ctrl+F gives the same bar at its full size.
+
+Narrowed, in a headless browser, to a window of a few lines. The
+command runs from `MenuBar.choose`, which hides the overlay and then
+calls `onChoose`; the children arrive and the chrome's column is
+marked. All of that is confirmed working:
+
+    CHILDREN  …component:0:0:component:0:0 count=2
+    MARK      …component:0:0:component:0:0 newlyDirty=true suppressed=false
+    COLLECT   chrome flags=16          ← DirtyFlags.Children, in the frame
+
+So the node is marked, a frame is armed, and the frame collects it
+carrying `Children`. What does not happen is any layout for it:
+`LayoutEngine.layoutForFrame` produces neither a `fullLayout` nor a
+`relayoutAt` at that node, in that frame or any frame after. The same
+three lines appear for the two routes that *work* — an accelerator,
+and a plain toolbar button — and there they are followed by a
+relayout and a bar of 1400x32.
+
+What separates the routes is the overlay: a pointer is not the
+problem (a toolbar button is a pointer and works), and neither is
+lasting damage (opening the same bar 200ms later works). Something
+about hiding an overlay in the same turn swallows the layout for a
+mark that is demonstrably in the frame.
+
+It does not reproduce in `renderTest`, nor in a hand-built gesso tree
+with an overlay opened and closed over it — both lay out correctly —
+so the next step is to narrow the *application's* tree rather than to
+build a smaller one, or to instrument `layoutForFrame` between
+`frame.entries()` and `relayout` and find which of the two decisions
+is taken.
+
+The application works around it: the conditional formatting bar has
+an accelerator, `Ctrl+Shift+R`.
+
 Carried forward from the head of this file, with what Part Two adds.
 Most of it is struck through now. Two of these were closed by the
 engine while Phase 10 was running, and the rest in one pass over the
