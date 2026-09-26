@@ -412,6 +412,31 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       joined += piece;
     }
     return joined;
+  },
+
+  /** Text with the control characters taken out, which is what a pasted report is full of. */
+  CLEAN(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const text = textAt(args, 0);
+    return isError(text) ? text : text.replace(/[\u0000-\u001f]/g, '');
+  },
+
+  /**
+   * A link's label, or its address when it has none.
+   *
+   * A cell here cannot be followed — there is no link to press — so
+   * what this gives is what the cell shows, which keeps a workbook
+   * full of them legible rather than a column of `#NAME?`.
+   */
+  HYPERLINK(args) {
+    const wrong = checked(args, 1, 2);
+    if (wrong !== null) {
+      return wrong;
+    }
+    return args.length > 1 ? scalar(args, 1) : textAt(args, 0);
   }
 };
 

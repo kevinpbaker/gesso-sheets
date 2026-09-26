@@ -1,4 +1,4 @@
-import { dateOfSerial, serialOfDate, serialOfTime, timeOfSerial, weekdayOf } from './Dates';
+import { dateOfSerial, parseTypedDate, serialOfDate, serialOfTime, timeOfSerial, weekdayOf } from './Dates';
 import { arity, checked, integerAt, numberAt, numbersOf, textAt, type SheetFunction } from './FunctionKit';
 import { isError, VALUE } from './Values';
 
@@ -276,6 +276,125 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       default:
         return VALUE;
     }
+  },
+
+  /**
+   * A date typed as text, as its serial.
+   *
+   * Read by the same rule a cell reads a typed date, so
+   * `DATEVALUE("2026-09-24")` agrees with typing `2026-09-24` — and a
+   * text this sheet would not take as a date is `#VALUE!` here too.
+   * The time of day, if the text has one, is dropped, as Excel drops it.
+   */
+  DATEVALUE(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const text = textAt(args, 0);
+    if (isError(text)) {
+      return text;
+    }
+    const typed = parseTypedDate(text);
+    return typed === null || typed.date === null ? VALUE : Math.floor(typed.serial);
+  },
+
+  /** A time typed as text, as a fraction of a day; the date, if any, is dropped. */
+  TIMEVALUE(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const text = textAt(args, 0);
+    if (isError(text)) {
+      return text;
+    }
+    const typed = parseTypedDate(text);
+    return typed === null ? VALUE : typed.serial - Math.floor(typed.serial);
+  },
+
+  /** Whole days from the second date to the first. */
+  DAYS(args) {
+    const wrong = checked(args, 2, 2);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const to = numberAt(args, 0);
+    if (isError(to)) {
+      return to;
+    }
+    const from = numberAt(args, 1);
+    if (isError(from)) {
+      return from;
+    }
+    return Math.floor(to) - Math.floor(from);
+  },
+
+  /**
+   * The date a number of working days away, skipping weekends and any
+   * holidays given — `NETWORKDAYS` the other way round, and on the same
+   * terms: Saturday and Sunday are the weekend.
+   */
+  WORKDAY(args) {
+    const wrong = checked(args, 2, 3);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const start = numberAt(args, 0);
+    if (isError(start)) {
+      return start;
+    }
+    const days = integerAt(args, 1);
+    if (isError(days)) {
+      return days;
+    }
+    if (start < 0) {
+      return VALUE;
+    }
+    const holidays = args.length > 2 ? numbersOf([args[2]]) : [];
+    if (isError(holidays)) {
+      return holidays;
+    }
+    const skipped = new Set(holidays.map(Math.floor));
+    const step = days < 0 ? -1 : 1;
+    let at = Math.floor(start);
+    for (let left = Math.abs(days); left > 0; ) {
+      at += step;
+      const weekday = weekdayOf(at);
+      if (weekday !== 1 && weekday !== 7 && !skipped.has(at)) {
+        left--;
+      }
+    }
+    return at;
+  },
+
+  /**
+   * Which week of its year a date falls in, week one being the week
+   * holding the first of January — starting on Sunday (1, the default)
+   * or Monday (2). The ISO numbering, where week one is the first with
+   * a Thursday in it, is a different question and is refused rather
+   * than answered with this one's answer.
+   */
+  WEEKNUM(args) {
+    const wrong = checked(args, 1, 2);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const serial = numberAt(args, 0);
+    if (isError(serial)) {
+      return serial;
+    }
+    const type = args.length > 1 ? integerAt(args, 1) : 1;
+    if (isError(type)) {
+      return type;
+    }
+    if ((type !== 1 && type !== 2) || serial < 0) {
+      return VALUE;
+    }
+    const day = Math.floor(serial);
+    const january = serialOfDate(dateOfSerial(day).year, 1, 1);
+    const offset = (weekdayOf(january) - type + 7) % 7;
+    return Math.floor((day - january + offset) / 7) + 1;
   }
 };
 

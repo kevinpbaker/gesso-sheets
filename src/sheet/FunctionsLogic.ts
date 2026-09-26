@@ -173,5 +173,59 @@ export const LOGIC_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    */
   NA(args) {
     return arity(args, 0, 0) ?? NA;
+  },
+
+  /** An error that is not `#N/A`: the broken, as against the not found. */
+  ISERR(args) {
+    const wrong = arity(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = scalar(args, 0);
+    return isError(value) && value.code !== '#N/A';
+  },
+
+  /** `#N/A`, which a lookup gives for a key it did not find. */
+  ISNA(args) {
+    const wrong = arity(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = scalar(args, 0);
+    return isError(value) && value.code === '#N/A';
+  },
+
+  ISLOGICAL(args) {
+    const wrong = arity(args, 1, 1);
+    return wrong !== null ? wrong : typeof scalar(args, 0) === 'boolean';
+  },
+
+  /** Anything but text — a blank included, which Excel counts as not text. */
+  ISNONTEXT(args) {
+    const wrong = arity(args, 1, 1);
+    return wrong !== null ? wrong : typeof scalar(args, 0) !== 'string';
+  },
+
+  /** A value as a number: a number itself, a logical as 1 or 0, and text as 0. */
+  N(args) {
+    const wrong = arity(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = scalar(args, 0);
+    if (isError(value) || typeof value === 'number') {
+      return value;
+    }
+    return value === true ? 1 : 0;
+  },
+
+  /** A value if it is text, and the empty string if it is not. */
+  T(args) {
+    const wrong = arity(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = scalar(args, 0);
+    return isError(value) || typeof value === 'string' ? value : '';
   }
 };

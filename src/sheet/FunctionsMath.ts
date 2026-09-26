@@ -307,6 +307,99 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return wrong;
     }
     return awayFromZero(args, Math.floor);
+  },
+
+  /** Whether a number, truncated, is even; and odd. Text is `#VALUE!`. */
+  ISEVEN(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = numberAt(args, 0);
+    return isError(value) ? value : Math.trunc(value) % 2 === 0;
+  },
+
+  ISODD(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = numberAt(args, 0);
+    return isError(value) ? value : Math.abs(Math.trunc(value)) % 2 === 1;
+  },
+
+  /**
+   * A number rounded to the nearest multiple, a tie away from zero.
+   * The number and the multiple must share a sign, as Excel insists;
+   * this sheet has no `#NUM!`, so the refusal is `#VALUE!`.
+   */
+  MROUND(args) {
+    const wrong = checked(args, 2, 2);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = numberAt(args, 0);
+    if (isError(value)) {
+      return value;
+    }
+    const multiple = numberAt(args, 1);
+    if (isError(multiple)) {
+      return multiple;
+    }
+    if (multiple === 0) {
+      return 0;
+    }
+    if (value !== 0 && Math.sign(value) !== Math.sign(multiple)) {
+      return VALUE;
+    }
+    // The same sign, so the quotient is positive and rounding it up
+    // on a tie is rounding away from zero. Nudged first, so that
+    // 10 / 0.1 — which is 99.99999… in binary — rounds to the hundred
+    // it means.
+    return Math.round(value / multiple + 1e-9) * multiple;
+  },
+
+  /** The whole part of a division, as `INT` would give it for positives and `TRUNC` for all. */
+  QUOTIENT(args) {
+    const wrong = checked(args, 2, 2);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const numerator = numberAt(args, 0);
+    if (isError(numerator)) {
+      return numerator;
+    }
+    const denominator = numberAt(args, 1);
+    if (isError(denominator)) {
+      return denominator;
+    }
+    return denominator === 0 ? DIV0 : Math.trunc(numerator / denominator);
+  },
+
+  /** Rounded away from zero to the next even integer; and odd. */
+  EVEN(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = numberAt(args, 0);
+    if (isError(value)) {
+      return value;
+    }
+    return (value < 0 ? -1 : 1) * Math.ceil(Math.abs(value) / 2) * 2;
+  },
+
+  ODD(args) {
+    const wrong = checked(args, 1, 1);
+    if (wrong !== null) {
+      return wrong;
+    }
+    const value = numberAt(args, 0);
+    if (isError(value)) {
+      return value;
+    }
+    const up = Math.ceil(Math.abs(value));
+    return (value < 0 ? -1 : 1) * (up % 2 === 1 ? up : up + 1);
   }
 };
 

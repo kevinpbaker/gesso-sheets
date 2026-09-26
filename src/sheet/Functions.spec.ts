@@ -323,7 +323,70 @@ table('dates', [
   ['DATEDIF(D2, D1, "Y")', '0'],
   ['DATEDIF(D2, D1, "YM")', '7'],
   ['DATEDIF(D1, D2, "D")', '#VALUE!'],
-  ['NETWORKDAYS(D2, D1)', '169']
+  ['NETWORKDAYS(D2, D1)', '169'],
+  // Read as typing reads a date, so it agrees with typing one.
+  ['DATEVALUE("2026-09-24")', '46289'],
+  ['DATEVALUE("not a date")', '#VALUE!'],
+  ['TIMEVALUE("12:00")', '0.5'],
+  ['DAYS(D1, D2)', '236'],
+  // 2026-09-24 is a Thursday: one working day on is Friday, two is Monday.
+  ['WORKDAY(D1, 1)', '46290'],
+  ['WORKDAY(D1, 2)', '46293'],
+  ['WORKDAY(D1, -4)', '46283'],
+  ['WEEKNUM(D1)', '39'],
+  ['WEEKNUM(D1, 2)', '39'],
+  ['WEEKNUM(D2)', '5'],
+  ['WEEKNUM(D1, 21)', '#VALUE!']
+]);
+
+table('finance', [
+  // Microsoft's own worked examples, to the digits they show.
+  ['PMT(0.08/12, 10, 10000)', '-1037.03208935916'],
+  ['PMT(0, 10, 1000)', '-100'],
+  ['FV(0.06/12, 10, -200, -500, 1)', '2581.40337406014'],
+  ['PV(0.08/12, 240, 500)', '-59777.1458511878'],
+  ['NPV(0.1, -10000, 3000, 4200, 6800)', '1188.44341233522']
+]);
+
+table('checks and conversions', [
+  ['ISERR(E1)', 'TRUE'],
+  ['ISERR(NA())', 'FALSE'],
+  ['ISNA(NA())', 'TRUE'],
+  ['ISNA(E1)', 'FALSE'],
+  ['ISLOGICAL(TRUE)', 'TRUE'],
+  ['ISLOGICAL(A1)', 'FALSE'],
+  ['ISNONTEXT(B1)', 'FALSE'],
+  ['ISNONTEXT(C2)', 'TRUE'],
+  ['N(A1)', '10'],
+  ['N(B1)', '0'],
+  ['N(TRUE)', '1'],
+  ['T(B1)', 'North'],
+  ['T(A1)', ''],
+  ['ISEVEN(A1)', 'TRUE'],
+  ['ISEVEN(2.5)', 'TRUE'],
+  ['ISODD(A5)', 'TRUE'],
+  ['ISODD(-3)', 'TRUE'],
+  ['MROUND(10, 3)', '9'],
+  ['MROUND(11, 3)', '12'],
+  ['MROUND(10, 0.1)', '10'],
+  ['MROUND(-10, 3)', '#VALUE!'],
+  ['QUOTIENT(A2, 7)', '2'],
+  ['QUOTIENT(-7, 2)', '-3'],
+  ['QUOTIENT(A1, 0)', '#DIV/0!'],
+  ['EVEN(1.5)', '2'],
+  ['EVEN(3)', '4'],
+  ['EVEN(-1)', '-2'],
+  ['ODD(2)', '3'],
+  ['ODD(0)', '1'],
+  ['ODD(-2)', '-3'],
+  ['CLEAN(CHAR(7) & "ok")', 'ok'],
+  ['HYPERLINK("https://example.com", "site")', 'site'],
+  ['HYPERLINK("https://example.com")', 'https://example.com'],
+  ['SUBTOTAL(9, A1:A5)', '105'],
+  ['SUBTOTAL(1, A1:A5)', '21'],
+  ['SUBTOTAL(109, A1:A5)', '105'],
+  ['SUBTOTAL(4, A1:A5, C1:C5)', '40'],
+  ['SUBTOTAL(12, A1:A5)', '#VALUE!']
 ]);
 
 /**

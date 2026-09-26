@@ -66,7 +66,7 @@ describe('opening an Excel workbook', () => {
   it('says what came across, and what could not', async () => {
     const { service } = await opened();
     expect(latest<SheetTransfer>(service.transfer).report).toBe(
-      'Opened orders.xlsx: 2 sheets; 4 formulas this sheet cannot run kept as their values.'
+      'Opened orders.xlsx: 2 sheets.'
     );
   });
 

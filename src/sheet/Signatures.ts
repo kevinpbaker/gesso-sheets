@@ -45,6 +45,12 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   CONCATENATE: { args: ['text', '…'], summary: 'Joins the text together.', repeats: true },
 
   // Logic
+  ISERR: { args: ['value'], summary: 'Whether it is an error other than #N/A.' },
+  ISNA: { args: ['value'], summary: 'Whether it is #N/A.' },
+  ISLOGICAL: { args: ['value'], summary: 'Whether it is TRUE or FALSE.' },
+  ISNONTEXT: { args: ['value'], summary: 'Whether it is anything but text.' },
+  N: { args: ['value'], summary: 'It as a number: TRUE is 1, text is 0.' },
+  T: { args: ['value'], summary: 'It if it is text, and nothing if not.' },
   IF: { args: ['test', 'then', '[otherwise]'], summary: 'One value or the other.' },
   IFS: { args: ['test', 'then', '…'], summary: 'The first test that passes.', repeats: true },
   SWITCH: { args: ['value', 'case', 'then', '…'], summary: 'Matches a value against cases.', repeats: true },
@@ -63,6 +69,17 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   ISTEXT: { args: ['value'], summary: 'Whether it is text.' },
 
   // Maths
+  ISEVEN: { args: ['number'], summary: 'Whether it is even.' },
+  ISODD: { args: ['number'], summary: 'Whether it is odd.' },
+  MROUND: { args: ['number', 'multiple'], summary: 'Rounds to the nearest multiple.' },
+  QUOTIENT: { args: ['numerator', 'denominator'], summary: 'The whole part of a division.' },
+  EVEN: { args: ['number'], summary: 'Rounds away from zero to an even number.' },
+  ODD: { args: ['number'], summary: 'Rounds away from zero to an odd number.' },
+  SUBTOTAL: { args: ['function', 'range', '…'], summary: 'One of eleven aggregates, by number: 9 is SUM.', repeats: true },
+  PMT: { args: ['rate', 'periods', 'present', '[future]', '[due]'], summary: 'The payment each period on a loan.' },
+  FV: { args: ['rate', 'periods', 'payment', '[present]', '[due]'], summary: 'What payments will be worth at the end.' },
+  PV: { args: ['rate', 'periods', 'payment', '[future]', '[due]'], summary: 'What payments are worth now.' },
+  NPV: { args: ['rate', 'flow', '…'], summary: 'Cash flows discounted to now.', repeats: true },
   SQRT: { args: ['number'], summary: 'The square root.' },
   POWER: { args: ['number', 'exponent'], summary: 'The number raised to a power.' },
   MOD: { args: ['number', 'divisor'], summary: 'The remainder, signed like the divisor.' },
@@ -111,6 +128,8 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   MINIFS: { args: ['range', 'range', 'criteria', '…'], summary: 'The smallest of the cells that match.', repeats: true },
 
   // Text
+  CLEAN: { args: ['text'], summary: 'Takes out the control characters.' },
+  HYPERLINK: { args: ['address', '[label]'], summary: 'Shows the label, or the address.' },
   LEFT: { args: ['text', '[count]'], summary: 'The first characters.' },
   RIGHT: { args: ['text', '[count]'], summary: 'The last characters.' },
   MID: { args: ['text', 'start', 'count'], summary: 'Characters from the middle, counting from one.' },
@@ -153,6 +172,11 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   },
 
   // Dates
+  DATEVALUE: { args: ['text'], summary: 'A date typed as text, as a date.' },
+  TIMEVALUE: { args: ['text'], summary: 'A time typed as text, as a time.' },
+  DAYS: { args: ['end', 'start'], summary: 'Days from the start to the end.' },
+  WORKDAY: { args: ['start', 'days', '[holidays]'], summary: 'The date that many working days away.' },
+  WEEKNUM: { args: ['date', '[type]'], summary: 'The week of the year: 1 starts on Sunday, 2 on Monday.' },
   TODAY: { args: [], summary: "Today's date. Recalculates on every edit." },
   NOW: { args: [], summary: 'The date and time. Recalculates on every edit.' },
   DATE: { args: ['year', 'month', 'day'], summary: 'A date from its parts.' },

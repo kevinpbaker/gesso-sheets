@@ -1454,7 +1454,7 @@ describe('suggesting a function while it is typed', () => {
   /** Prefix, not substring: `SU` offers `SUBSTITUTE` and `SUM` alike. */
   it('matches the start of the name', async () => {
     await typing('=SU');
-    expect(options()).toEqual(['SUBSTITUTE', 'SUM', 'SUMIF', 'SUMIFS', 'SUMPRODUCT']);
+    expect(options()).toEqual(['SUBSTITUTE', 'SUBTOTAL', 'SUM', 'SUMIF', 'SUMIFS', 'SUMPRODUCT']);
   });
 
   it('picks the first one out to begin with', async () => {
