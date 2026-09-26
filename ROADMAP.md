@@ -1607,7 +1607,7 @@ that works out what was pressed, the way the grid's own press does.
 
 ---
 
-### Phase 18 — The pointer
+### Phase 18 — The pointer — **done**
 
 Clicking a column letter selects the column, and a row number the
 row. Shift+click extends from where the selection was, and a drag
@@ -1637,6 +1637,52 @@ without walking it: the selection is a range, and neither selecting
 it nor the status bar's Sum over it may cost a million of anything. `pnpm proof` with the
 context menu open over a scrolling sheet, under Phase 8's fifth
 budget.
+
+**Met.** `Pointer.spec.tsx`, 28 specs through the semantics tree and
+the hit tester: a letter, a number and the corner select the column,
+the row and the sheet; Shift extends from where the selection was, a
+drag sweeps, and one that wanders down into the cells keeps sweeping
+letters; a grip's click selects nothing and its drag sweeps nothing;
+a double-click on a column's grip fits it, or every selected column
+when it is one of theirs, on a row's grip gives the row back to its
+contents, and on the fill handle fills down as far as the column
+beside goes — left, then right, then nothing — in one step of undo.
+The right button opens the menu for what is under it, selecting that
+first when it is outside the selection; Shift+F10 and the Menu key
+open it at the cursor. A click on column B of a sheet a million rows
+tall selects it and the status bar adds it up in well under a frame's
+worth of anything, because both are a range. And `pnpm proof` has a
+sixth run, scrolling with the context menu open, held to the fifth
+budget's allowance: 3.6ms median against 2.3ms idle.
+
+Three things worth carrying forward.
+
+**What was pressed is read from the node, not the point.** The first
+version worked the header out from the pointer's coordinates, which is
+what a drag needs and what a right-click is given. But a click a
+screen reader sends has no point at all, and neither does a spec that
+clicks a node; so a click walks up from the node it landed on to the
+strip's own nodes, which already say what they are — the column in
+`posInSet`, the row in the label, and the corner is a button called
+*Select all*. Coordinates are the fallback, for the two gestures that
+only have them.
+
+**The strip is drawn over the rows.** The spec helper that clicked
+"row 1" aimed at the row's own box, which on a sheet scrolled by half a
+row starts under the sticky header — so it had been clicking the
+column's letter all along, harmlessly, until a letter meant something.
+The helper aims below the header now. The pointer was right.
+
+**A column click does not scroll.** The active cell of a whole column
+is its first row, which is where Excel puts it, and the one move of
+the selection that must not bring the cursor into view: somebody who
+clicked a letter half way down is looking at the half they clicked.
+
+Done in two sessions at once, and said so because it will happen
+again: one wrote this phase's specs and the engine's `DoubleClick`,
+the other the implementation, and they met in the middle — the specs
+ran against an implementation their author had not seen, and passed
+once the two agreed which end of a Shift+click moves.
 
 ### Phase 19 — The keyboard Excel users already have
 
