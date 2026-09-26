@@ -28,8 +28,11 @@ with borders, sort, insert and delete rows and columns, freeze a
 pane, merge cells, fit a column to its contents, filter to what the
 cursor is on, and navigate by typing an address — and which remembers
 what you typed.
-[Part Three](#part-three--quality-of-life) is the list of what a hand
-that knows Excel reaches for and does not find yet.
+[Part Three](#part-three--quality-of-life) is what a hand that knows
+Excel reaches for, done but for what it left to
+[Part Four](#part-four--nothing-lost), which is about not losing
+anything: a file's rules, where the cursor is, a gesture, a finger,
+a preference.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -2068,6 +2071,195 @@ which is a feature and not a habit. Drag-to-move a selection by its
 border, which is worth having but needs Gesso's Drag and the grid's
 Pan to agree about who owns a press on a cell edge, and that is an
 engine question first.
+
+---
+
+# Part four — nothing lost
+
+Part Three was the habits. Part Four is the things this sheet still
+quietly loses.
+
+- **A file's rules and charts.** An `.xlsx` read here drops its
+  conditional formats, its validations and its charts, and one written
+  here drops ours and says so in a sentence. The sentence is honest,
+  and it is also the moment somebody decides this is not where their
+  workbook lives. Phase 16 said it: import is what makes this a
+  spreadsheet people bring their data to, and export is what makes it
+  one they can lose their data with. Both directions are open.
+- **Where the cursor is.** The active cell is always a corner of the
+  selection, so Enter cannot walk a selection and Ctrl+Enter writes
+  from the corner Shift moved. Excel users' hands expect the active
+  cell to stay put.
+- **A gesture.** Dragging a selection by its border to move it.
+- **A finger.** A tablet can scroll the sheet and cannot do much else
+  with it.
+- **A preference.** The status bar's chosen figures reset on reload,
+  because a render worker has nowhere to keep one.
+
+None of it is new ground in a spreadsheet. The work is in doing it
+without breaking what Parts One to Three hold.
+
+## The rule Part Four runs under
+
+Part Two's three rules still hold: patches proportional to the
+viewport, `pnpm proof` does not move, and `src/sheet` imports nothing.
+Two are added.
+
+1. **A file part is proved by a program that did not write it.** A
+   round trip through this sheet's own reader proves only that the
+   writer and the reader agree, and Phase 22's notes showed how little
+   that is worth: the one part Excel needs to show a comment is one the
+   reader never looks for. Every part written in Part Four is opened in
+   LibreOffice, headless, by a spec that runs where LibreOffice is
+   installed and says so where it is not. Every part read is read from
+   POI's corpus, and its count is recorded.
+2. **An engine question is answered in the engine first.** Part Three
+   met four: `DoubleClick`, a tooltip whose text follows the app, a key
+   typed before the editing proxy has focus, and the Drag-against-Pan
+   question that postponed moving by the border. Each was cheaper as
+   a Gesso change with its own spec than as an application working
+   round it, so it stays the rule.
+
+---
+
+### Phase 23 — Files that keep everything
+
+**Conditional formats, validations and charts, in and out of
+`.xlsx`.**
+
+- **Conditional formats.** `<conditionalFormatting>` in each worksheet
+  and the `dxf` styles it points at. The rule kinds Phase 14 has —
+  cell value, text, top and bottom, colour scale, a formula — map to
+  Excel's `cfRule` types one to one. A rule Excel has and this sheet
+  does not (data bars, icon sets) is read as nothing and reported in
+  the import's sentence, the way an unreadable name already is.
+- **Validations.** `<dataValidations>`: list, whole number, decimal,
+  date, text length, and a custom formula, with the input and error
+  messages. A list that names a range rather than listing its values
+  is read as that range.
+- **Charts.** The hard one. An `.xlsx` chart is a DrawingML part
+  (`xl/charts/chartN.xml`), anchored by a drawing part (`xl/drawings/
+  drawingN.xml`) and related from the sheet. Phase 15's chart is a
+  kind, a range, a title and a legend, and writing that is small:
+  bar, line, area, pie and scatter, from the series' own ranges.
+  Reading is harder, because a file's chart can be anything Excel
+  draws. The plan is to read the same five kinds, their series ranges
+  and their anchor, and report the rest as left out rather than
+  guessing at them.
+
+`SheetXlsxOut`'s *left out* sentence shrinks to what is genuinely not
+here: pivot tables, images, and a chart kind this sheet does not
+draw.
+
+**Exit:** round-trip specs for each rule kind, validation kind and
+chart kind. A workbook written with all of them opens in LibreOffice
+with the rules applied, the validations enforced and the charts
+drawn, checked by converting to `.ods` and reading its content back.
+And the POI corpus's files that use them are read, with the count of
+rules, validations and charts recorded here, as Phase 17 recorded its
+325 of 352.
+
+### Phase 24 — An active cell
+
+`SheetSelection` is an anchor and a cursor, and the cursor *is* the
+active cell, so the active cell is always a corner. Excel's model is a
+range plus an active cell anywhere inside it, and three things this
+sheet does wrong come from the difference:
+
+- **Enter and Tab walk the selection.** Inside a multi-cell selection,
+  Enter moves the active cell down and wraps to the next column at the
+  bottom; Tab moves across and wraps to the next row. The selection
+  stays. This is how somebody types a block of numbers into a range
+  they selected first.
+- **Ctrl+Enter writes from the active cell**, which is where the editor
+  opens. Phase 19 wrote from the moving corner and said why.
+- **Shift+click and Shift+Arrow keep the active cell** where it is and
+  move the far corner, and the name box and formula bar go on showing
+  the active cell.
+
+The model change is one field: the selection gains an active cell,
+held inside the range. The cost is everything that reads a selection
+— the render thread's `SheetEditing`, the worker's document and
+service, copy, fill, sort, the status bar, the find bar and the
+outline painter. Most want the rectangle and do not care about the
+active cell. Its type should make the ones that do say so.
+
+**Exit:** `Keyboard.spec.tsx` covers Enter and Tab walking and wrapping
+in both directions, Ctrl+Enter from the active cell, and Shift keeping
+it. Every spec that constructs a selection still passes, with the
+active cell defaulting to the corner it is today. `pnpm proof` does not
+move: the selection is on the hot path of every arrow key.
+
+### Phase 25 — Moving by the border
+
+A press on the edge of the selection, dragged, moves the cells: the
+cut-and-paste of Phase 20 as one gesture, references and all, with
+Ctrl held to copy instead. The cursor over the border says so before
+the press.
+
+The engine question first. The grid sweeps a selection on **Pan**, a
+press that moves past the slop; Gesso's **Drag** is the long-press
+pick-up, which is right for moving a card and wrong here, because
+nobody holds still on a border before pulling it. What is wanted is a
+Pan that belongs to the border's own node and never reaches the
+grid's, which is what the fill handle already does by stopping
+propagation. So the answer may be that no engine change is needed —
+only a border node an eight-pixel band wide, as the column grips are.
+Finding that out is the first step, and the answer goes here.
+
+**Exit:** a spec that drags B2:C3 by its top edge to E5 and finds the
+values and formats there, the formulas that read them rewritten, and
+B2:C3 empty; the same with Ctrl, finding both; one undo each. And a
+drag that begins inside the selection, not on its edge, still sweeps.
+
+### Phase 26 — A finger
+
+`UiTouchScroller` scrolls both axes since Part Two. What a tablet
+still lacks is all this application's:
+
+- **Targets sized for a finger:** the grips, the fill handle and the
+  header strips get a larger hit area under a touch pointer, which
+  `UiPointerEvent.pointer` already reports, without changing what a
+  mouse sees.
+- **A long press is a right click.** The engine already turns one into
+  `ContextMenu`; the grid's menu has to answer it at the finger.
+- **A selection dragged by handles.** Two round handles at the
+  selection's corners, shown only to a touch pointer, because a finger
+  cannot hover to see what a sweep would select and a sweep is also a
+  scroll.
+
+**Exit:** specs through touch pointer events — a tap selects, a drag
+scrolls rather than sweeps, a long press opens the menu at the finger,
+a handle drag extends the selection — and Gesso's `check:touch` run
+against this application rather than the playground.
+
+### Phase 27 — What it remembers of you
+
+The status bar's chosen figures reset on reload, because the render
+worker cannot reach `localStorage`, and Phase 22 said so rather than
+pretend. The same gap will meet the next preference, so it is fixed
+once:
+
+- **In the engine,** a preferences service on the render worker, backed
+  by the shell's storage through the same `ShellService` round trip the
+  clipboard uses. It is small, keyed and JSON, read once at start and
+  written on change.
+- **In this sheet,** the status bar's figures first. Then the
+  preferences that belong to the person and not the document: what a
+  new document is zoomed to, and whether a new sheet shows formulas.
+
+**Exit:** a spec in Gesso for the service across a simulated reload,
+and one here that chooses Min, reloads, and finds Min.
+
+---
+
+## Not in Part Four
+
+Pivot tables, rich text inside a cell, collaborative editing and
+scripting, each large enough to be a part of its own and none of them
+a thing this sheet loses. Flash fill, still a feature and not a habit.
+Images in a cell or over the sheet, which the `.xlsx` reader will go on
+reporting as left out.
 
 ---
 
