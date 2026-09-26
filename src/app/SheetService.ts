@@ -34,6 +34,7 @@ import {
   type BorderPattern,
   type SheetActiveFormat,
   type SheetActiveRules,
+  type SheetTransfer,
   type SheetAutofit,
   type SheetEdge,
   type SheetFormatChange,
@@ -58,6 +59,7 @@ import type { SheetDocument } from './SheetDocument';
 import { cellKey, columnName } from '../sheet/A1';
 import { snapshotOf, applySnapshot, type SheetSnapshot } from './SheetFile';
 import type { SheetRepository } from './SheetRepository';
+import { exportCsv, importCsv } from './SheetCsv';
 import {
   clearRect,
   copyRect,
@@ -123,6 +125,7 @@ export class SheetService {
   readonly names: Observable<SheetNames>;
   readonly status: Observable<SheetStatus>;
   readonly clipboard: Observable<SheetClipboard>;
+  readonly transfer: Observable<SheetTransfer>;
   readonly selectionStats: Observable<SheetStats>;
   readonly findView: Observable<SheetFindView>;
   readonly formats: Observable<SheetFormatWindow>;
@@ -171,6 +174,8 @@ export class SheetService {
   private readonly namesSubject: BehaviorSubject<SheetNames>;
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
+  private readonly transferSubject = new BehaviorSubject<SheetTransfer>({ download: null, report: '' });
+  private downloadSerial = 0;
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
   private readonly findSubject = new BehaviorSubject<SheetFindView>(NO_FIND);
   private readonly formatsSubject = new BehaviorSubject<SheetFormatWindow>(EMPTY_FORMATS);
@@ -283,6 +288,7 @@ export class SheetService {
     this.names = this.namesSubject;
     this.status = this.statusSubject;
     this.clipboard = this.clipboardSubject;
+    this.transfer = this.transferSubject;
     this.selectionStats = this.statsSubject;
     this.findView = this.findSubject;
     this.formats = this.formatsSubject;
@@ -446,6 +452,36 @@ export class SheetService {
   clearRules(): void {
     this.document.clearRules();
     this.rulesChanged();
+  }
+
+  // ---------------------------------------------------------------------
+  // Files in and out
+  // ---------------------------------------------------------------------
+
+  importCsv(fileName: string, text: string): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const opened = importCsv(this.document, fileName, text, { rows: rowCount, columns: columnCount });
+    if (opened.sheet !== -1) {
+      this.document.columnWidths = this.defaultWidths();
+      this.document.setSelection(0, 0, 0, 0);
+      this.publishSheet();
+      this.persist();
+      this.pump();
+    }
+    this.transferSubject.next({ ...this.transferSubject.value, report: opened.report });
+  }
+
+  exportCsv(): void {
+    this.downloadSerial++;
+    this.transferSubject.next({
+      ...this.transferSubject.value,
+      download: {
+        serial: this.downloadSerial,
+        name: `${this.document.sheet.name}.csv`,
+        mediaType: 'text/csv',
+        text: exportCsv(this.document)
+      }
+    });
   }
 
   /**

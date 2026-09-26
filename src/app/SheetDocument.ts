@@ -1195,7 +1195,15 @@ export class SheetDocument {
     }
   }
 
-  private forgetHistory(): void {
+  /**
+   * Empties both stacks.
+   *
+   * Public for the one caller outside this file, an import: it adds a
+   * sheet, which forgets the history anyway, and then writes the
+   * sheet's contents, which would otherwise leave one entry that
+   * undoes a file into an empty tab.
+   */
+  forgetHistory(): void {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
   }

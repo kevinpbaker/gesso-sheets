@@ -201,6 +201,33 @@ export interface SheetClipboard {
 }
 
 /**
+ * Files on their way in and out.
+ *
+ * A download is a request one way and an answer the other, on the
+ * shape `SheetClipboard` already uses: the render worker asks for the
+ * CSV, the application worker builds it and publishes it here, and
+ * the render worker hands it to the shell — the only thread that can
+ * put a file in front of somebody. `serial` makes exporting the same
+ * sheet twice a change, for the reason the clipboard's does.
+ *
+ * `report` is what the last file opened turned into, as a sentence,
+ * or the empty string: it answers "did that work", and travels here
+ * because it is only ever read beside the download it is not.
+ */
+export interface SheetTransfer {
+  readonly download: SheetDownload | null;
+  readonly report: string;
+}
+
+export interface SheetDownload {
+  readonly serial: number;
+  /** A file name to suggest, extension included. */
+  readonly name: string;
+  readonly mediaType: string;
+  readonly text: string;
+}
+
+/**
  * What the find bar is looking for and how it is going.
  *
  * The matches are a count and a position, not the list. The list can
@@ -442,6 +469,18 @@ export interface SheetCommands {
   removeValidation(at: number): void;
   /** Takes every rule off the sheet, which is the only bulk one. */
   clearRules(): void;
+  /**
+   * Opens a CSV as a sheet of its own, named after its file, and
+   * shows it.
+   *
+   * The text crosses rather than the bytes because decoding is the
+   * render worker's to do once, where the file arrived; what it means
+   * — which separator, which cells are numbers, whether `=1+2` is a
+   * formula — is this side's, and it is not.
+   */
+  importCsv(fileName: string, text: string): void;
+  /** Builds the sheet in view as a CSV, and publishes it on `transfer`. */
+  exportCsv(): void;
   /**
    * Puts a chart over the selection, and selects it.
    *
@@ -753,6 +792,8 @@ export interface SheetView {
   readonly names: SheetNames;
   readonly status: SheetStatus;
   readonly clipboard: SheetClipboard;
+  /** CSV out, and what the last CSV in became; see `SheetTransfer`. */
+  readonly transfer: SheetTransfer;
   /** Sum, average and count over the selection. */
   readonly stats: SheetStats;
   readonly find: SheetFindView;
@@ -851,6 +892,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   names: { entries: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
+  transfer: { download: null, report: '' },
   stats: NO_STATS,
   find: NO_FIND,
   formats: EMPTY_FORMATS,
