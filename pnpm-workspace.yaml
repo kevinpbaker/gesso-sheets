@@ -6,6 +6,6 @@ overrides:
   gesso-components: file:vendor/gesso-components-0.3.0-08415699.tgz
   gesso-core: file:vendor/gesso-core-0.3.0-61c9a2ea.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
-  gesso-framework: file:vendor/gesso-framework-0.3.0-c83bc39f.tgz
-  gesso-testing: file:vendor/gesso-testing-0.3.0-65310f27.tgz
+  gesso-framework: file:vendor/gesso-framework-0.3.0-c8fd828e.tgz
+  gesso-testing: file:vendor/gesso-testing-0.3.0-66905088.tgz
   gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz
