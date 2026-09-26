@@ -9,7 +9,7 @@ overrides:
   gesso-core: file:vendor/gesso-core-0.3.0-d09fbbf0.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
   gesso-framework: file:vendor/gesso-framework-0.3.0-4c65b543.tgz
-  gesso-testing: file:vendor/gesso-testing-0.3.0-9084ae26.tgz
+  gesso-testing: file:vendor/gesso-testing-0.3.0-600a28cd.tgz
   gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz
 
 importers:
@@ -36,8 +36,8 @@ importers:
         specifier: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
         version: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz(rxjs@7.8.2)
       gesso-testing:
-        specifier: file:vendor/gesso-testing-0.3.0-9084ae26.tgz
-        version: file:vendor/gesso-testing-0.3.0-9084ae26.tgz(rxjs@7.8.2)(vitest@4.1.11(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2)))
+        specifier: file:vendor/gesso-testing-0.3.0-600a28cd.tgz
+        version: file:vendor/gesso-testing-0.3.0-600a28cd.tgz(rxjs@7.8.2)(vitest@4.1.11(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2)))
       gesso-vite-plugin:
         specifier: file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz
         version: file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz(vite@8.3.0(@types/node@26.6.2))
@@ -389,8 +389,8 @@ packages:
     peerDependencies:
       rxjs: ^7.8.2
 
-  gesso-testing@file:vendor/gesso-testing-0.3.0-9084ae26.tgz:
-    resolution: {integrity: sha512-MOjAJJWEOin/Y01Ae+jdgw5ovFII67ZL6isLlAKT/NMn30kOGIU6bmtOzToOyD46xJVLSqaacDZ0p7OmS/eSaQ==, tarball: file:vendor/gesso-testing-0.3.0-9084ae26.tgz}
+  gesso-testing@file:vendor/gesso-testing-0.3.0-600a28cd.tgz:
+    resolution: {integrity: sha512-BwzBzT4QBoGrl4D6h3dNhyBtwvz5ySOMqBYFjnDqYaZ8zEryvqlkPUAU1x7BxxAWrlq+jqu9t6OxUrYmTBwxig==, tarball: file:vendor/gesso-testing-0.3.0-600a28cd.tgz}
     version: 0.3.0
     peerDependencies:
       rxjs: ^7.8.2
@@ -860,7 +860,7 @@ snapshots:
       gesso-core: file:vendor/gesso-core-0.3.0-d09fbbf0.tgz(rxjs@7.8.2)
       rxjs: 7.8.2
 
-  gesso-testing@file:vendor/gesso-testing-0.3.0-9084ae26.tgz(rxjs@7.8.2)(vitest@4.1.11(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))):
+  gesso-testing@file:vendor/gesso-testing-0.3.0-600a28cd.tgz(rxjs@7.8.2)(vitest@4.1.11(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))):
     dependencies:
       gesso-core: file:vendor/gesso-core-0.3.0-d09fbbf0.tgz(rxjs@7.8.2)
       gesso-framework: file:vendor/gesso-framework-0.3.0-4c65b543.tgz(rxjs@7.8.2)

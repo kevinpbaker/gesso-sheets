@@ -410,7 +410,10 @@ export function numberFormatOf(code: string): NumberFormat {
     return { kind: 'text' };
   }
   const first = code.split(';')[0];
-  const currency = /\[\$([^\-\]]*)[^\]]*\]/.exec(first)?.[1];
+  // A currency symbol is written bracketed, `[$€-407]`, or quoted,
+  // `"$"#,##0.00` — the second is how Excel writes its own currency
+  // formats, so stripping quoted text before looking would lose it.
+  const currency = /\[\$([^\-\]]*)[^\]]*\]/.exec(first)?.[1] ?? /"([$€£¥])"/.exec(first)?.[1];
   const bare = first
     .replace(/"[^"]*"/g, '')
     .replace(/\\./g, '')

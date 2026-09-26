@@ -50,15 +50,29 @@ export class OpfsSheetLibrary implements SheetLibrary {
     }
   }
 
+  /**
+   * Adds or replaces an entry: read the index, change it, write it.
+   *
+   * Under a Web Lock, because every tab has an application worker of
+   * its own and all of them share this one file. Two tabs doing the
+   * read and the write at once would each write a list without the
+   * other's entry in it — a document that exists and that no new tab
+   * can find — or would fail outright, since a sync access handle is
+   * exclusive and the second to ask is refused. The lock makes the
+   * three steps one, across every tab of the origin; the chain in front
+   * of it keeps this worker's own writes in order.
+   */
   put(entry: DocumentEntry): Promise<void> {
-    this.writing = this.writing.then(async () => {
-      try {
-        const others = (await this.entries()).filter(each => each.id !== entry.id);
-        await this.writeIndex(JSON.stringify([...others, entry]));
-      } catch (error) {
-        console.warn('[sheet] could not write the document index.', error);
-      }
-    });
+    this.writing = this.writing.then(() =>
+      exclusively(async () => {
+        try {
+          const others = (await this.entries()).filter(each => each.id !== entry.id);
+          await this.writeIndex(JSON.stringify([...others, entry]));
+        } catch (error) {
+          console.warn('[sheet] could not write the document index.', error);
+        }
+      })
+    );
     return this.writing;
   }
 
@@ -110,6 +124,18 @@ export class OpfsSheetLibrary implements SheetLibrary {
     const root = await storage.getDirectory();
     return (await root.getFileHandle(INDEX, { create: true })).createSyncAccessHandle();
   }
+}
+
+/**
+ * Runs under the index's lock, where there is a lock manager to ask.
+ *
+ * Every browser with OPFS has one; a worker that somehow lacks it runs
+ * the write anyway, which is what it did before there was a lock.
+ */
+function exclusively(run: () => Promise<void>): Promise<void> {
+  const locks = (navigator as unknown as { locks?: { request(name: string, run: () => Promise<void>): Promise<void> } })
+    .locks;
+  return locks === undefined ? run() : locks.request('gessosheet-document-index', run);
 }
 
 function isEntry(value: unknown): value is DocumentEntry {

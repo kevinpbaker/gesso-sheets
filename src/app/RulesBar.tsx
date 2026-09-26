@@ -269,16 +269,16 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   };
 
   const ruleOf = (): ValidationRule | null => {
-    const parts = allowed.value
-      .split(',')
-      .map(part => part.trim())
-      .filter(part => part !== '');
+    // Kept by position for a number: `, 10` is "at most ten", and
+    // closing up the empty part would read the ten as the minimum.
+    const positions = allowed.value.split(',').map(part => part.trim());
+    const parts = positions.filter(part => part !== '');
     switch (check.value) {
       case 'list':
         return parts.length === 0 ? null : { kind: 'list', values: parts };
       case 'number': {
-        const low = numberOf(parts[0] ?? '');
-        const high = numberOf(parts[1] ?? '');
+        const low = numberOf(positions[0] ?? '');
+        const high = numberOf(positions[1] ?? '');
         return {
           kind: 'number',
           ...(low === null ? {} : { min: low }),

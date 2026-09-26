@@ -203,6 +203,7 @@ describe('rules over a selection', () => {
       await menu('o', 'Conditional formatting…');
       expect(h.ui.getByRole('radio', { name: 'Less than' })).toHaveSemantics({ states: [] });
       expect(h.ui.getByRole('radio', { name: 'Greater than' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('');
       await press('Escape');
 
       h.service.setSelection(1, 0, 1, 0);
@@ -266,6 +267,23 @@ describe('rules over a selection', () => {
       await type('North, South');
       await press('Enter');
       expect(validation().cells[150]).toBeUndefined();
+    });
+
+    /** `, 10` is "at most ten": the empty first part is the minimum nobody set. */
+    it('takes a number rule with only a maximum, and shows it back that way', async () => {
+      await menu('d', 'Data validation…');
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'A number' }));
+      await h.ui.settle();
+      await type(', 10');
+      await press('Enter');
+      expect(h.document.validationAt(0, 0)?.rule).toEqual({ kind: 'number', max: 10 });
+
+      h.service.setSelection(10, 5, 10, 5);
+      h.service.setSelection(0, 0, 0, 0);
+      await h.served.settle();
+      await h.ui.settle();
+      await menu('d', 'Data validation…');
+      expect(h.ui.getByRole('textbox', { name: 'Allowed values' })).toHaveText(', 10');
     });
 
     it('opens on the validation the active cell is already under', async () => {

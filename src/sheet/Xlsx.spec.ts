@@ -57,14 +57,15 @@ describe('a workbook LibreOffice wrote', () => {
   });
 
   /**
-   * The fixture's due dates are `=DATEVALUE("2026-09-24")`, and this
-   * sheet has no DATEVALUE. So the four of them keep the serial
-   * LibreOffice calculated — which, under their date format, still
-   * shows the date — and the count says four formulas became values.
+   * The fixture's due dates are `=DATEVALUE("2026-09-24")`, which this
+   * sheet did not have when the reader was written — so they came
+   * across as values, and the count said four. It has it now, so they
+   * are formulas and nothing is kept; the path for a function it still
+   * lacks is specced below, with BESSELJ.
    */
-  it('keeps the value of each formula calling a function this sheet lacks', () => {
-    expect(cellAt(orders(), 'E4')).toMatchObject({ input: '46289', asText: false });
-    expect(book.valuesKept).toBe(4);
+  it('keeps every formula as a formula, when this sheet can run them all', () => {
+    expect(cellAt(orders(), 'E4')).toMatchObject({ input: '=DATEVALUE("2026-09-24")', asText: false });
+    expect(book.valuesKept).toBe(0);
   });
 
   /** A leading zero is the commonest thing a spreadsheet import destroys. */
@@ -118,12 +119,11 @@ describe('the shapes Excel writes', () => {
       <row r="4"><c r="D4"><f t="shared" ref="D4:D6" si="0">B4*C4</f><v>1</v></c></row>
       <row r="5"><c r="D5"><f t="shared" si="0"/><v>2</v></c></row>
       <row r="6"><c r="D6"><f t="shared" si="0"/><v>3</v></c></row></sheetData>`);
-    // Moved by the same rewrite a fill uses, and printed the way it
-    // prints: the brackets are its, and they change nothing.
+    // Moved by the same rewrite a fill uses.
     expect(inputs(read)).toEqual([
       [3, 3, '=B4*C4'],
-      [4, 3, '=(B5*C5)'],
-      [5, 3, '=(B6*C6)']
+      [4, 3, '=B5*C5'],
+      [5, 3, '=B6*C6']
     ]);
   });
 
@@ -200,7 +200,8 @@ describe('number format codes', () => {
     ['#,##0.00', { kind: 'number', places: 2, thousands: true }],
     ['0.0%', { kind: 'percent', places: 1 }],
     ['0.00E+00', { kind: 'scientific', places: 2 }],
-    ['"$"#,##0.00_);[Red]\\("$"#,##0.00\\)', { kind: 'number', places: 2, thousands: true }],
+    // How Excel writes its own currency formats: the symbol quoted.
+    ['"$"#,##0.00_);[Red]\\("$"#,##0.00\\)', { kind: 'currency', places: 2, symbol: '$' }],
     ['$#,##0.00', { kind: 'currency', places: 2, symbol: '$' }],
     ['[$€-407]#,##0.00', { kind: 'currency', places: 2, symbol: '€' }],
     ['yyyy\\-mm\\-dd', { kind: 'date', pattern: 'ymd' }],
