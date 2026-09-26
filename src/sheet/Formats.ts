@@ -90,6 +90,32 @@ export class Formats {
     return this.cells.size;
   }
 
+  /**
+   * Where every format is, without the palette: what a deletion takes
+   * away and its undo has to put back.
+   *
+   * The palette is left out on purpose. It only ever grows, so the one
+   * in place when the undo runs holds every id the placement names —
+   * and keeping it, rather than restoring an older one, keeps the ids
+   * every other step on the undo stack refers to.
+   */
+  placement(): FormatPlacement {
+    return { cells: new Map(this.cells), rows: new Map(this.rows), columns: new Map(this.columns), sheet: this.sheet };
+  }
+
+  restorePlacement(placement: FormatPlacement): void {
+    const put = (into: Map<number, number>, from: ReadonlyMap<number, number>): void => {
+      into.clear();
+      for (const [key, id] of from) {
+        into.set(key, id);
+      }
+    };
+    put(this.cells, placement.cells);
+    put(this.rows, placement.rows);
+    put(this.columns, placement.columns);
+    this.sheet = placement.sheet;
+  }
+
   /** The palette id for a format, adding it if it is new. */
   idFor(format: CellFormat): number {
     const key = keyOf(format);
@@ -373,4 +399,12 @@ function covers(scope: 'sheet' | 'row' | 'column', index: number, key: number): 
     return true;
   }
   return scope === 'row' ? rowOf(key) === index : columnOf(key) === index;
+}
+
+/** Where a sheet's formats are; see `Formats.placement`. */
+export interface FormatPlacement {
+  readonly cells: ReadonlyMap<number, number>;
+  readonly rows: ReadonlyMap<number, number>;
+  readonly columns: ReadonlyMap<number, number>;
+  readonly sheet: number;
 }

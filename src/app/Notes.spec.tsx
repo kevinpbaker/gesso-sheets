@@ -45,6 +45,28 @@ describe('a document’s notes', () => {
     expect(document.noteAt(4, 0)).toBe('on row 6');
   });
 
+  /**
+   * Not a note, but found beside them: a deleted row's formats did not
+   * come back when the deletion was undone, because shifting back puts
+   * rows where they were and cannot put back what was on them.
+   */
+  it('come back with a deleted row, and so do its formats', () => {
+    const document = new SheetDocument();
+    document.setCell(2, 0, 'bold one');
+    document.setFormat(2, 0, { ...document.formatAt(2, 0), paint: { ...document.formatAt(2, 0).paint, bold: true } });
+    document.setNote(2, 0, 'why it is bold');
+    document.applyShift({ axis: 'row', at: 2, by: -1 });
+    expect(document.formatAt(2, 0).paint.bold).toBe(false);
+
+    document.undo();
+    expect(document.sheet.input(2, 0)).toBe('bold one');
+    expect(document.formatAt(2, 0).paint.bold).toBe(true);
+    expect(document.noteAt(2, 0)).toBe('why it is bold');
+
+    document.redo();
+    expect(document.formatAt(2, 0).paint.bold).toBe(false);
+  });
+
   it('belong to their sheet', () => {
     const document = new SheetDocument();
     document.setNote(0, 0, 'first');

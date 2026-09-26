@@ -1,6 +1,6 @@
 import { parseTypedDate } from '../sheet/Dates';
 import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format';
-import { Formats } from '../sheet/Formats';
+import { Formats, type FormatPlacement } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import type { Chart } from '../sheet/Chart';
 import { columnName, type RangeRef } from '../sheet/A1';
@@ -149,6 +149,12 @@ interface StructureEdit extends OnASheet {
   readonly rows: RowsHeld;
   /** The sheet's notes as they were, all of them: a deleted row takes its notes with it. */
   readonly notes: readonly Note[];
+  /**
+   * Where the formats were, for a deletion only: a deleted row takes
+   * its formats with it, and shifting back cannot bring them. An insert
+   * destroys nothing and keeps nothing.
+   */
+  readonly formats: FormatPlacement | null;
 }
 
 /** What a row shift moves besides the cells, held so undo can put it back. */
@@ -839,6 +845,9 @@ export class SheetDocument {
   private undoShift(edit: StructureEdit): void {
     this.sheet.shift({ ...edit.shift, by: -edit.shift.by });
     this.formats.shift({ ...edit.shift, by: -edit.shift.by });
+    if (edit.formats !== null) {
+      this.formats.restorePlacement(edit.formats);
+    }
     this.columnWidths = [...edit.widths];
     this.restoreRows(edit.rows, null);
     this.page.notes.restore(edit.notes);
@@ -1178,6 +1187,7 @@ export class SheetDocument {
       filtered
     };
     const notes = this.page.notes.all();
+    const formats = shift.by < 0 ? this.formats.placement() : null;
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.merges.shift(shift);
@@ -1200,7 +1210,8 @@ export class SheetDocument {
       rewritten,
       widths,
       rows,
-      notes
+      notes,
+      formats
     });
   }
 
