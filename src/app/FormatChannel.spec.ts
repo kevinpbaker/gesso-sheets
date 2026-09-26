@@ -33,11 +33,11 @@ describe('the cost of formatting', () => {
    * The claim, in two numbers.
    *
    * Fifty thousand cells formatted at once, thirty of them on screen:
-   * one entry appears in the palette and thirty indices cross. The
+   * two entries appear in the palette and thirty indices cross. The
    * palette is a table and the window is a window, which is the whole
    * reason they are two keys.
    */
-  it('costs one palette entry and one index per visible cell', () => {
+  it('costs two palette entries and one index per visible cell', () => {
     const CELLS = 50_000;
     const VISIBLE = 30;
     for (let row = 0; row < CELLS; row++) {
@@ -52,8 +52,11 @@ describe('the cost of formatting', () => {
     command(h.port, 'format', { number: CURRENCY });
     h.clock.drain();
 
-    // One entry added to the palette, whoever else is using it.
-    expect(h.port.patchesFor('palette')).toHaveLength(1);
+    // Two entries added to the palette, whoever else is using them: the
+    // format, and the same format placed on the right — a currency
+    // string does not read as a number, so the grid is told where the
+    // number goes. Per format, not per cell; see `alignedFor`.
+    expect(h.port.patchesFor('palette')).toHaveLength(2);
     // One index per visible cell, and not one per formatted cell.
     expect(h.port.patchesFor('formats')).toHaveLength(VISIBLE);
   });

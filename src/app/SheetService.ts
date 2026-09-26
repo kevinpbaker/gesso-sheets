@@ -63,6 +63,7 @@ import { snapshotOf, applySnapshot, parseSnapshot, type SheetSnapshot } from './
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
 import { exportCsv, importCsv } from './SheetCsv';
+import { looksNumeric } from './alignment';
 import { platformInflate, reportOfXlsx, snapshotOfXlsx } from './SheetXlsx';
 import { bytesOfBase64 } from './base64';
 import { openXlsx, XlsxError } from '../sheet/Xlsx';
@@ -251,6 +252,8 @@ export class SheetService {
    * longer says what they searched for.
    */
   private found: number[] = [];
+  /** Whether the last formats publish had a formatted cell in view; see `repaintIfRuled`. */
+  private formattedInView = false;
   /** How wide a hidden column was, so showing it puts that back. */
   private readonly hiddenWidths = new Map<number, number>();
   /**
@@ -2010,7 +2013,11 @@ export class SheetService {
    * measuring the same thing it always did.
    */
   private repaintIfRuled(): void {
-    if (!this.painter.isEmpty) {
+    // A formatted cell's alignment can follow its value — a currency
+    // cell whose formula starts returning an error moves from right to
+    // left — so the formats go out again while any are in view. A view
+    // of nothing but default cells still pays nothing.
+    if (!this.painter.isEmpty || this.formattedInView) {
       this.publishFormats();
     }
   }
@@ -2199,16 +2206,19 @@ export class SheetService {
     const columns = this.columnsInView();
     const cells: Record<string, Record<string, number>> = {};
     const grew = this.extraPaints.length;
+    let formatted = false;
     for (const row of this.rowsInView()) {
       const line: Record<string, number> = {};
       for (const column of columns) {
         const id = this.paintedId(row, column);
         if (id !== 0) {
           line[column] = id;
+          formatted = true;
         }
       }
       cells[row] = line;
     }
+    this.formattedInView = formatted;
     this.formatsSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
     // A rule that asked for a colour nothing has used yet has just
     // put it in the palette, and an index into a palette the other
@@ -2232,24 +2242,55 @@ export class SheetService {
    */
   private paintedId(row: number, column: number): number {
     const base = this.document.formats.idAt(row, column);
-    if (this.painter.isEmpty) {
+    if (base === 0 && this.painter.isEmpty) {
+      // An unformatted cell shows a number as a number and text as
+      // text, so the grid's reading of the string is already right.
       return base;
     }
-    const over = this.painter.paintFor(row, column, this.document.sheet.value(row, column));
-    if (over === null) {
+    const value = this.document.sheet.value(row, column);
+    const over = this.painter.isEmpty ? null : this.painter.paintFor(row, column, value);
+    const own = this.document.formats.byId(base).paint;
+    const painted: CellPaint =
+      over === null
+        ? own
+        : {
+            ...own,
+            ...(over.fill === undefined ? {} : { fill: over.fill }),
+            ...(over.color === undefined ? {} : { color: over.color }),
+            ...(over.bold === undefined ? {} : { bold: over.bold }),
+            ...(over.italic === undefined ? {} : { italic: over.italic })
+          };
+    const aligned = this.alignedFor(painted, row, column, value);
+    if (over === null && aligned === painted) {
       return base;
     }
-    const painted: CellPaint = {
-      ...this.document.formats.byId(base).paint,
-      ...(over.fill === undefined ? {} : { fill: over.fill }),
-      ...(over.color === undefined ? {} : { color: over.color }),
-      ...(over.bold === undefined ? {} : { bold: over.bold }),
-      ...(over.italic === undefined ? {} : { italic: over.italic })
-    };
     // A *position* in the extras, resolved against the document's
     // palette at publish time — so the document growing a format
     // moves every extra index and the palette goes out with it.
-    return this.paletteBase() + this.internPaint(painted);
+    return this.paletteBase() + this.internPaint(aligned);
+  }
+
+  /**
+   * The paint with its `auto` alignment made explicit, where the grid
+   * would otherwise get it wrong.
+   *
+   * The grid places an `auto` cell by whether its *string* reads as a
+   * number, because the string is all it is sent. A format is exactly
+   * what makes the string lie: `$4.50`, `9.6%` and `2026-09-24` are
+   * numbers that do not read as one, and `007` in a Text cell is text
+   * that does. For those, and only those, the alignment the value
+   * wants is written into the paint — so a correct guess costs nothing
+   * on the wire, and a wrong one costs one palette entry per format.
+   */
+  private alignedFor(paint: CellPaint, row: number, column: number, value: CellValue): CellPaint {
+    if (paint.align !== 'auto' || value === null || value === '') {
+      return paint;
+    }
+    const wants = typeof value === 'number';
+    if (looksNumeric(this.document.display(row, column)) === wants) {
+      return paint;
+    }
+    return { ...paint, align: wants ? 'end' : 'start' };
   }
 
   /**

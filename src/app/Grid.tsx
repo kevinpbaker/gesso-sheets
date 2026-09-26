@@ -34,6 +34,7 @@ import {
   type Inputs
 } from 'gesso-framework';
 
+import { looksNumeric } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
 import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer';
 import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
@@ -837,7 +838,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
        */
       textAlign: combineLatest([value, paint]).pipe(
         map(([text, how]) =>
-          how.align === 'auto' ? (isNumeric(text) ? 'right' : 'start') : how.align === 'center' ? 'center' : how.align
+          how.align === 'auto' ? (looksNumeric(text) ? 'right' : 'start') : how.align === 'center' ? 'center' : how.align
         )
       ),
       // A sweep drags a text selection through anything selectable,
@@ -2546,19 +2547,6 @@ function inRange(selection: SheetSelection, row: number, column: number): boolea
   return row >= firstRow && row <= lastRow && column >= firstColumn && column <= lastColumn;
 }
 
-/**
- * Whether a display string should sit to the right.
- *
- * Decided from the text rather than sent as a flag: the wire carries
- * display strings, and adding a per-cell alignment would double what
- * a window costs to say something the string already says.
- */
-function isNumeric(text: string | null): boolean {
-  if (text === null || text === '') {
-    return false;
-  }
-  return !Number.isNaN(Number(text.replace(/,/g, '')));
-}
 
 export type { SheetWindow };
 
