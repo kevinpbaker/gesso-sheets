@@ -1773,7 +1773,7 @@ typing does not outrun a frame, and a browser automation's `type`
 does; it predates this phase, and a spec that types through the real
 input path in one burst is where it should be pinned down.
 
-### Phase 20 — Paste that asks
+### Phase 20 — Paste that asks — **done**
 
 Paste today brings everything: value, formula, format. What people
 want at least as often is less.
@@ -1797,6 +1797,40 @@ want at least as often is less.
 **Exit:** specs for each paste against the clipboard harness, and one
 for a cut-and-paste of a range that a formula elsewhere reads, which
 reads the new place afterwards. Undo takes each back as one step.
+
+**Met.** `PasteSpecial.spec.tsx`, 15 specs through the clipboard
+harness: values only from the menu and from Ctrl+Shift+V, a formula
+landing as its answer in the formats already there; formats only;
+transposed, from a copy made here and from text from anywhere; a cut
+that moves the cells so that `=SUM(A1:A2)` elsewhere reads
+`=SUM(C5:C6)` afterwards, a range only partly cut left alone, a
+formula cut to another sheet naming the sheet its other references
+were on; Escape calling a cut off; the outline marked by a copy, kept
+through a paste, taken away by an edit or Escape; and the painter, lit
+for one click or held by a double-click until Escape, without touching
+the clipboard. Each paste and each move is one step of undo.
+
+What was found on the way is in the phase's own first sentence.
+"Paste today brings everything" was not true: a paste brought what had
+been *typed*, and nothing of the formats. A copy is a snapshot now — the
+inputs, the values and the formats of the block as it was — and a paste
+of the text it put on the clipboard is a paste of the snapshot, so
+formats come with it and "values only" has values to paste.
+
+A cut no longer empties anything until it is pasted, as in Excel,
+where a cut never pasted changes nothing. Pasted, it is a move by what
+a reference *names* rather than where the formula sits: whatever
+pointed into the block points at the same cells in their new place,
+and the block's own formulas keep their other references where they
+were — which is not what a fill does, and is why it is `Move.ts` and not
+`rewriteFormula`.
+
+The outline is drawn in the rows' own paint pass, as a formula's
+references are, so it costs no nodes; only the rows the window has are
+given their dashes, so a whole column copied costs thirty rows of them;
+and the timer that moves them runs only while there is an outline. It
+was checked by specs and not by eye: the browser window was on
+another workspace for this one, and a hidden tab draws no screenshots.
 
 ### Phase 21 — Typing less
 
