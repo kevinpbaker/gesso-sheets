@@ -923,12 +923,14 @@ is `#VALUE!`, which says the true thing, and a seventh code earns
 less than it costs.
 
 **What `TEXT` cannot do is stated rather than half-done.** Excel takes
-a format language here and this application deliberately has none —
-see `NumberFormat`. So `TEXT` accepts the pattern strings that name
-the formats it has and answers `#VALUE!` to anything else. A
+a format language here and this application deliberately had none —
+see `NumberFormat`. So `TEXT` accepted the pattern strings that name
+the formats it has and answered `#VALUE!` to anything else. A
 half-implemented pattern language that ignored the parts it could not
 do would produce text that is wrong rather than absent, which is worse
-in a cell nobody is checking.
+in a cell nobody is checking. *Superseded after Phase 17:* `TEXT` now
+reads Excel's format codes in full, and is checked against Excel's own
+answers — see "Checked against Excel" there.
 
 ### Phase 12 — The formula editor — **done**
 
@@ -1224,9 +1226,41 @@ quarter of a second.
 That is the cost of the barrier for a thing the size of a file, paid
 once per open, and it is written down here rather than hidden.
 
-Not measured: a file Excel itself wrote. Excel's shared formulas,
-`_xlfn.` prefixes and inline strings are specced from the format's own
-shapes, but no Excel was available to write one.
+Not measured, at first: a file Excel itself wrote. Excel's shared
+formulas, `_xlfn.` prefixes and inline strings were specced from the
+format's own shapes, but no Excel was available to write one.
+
+**Checked against Excel, after the phase.** Apache POI keeps several
+hundred `.xlsx` files in its test data, most written by Excel, and an
+Excel file holds each formula's last answer beside the formula. So the
+check is: open each, calculate, and compare with what Excel saved. Of
+352 files, 323 now agree in every formula. Seventeen are refused, all
+rightly — fuzzer output, a truncated zip, and three encrypted files,
+which now say they are password-protected rather than "not a zip". The
+twelve that still differ do so for reasons known and left: `TODAY` in a
+file saved years ago, a sheet wider than this one, a circular formula
+Excel resolves by iteration, array formulas, an external workbook, and
+a few of POI's deliberately odd arguments.
+
+What it found, and is fixed: a single-cell reference passed to a
+function is a range (so `SUM(A1)` of text is 0); implicit intersection;
+a blank equal to `""`, 0 and FALSE; `""` in arithmetic is `#VALUE!`;
+the 1900 phantom leap day, so every serial before March 1900 was a
+day out; `0^0` and friends; `ROUND` at fifteen significant digits;
+`XLOOKUP`'s every argument, and its binary search bisecting as Excel's
+does even on unsorted data; zip entries with Windows backslashes; and
+the 1904 date system of Mac workbooks, whose dates are moved onto this
+sheet's calendar as they come in.
+
+The largest was `TEXT`. POI's format workbooks hold about eight hundred
+codes with the text Excel produced for each, and `FormatCode.ts` now
+matches all but eleven of them: sections and conditions, literals,
+padding and fills, currencies, placeholders, thousands and scaling
+commas, percent, scientific and engineering notation, fractions,
+dates, twelve-hour times and elapsed time. The eleven are fraction
+codes with literals wedged between the placeholders, where Excel's
+answers contradict each other. A sample of the cases is
+`FormatCode.spec.ts`; POI is Apache-2.0 and is credited there.
 
 ---
 
