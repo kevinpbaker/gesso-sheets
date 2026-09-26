@@ -48,7 +48,9 @@ import {
   MAX_COLUMN_WIDTH,
   GUTTER_WIDTH,
   HEADER_HEIGHT,
+  MAX_ROW_HEIGHT,
   MIN_COLUMN_WIDTH,
+  MIN_ROW_HEIGHT,
   ROW_COUNT,
   ROW_HEIGHT
 } from './dimensions';
@@ -58,6 +60,7 @@ import {
   PLAIN_PAINT,
   Sheet,
   type SheetExplain,
+  type SheetRowFit,
   type SheetMerge,
   type SheetChart,
   type SheetCharts,
@@ -273,7 +276,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   const refreshShapes = (mounted: MountedCell): void => {
     const width = columnWidths.get(mounted.column)?.value ?? COLUMN_WIDTH;
-    const next = bordersOf(mounted.paint.value, width, isFlagged(mounted.row, mounted.column));
+    const next = bordersOf(mounted.paint.value, width, heightNow(mounted.row), isFlagged(mounted.row, mounted.column));
     if (next === NO_SHAPES && mounted.shapes.value === NO_SHAPES) {
       return;
     }
@@ -439,8 +442,35 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   };
 
   const hidden = internalState<ReadonlySet<number>>(new Set<number>());
-  const heightsOf = (rows: ReadonlySet<number>): Map<number, number> =>
-    new Map([...rows].map(row => [row, 0] as const));
+  /**
+   * The rows that are not the default height: dragged, or fitted to
+   * wrapped text. The document's, adopted from the geometry — except
+   * mid-drag, where this side leads, as it does for a column.
+   */
+  const sized = internalState<ReadonlyMap<number, number>>(new Map<number, number>());
+  /** The exceptions the window takes: every sized row, and every hidden one at zero. */
+  const heightsOf = (rows: ReadonlySet<number>, sizes: ReadonlyMap<number, number>): Map<number, number> => {
+    const heights = new Map(sizes);
+    for (const row of rows) {
+      heights.set(row, 0);
+    }
+    return heights;
+  };
+  /**
+   * A row's height now, from this side's own state.
+   *
+   * Not asked of the window, for the reason `columnLeft` is not: a
+   * cell is built while the window is still being constructed.
+   */
+  const heightNow = (row: number): number => (hidden.value.has(row) ? 0 : (sized.value.get(row) ?? ROW_HEIGHT));
+  /** Where a frozen row starts, past the header; there are a handful of those. */
+  const rowTop = (row: number): number => {
+    let top = 0;
+    for (let at = 0; at < row; at++) {
+      top += heightNow(at);
+    }
+    return top;
+  };
 
   /**
    * One height per row that anyone is looking at.
@@ -471,19 +501,33 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const heightOf = (row: number): Observable<number> => {
     let height = rowHeights.get(row);
     if (height === undefined) {
-      height = new BehaviorSubject(hidden.value.has(row) ? 0 : ROW_HEIGHT);
+      height = new BehaviorSubject(heightNow(row));
       rowHeights.set(row, height);
     }
     return height;
   };
-  ctx.effect(hidden, rows => {
+  const refreshHeights = (): void => {
+    const moved = new Set<number>();
     for (const [row, height] of rowHeights) {
-      const next = rows.has(row) ? 0 : ROW_HEIGHT;
+      const next = heightNow(row);
       if (next !== height.value) {
         height.next(next);
+        moved.add(row);
       }
     }
-  });
+    if (moved.size === 0) {
+      return;
+    }
+    // A bottom border is drawn at the foot of the cell, so a row that
+    // changed height redraws the borders in it, as a column does.
+    for (const mounted of cells.values()) {
+      if (moved.has(mounted.row)) {
+        refreshShapes(mounted);
+      }
+    }
+  };
+  ctx.effect(hidden, refreshHeights);
+  ctx.effect(sized, refreshHeights);
 
   /**
    * One width per column, rather than one array every cell reads.
@@ -542,7 +586,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * is and as CSS draws one, so a border never encroaches on the
    * neighbour and two adjacent cells can each have their own.
    */
-  const bordersOf = (paint: CellPaint, width: number, flagged: boolean): readonly DecorationShape[] => {
+  const bordersOf = (paint: CellPaint, width: number, height: number, flagged: boolean): readonly DecorationShape[] => {
     const edges = paint.borders;
     if (
       !flagged &&
@@ -581,9 +625,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       }
     };
     edge(edges.top, { x: 0, y: 0, width, height: edges.top.width });
-    edge(edges.bottom, { x: 0, y: ROW_HEIGHT - edges.bottom.width, width, height: edges.bottom.width });
-    edge(edges.left, { x: 0, y: 0, width: edges.left.width, height: ROW_HEIGHT });
-    edge(edges.right, { x: width - edges.right.width, y: 0, width: edges.right.width, height: ROW_HEIGHT });
+    edge(edges.bottom, { x: 0, y: height - edges.bottom.width, width, height: edges.bottom.width });
+    edge(edges.left, { x: 0, y: 0, width: edges.left.width, height });
+    edge(edges.right, { x: width - edges.right.width, y: 0, width: edges.right.width, height });
     return shapes;
   };
 
@@ -666,13 +710,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const box = (x: number, y: number, w: number, h: number): void => {
       into.push({ kind: 'fill', x, y, width: w, height: h, radius: 0, color, after: 'children' });
     };
-    box(left, 0, OUTLINE, ROW_HEIGHT);
-    box(right - OUTLINE, 0, OUTLINE, ROW_HEIGHT);
+    const height = heightNow(row);
+    box(left, 0, OUTLINE, height);
+    box(right - OUTLINE, 0, OUTLINE, height);
     if (row === firstRow) {
       box(left, 0, width, OUTLINE);
     }
     if (row === lastRow) {
-      box(left, ROW_HEIGHT - OUTLINE, width, OUTLINE);
+      box(left, height - OUTLINE, width, OUTLINE);
     }
   };
 
@@ -814,16 +859,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize))),
       /**
-       * Wired, and not yet visible.
-       *
-       * `LazySheet` takes one `rowHeight` for every row — a number
-       * and not an array, where `columnWidth` is already either — so
-       * a wrapped cell has nowhere to put its second line and shows
-       * the first, which is what clipping shows too. The property is
-       * correct here so that the day row heights vary, this does not
-       * have to be found and fixed; the control that set it is out of
-       * the toolbar until then, on the rule that a control which
-       * silently does nothing is worse than one that is missing.
+       * Wrapped text breaks at the cell's width, and the row is made
+       * tall enough to hold it — see the `rowFit` effect below.
        */
       textWrap: paint.pipe(map(how => (how.wrap ? 'word' : 'none'))),
       fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
@@ -1092,6 +1129,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       bordersOf(
         paint.value,
         columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH,
+        heightNow(row),
         isFlagged(row, column)
       )
     );
@@ -1242,29 +1280,83 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   let caretPlaced = false;
 
   /** The frozen strip at the start of a row: the row's number. */
+  /**
+   * A row's number, with the grip along its foot that resizes it.
+   *
+   * The same grip a column's label has, turned on its side: a child of
+   * the label, eight pixels across a one-pixel rule, and a Pan rather
+   * than a Drag. A row dragged to a height keeps it, whatever the row
+   * holds, until "Fit rows to contents" gives it back.
+   */
   const rowHeader = (row: number): UiElement =>
-    Text({
-      key: 'gutter',
-      text: String(row + 1),
-      width: GUTTER_WIDTH,
-      height: heightOf(row),
-      flexShrink: 0,
-      // Held at the left edge while the sheet scrolls sideways. Its
-      // vertical travel is its row's, which it gets for free by being
-      // inside it.
-      position: 'sticky',
-      left: 0,
-      zIndex: 1,
-      backgroundColor: 'surface',
-      borderColor: GRID_LINE,
-      borderWidth: 1,
-      color: 'textMuted',
-      fontSize: 11,
-      textAlign: 'center',
-      verticalAlign: 'middle',
-      selectable: false,
-      role: 'rowheader'
-    });
+    Box(
+      {
+        key: 'gutter',
+        width: GUTTER_WIDTH,
+        height: heightOf(row),
+        flexShrink: 0,
+        x: 'center',
+        y: 'center',
+        // Held at the left edge while the sheet scrolls sideways. Its
+        // vertical travel is its row's, which it gets for free by being
+        // inside it. Sticky positions it, so the grip is placed
+        // against it rather than against the layout root.
+        position: 'sticky',
+        left: 0,
+        zIndex: 1,
+        backgroundColor: 'surface',
+        borderColor: GRID_LINE,
+        borderWidth: 1,
+        role: 'rowheader',
+        label: String(row + 1)
+      },
+      Text({
+        text: String(row + 1),
+        color: 'textMuted',
+        fontSize: 11,
+        textAlign: 'center',
+        verticalAlign: 'middle',
+        selectable: false
+      }),
+      Box({
+        key: 'grip',
+        width: GUTTER_WIDTH,
+        height: 8,
+        position: 'absolute',
+        left: 0,
+        bottom: -4,
+        zIndex: 4,
+        cursor: 'row-resize',
+        onPanStart: event => {
+          heightDrag = { row, height: heightNow(row), from: event.y };
+          // The grid sweeps a selection on a pan, and the gutter is
+          // over a row of cells as far as the offsets are concerned: a
+          // drag here would resize the row and select it as well.
+          event.stopPropagation();
+        },
+        onPanMove: event => {
+          if (heightDrag !== null) {
+            event.stopPropagation();
+            const next = new Map(sized.value);
+            next.set(
+              heightDrag.row,
+              Math.min(Math.max(Math.round(heightDrag.height + (event.y - heightDrag.from)), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT)
+            );
+            sized.value = next;
+          }
+        },
+        onPanEnd: event => {
+          if (heightDrag !== null) {
+            event.stopPropagation();
+            // Written down when the drag ends, as a column's width is.
+            sheet.send.setRowHeight(heightDrag.row, sized.value.get(heightDrag.row) ?? ROW_HEIGHT);
+          }
+          heightDrag = null;
+        }
+      })
+    );
+
+  let heightDrag: { row: number; height: number; from: number } | null = null;
 
   /**
    * Every key, whether it arrived at the grid or at the open cell.
@@ -1445,7 +1537,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * ancestor, and without one it would walk up to the layout root and
    * be drawn in the corner of the screen.
    */
-  const fillHandle = (column: number): UiElement =>
+  const fillHandle = (row: number, column: number): UiElement =>
     Box({
       key: 'fill',
       width: 8,
@@ -1456,7 +1548,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // selected cell a different element type would cost it its place
       // in the cache and its role in the semantics tree.
       left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + sheetWindow.widthOf(column) - 5,
-      top: ROW_HEIGHT - 5,
+      top: heightNow(row) - 5,
       zIndex: 3,
       backgroundColor: 'primary',
       borderColor: 'background',
@@ -1556,7 +1648,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * already fixing, and an explanation under the caret would cover
    * the sheet they are reading to decide what to type.
    */
-  const explainPopup = (column: number): UiElement => {
+  const explainPopup = (row: number, column: number): UiElement => {
     const current = explain.value;
     const blamed = current?.blame == null ? '' : ` Made in ${current.blame}.`;
     return Box(
@@ -1564,7 +1656,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         key: 'explain',
         position: 'absolute',
         left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
-        top: ROW_HEIGHT,
+        top: heightNow(row),
         zIndex: 4,
         maxWidth: 320,
         backgroundColor: 'surface',
@@ -1589,7 +1681,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     );
   };
 
-  const hintPopup = (column: number): UiElement => {
+  const hintPopup = (row: number, column: number): UiElement => {
     const current = hint.value;
     const caret = editing.caretRectOf(editorNode);
     const left = GUTTER_WIDTH + sheetWindow.offsetOf(column) + (caret?.x ?? 0);
@@ -1597,7 +1689,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       key: 'hint',
       position: 'absolute' as const,
       left,
-      top: ROW_HEIGHT,
+      top: heightNow(row),
       zIndex: 4,
       backgroundColor: 'surface',
       borderColor: 'border',
@@ -1671,7 +1763,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * row that holds the open cell, so it travels with a scroll and
    * needs nothing kept in step.
    */
-  const choicePopup = (column: number): UiElement => {
+  const choicePopup = (row: number, column: number): UiElement => {
     const shown = choices.value.slice(0, 8);
     const picked = Math.min(choice.value, shown.length - 1);
     return Box(
@@ -1679,7 +1771,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         key: 'choices',
         position: 'absolute',
         left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
-        top: ROW_HEIGHT,
+        top: heightNow(row),
         zIndex: 4,
         backgroundColor: 'surface',
         borderColor: 'border',
@@ -1829,18 +1921,18 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
     const corner = cornerAt !== null && cornerAt.row === row;
     if (corner && cornerAt !== null) {
-      line.push(fillHandle(cornerAt.column));
+      line.push(fillHandle(row, cornerAt.column));
     }
     // The hint hangs off the row holding the open cell, as the fill
     // handle hangs off the row holding the corner: a child of the row
     // travels with it through a scroll and needs nothing kept in step.
     const hinting = openAt !== null && openAt.row === row && hint.value !== null;
     if (hinting && openAt !== null) {
-      line.push(hintPopup(openAt.column));
+      line.push(hintPopup(row, openAt.column));
     }
     const choosing = openAt !== null && openAt.row === row && choices.value.length > 0;
     if (choosing && openAt !== null) {
-      line.push(choicePopup(openAt.column));
+      line.push(choicePopup(row, openAt.column));
     }
     // And the error's explanation, which belongs to the selected cell
     // rather than to an open one: a cell being typed into is a cell
@@ -1848,7 +1940,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const explaining =
       openAt === null && explain.value !== null && latestSelection !== null && latestSelection.row === row;
     if (explaining && latestSelection !== null) {
-      line.push(explainPopup(latestSelection.column));
+      line.push(explainPopup(row, latestSelection.column));
     }
     /**
      * The row clips its own cells, which is what makes a hidden row
@@ -1904,7 +1996,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // empty array the rest of the time.
         modifiers: outlineFor(row).modifiers,
         position: stuck ? 'sticky' : corner || spans || hinting || explaining ? 'relative' : undefined,
-        top: stuck ? HEADER_HEIGHT + row * ROW_HEIGHT : undefined,
+        top: stuck ? HEADER_HEIGHT + rowTop(row) : undefined,
         zIndex: stuck || spans || hinting || explaining ? 1 : undefined,
         backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
@@ -2064,7 +2156,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       rowCount: sheet.view.geometry.pipe(map(g => g.rowCount)),
       columnCount: sheet.view.geometry.pipe(map(g => g.columnCount)),
       rowHeight: ROW_HEIGHT,
-      rowHeights: heightsOf(hidden.value),
+      rowHeights: heightsOf(hidden.value, sized.value),
       columnWidth: widths.value,
       frozenRows: frozen.value.rows,
       frozenColumns: frozen.value.columns,
@@ -2209,7 +2301,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
 
   // And the same for the rows, which the window needs before it can
   // place anything below a hidden one.
-  ctx.effect(hidden, rows => sheetWindow.setRowHeights(heightsOf(rows)));
+  ctx.effect(hidden, rows => sheetWindow.setRowHeights(heightsOf(rows, sized.value)));
+  ctx.effect(sized, sizes => sheetWindow.setRowHeights(heightsOf(hidden.value, sizes)));
 
   /**
    * A pane that moved, reaching the window and the cells.
@@ -2244,6 +2337,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     const rows = geometry.hiddenRows;
     if (rows.length !== hidden.value.size || rows.some(row => !hidden.value.has(row))) {
       hidden.value = new Set(rows);
+    }
+    const heights = geometry.rowHeights;
+    if (
+      heightDrag === null &&
+      (heights.length !== sized.value.size || heights.some(([row, height]) => sized.value.get(row) !== height))
+    ) {
+      sized.value = new Map(heights);
     }
     if (geometry.frozenRows !== frozen.value.rows || geometry.frozenColumns !== frozen.value.columns) {
       frozen.value = { rows: geometry.frozenRows, columns: geometry.frozenColumns };
@@ -2329,6 +2429,62 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     for (const entry of autofit.columns) {
       sheet.send.setColumnWidth(entry.column, next[entry.column] ?? COLUMN_WIDTH);
     }
+  });
+
+  /**
+   * Row fitting: the other half of the question autofit asks.
+   *
+   * The application worker sent the cells that could make a row
+   * taller than one line; this thread measures them through the same
+   * measurer the cells are laid out with — wrapped at the column's
+   * width less its padding — and sends the heights back. A row whose
+   * tallest cell fits in one line comes back at the default, which is
+   * how a row whose wrapped text was emptied goes back down.
+   *
+   * Asked before the first frame there is no measurer yet, so the
+   * question is held and tried again shortly rather than answered
+   * with zeros.
+   */
+  let rowFitAnswered = 0;
+  let rowFitRetry: ReturnType<typeof setTimeout> | null = null;
+  const answerRowFit = (fit: SheetRowFit): void => {
+    if (fit.serial <= rowFitAnswered) {
+      return;
+    }
+    if (!measure.ready) {
+      if (rowFitRetry === null) {
+        rowFitRetry = setTimeout(() => {
+          rowFitRetry = null;
+          answerRowFit(latestRowFit);
+        }, 50);
+      }
+      return;
+    }
+    rowFitAnswered = fit.serial;
+    // The default row is one line of the default font and the room
+    // round it; a taller one keeps the same room.
+    const line = measure.measure({ text: 'X', fontSize: CELL_FONT_SIZE, wrap: 'none' }).height;
+    const room = Math.max(0, ROW_HEIGHT - line);
+    const heights: [number, number][] = fit.rows.map(entry => {
+      let tallest = 0;
+      for (const cell of entry.cells) {
+        const fontSize = cell.fontSize === 0 ? CELL_FONT_SIZE : cell.fontSize;
+        const size = measure.measure({
+          text: cell.text,
+          fontSize,
+          fontWeight: cell.bold ? 'bold' : 'normal',
+          ...(cell.wrap ? { wrap: 'word' as const, maxWidth: Math.max(1, cell.width - CELL_PADDING * 2) } : { wrap: 'none' as const })
+        });
+        tallest = Math.max(tallest, size.height);
+      }
+      return [entry.row, tallest === 0 ? ROW_HEIGHT : Math.max(ROW_HEIGHT, Math.ceil(tallest + room))];
+    });
+    sheet.send.fitRows(fit.serial, heights);
+  };
+  let latestRowFit: SheetRowFit = { serial: 0, rows: [] };
+  ctx.effect(sheet.view.rowFit, fit => {
+    latestRowFit = fit;
+    answerRowFit(fit);
   });
 
   // A copy asked for on this thread is answered on the other and comes
@@ -2448,12 +2604,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (view.width === 0 || view.height === 0) {
       return;
     }
-    const top = HEADER_HEIGHT + at.row * ROW_HEIGHT;
+    const top = HEADER_HEIGHT + sheetWindow.rowOffsetOf(at.row);
     const left = GUTTER_WIDTH + sheetWindow.offsetOf(at.column);
     const width = sheetWindow.widthOf(at.column);
     // The frozen strips cover the near edges, so a cell is only really
     // visible once it is past them.
-    scrollY.value = bring(scrollY.value, top, ROW_HEIGHT, view.height, HEADER_HEIGHT);
+    scrollY.value = bring(scrollY.value, top, sheetWindow.rowHeightOf(at.row), view.height, HEADER_HEIGHT);
     scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
   });
 

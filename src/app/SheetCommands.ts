@@ -88,6 +88,7 @@ export type CommandId =
   | 'hideRows'
   | 'showRows'
   | 'autofitColumns'
+  | 'fitRows'
   | 'filterToSelection'
   | 'clearFilter'
   | 'freezeHere'
@@ -402,6 +403,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   freezeFirstColumn: { id: 'freezeFirstColumn', label: 'Freeze the first column' },
   unfreeze: { id: 'unfreeze', label: 'Unfreeze' },
   autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
+  fitRows: { id: 'fitRows', label: 'Fit rows to contents' },
   filterToSelection: {
     id: 'filterToSelection',
     label: 'Keep only rows like this one',
@@ -422,17 +424,12 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   alignCenter: { id: 'alignCenter', label: 'Align centre', accelerator: { key: 'e', ctrl: true, shift: true } },
   alignRight: { id: 'alignRight', label: 'Align right', accelerator: { key: 'r', ctrl: true, shift: true } },
   /**
-   * Set by nothing, for now.
-   *
-   * The format travels and the file keeps it, and `Grid` binds it —
-   * but `LazySheet` takes one row height for every row, so a wrapped
-   * cell has nowhere to put its second line. It is `hidden` rather
-   * than deleted because the model is right and only the engine is
-   * missing: when row heights vary, it goes back in the menu and
-   * nothing else has to change. A control that silently does nothing
-   * is worse than one that is not there.
+   * Hidden until rows could be of different heights, since a wrapped
+   * cell in a row one line tall shows its first line and nothing else
+   * — a control that silently did nothing. Rows fit what they hold
+   * now, and it is back.
    */
-  wrap: { id: 'wrap', label: 'Wrap text', accelerator: { key: 'w', ctrl: true, shift: true }, hidden: true },
+  wrap: { id: 'wrap', label: 'Wrap text', accelerator: { key: 'w', ctrl: true, shift: true } },
   /**
    * The number formats take Ctrl+Shift+1 through 7, which is what
    * every spreadsheet binds them to and the one part of this table
@@ -582,6 +579,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'alignLeft',
       'alignCenter',
       'alignRight',
+      'wrap',
       SEPARATOR,
       'formatGeneral',
       'formatNumber',
@@ -659,6 +657,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'clearRules',
       SEPARATOR,
       'autofitColumns',
+      'fitRows',
       SEPARATOR,
       'hideRows',
       'showRows',

@@ -70,6 +70,15 @@ export interface XlsxSheet {
   /** Pixel widths of the columns the file gives a width, by index. */
   readonly columnWidths: ReadonlyMap<number, number>;
   readonly hiddenRows: readonly number[];
+  /**
+   * Rows somebody set a height for, by index, as a share of the file's
+   * default row height — 2 is a row twice as tall. A share rather than
+   * points because a sheet's rows are not measured in points, and a
+   * row the default height in Excel is the default height here.
+   * Heights Excel fitted to the contents are left out: this sheet fits
+   * its own rows.
+   */
+  readonly rowHeights: ReadonlyMap<number, number>;
   readonly merges: readonly MergeRect[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
@@ -643,6 +652,8 @@ function worksheet(
   const styled: { row: number; column: number; style: number }[] = [];
   const hiddenRows: number[] = [];
   const columnWidths = new Map<number, number>();
+  const rowHeights = new Map<number, number>();
+  const defaultHeight = Number(child(root, 'sheetFormatPr')?.attributes.defaultRowHeight ?? 15) || 15;
   /** A shared formula's first cell, by its `si`: the formula and where it stood. */
   const shared = new Map<string, { input: string; row: number; column: number }>();
   let valuesKept = 0;
@@ -675,6 +686,11 @@ function worksheet(
     }
     if (rowElement.attributes.hidden === '1' || rowElement.attributes.hidden === 'true') {
       hiddenRows.push(row);
+    }
+    const custom = rowElement.attributes.customHeight === '1' || rowElement.attributes.customHeight === 'true';
+    const height = Number(rowElement.attributes.ht);
+    if (custom && Number.isFinite(height) && height > 0) {
+      rowHeights.set(row, height / defaultHeight);
     }
     let nextColumn = 0;
     for (const cell of children(rowElement, 'c')) {
@@ -734,7 +750,7 @@ function worksheet(
   }
 
   return {
-    sheet: { name, cells, styled, formats, columnWidths, hiddenRows, merges, frozenRows, frozenColumns },
+    sheet: { name, cells, styled, formats, columnWidths, hiddenRows, rowHeights, merges, frozenRows, frozenColumns },
     valuesKept,
     cutRows,
     cutColumns

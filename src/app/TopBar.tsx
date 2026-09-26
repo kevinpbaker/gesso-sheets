@@ -130,6 +130,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     },
     { id: 'alignCenter', icon: ICONS.alignCenter, ...runs('alignCenter'), pressed: on(p => p.align === 'center') },
     { id: 'alignRight', icon: ICONS.alignRight, ...runs('alignRight'), pressed: on(p => p.align === 'end') },
+    { id: 'wrap', text: 'Wrap', ...runs('wrap'), pressed: on(p => p.wrap) },
     { id: 'currency', icon: ICONS.currency, ...runs('formatCurrency'), startsGroup: true },
     { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
     { id: 'fewerDecimals', text: '.0\u2190', ...runs('fewerDecimals') },
@@ -638,6 +639,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'autofitColumns':
         sheet.send.measureColumns(columns().first, columns().last);
+        break;
+      case 'fitRows':
+        sheet.send.fitRowsToContents(rows().first, rows().last);
         break;
       case 'filterToSelection':
         sheet.send.filterToSelection();

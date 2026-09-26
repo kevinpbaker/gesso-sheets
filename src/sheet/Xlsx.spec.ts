@@ -235,6 +235,14 @@ describe('the shapes Excel writes', () => {
     expect(() => readXlsx(() => null, LIMITS)).toThrow('there is no xl/workbook.xml in it');
   });
 
+  it('keeps a row height set by hand, as a share of the default, and not one Excel fitted', () => {
+    const read = book(`<sheetFormatPr defaultRowHeight="15"/><sheetData>
+      <row r="1" ht="30" customHeight="1"><c r="A1"><v>1</v></c></row>
+      <row r="2" ht="45"><c r="A2"><v>2</v></c></row>
+    </sheetData>`);
+    expect([...read.sheets[0].rowHeights]).toEqual([[0, 2]]);
+  });
+
   it('says a password-protected file is one, rather than not a workbook', async () => {
     const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');

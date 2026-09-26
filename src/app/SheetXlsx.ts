@@ -1,7 +1,7 @@
 import { DEFAULT_FORMAT, keyOf, type CellFormat } from '../sheet/Format';
 import type { XlsxBook, XlsxSheet } from '../sheet/Xlsx';
 import type { Inflate } from '../sheet/Zip';
-import { COLUMN_WIDTH } from './dimensions';
+import { COLUMN_WIDTH, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, ROW_HEIGHT } from './dimensions';
 import type { SheetSnapshot, StoredFormat, StoredSheet } from './SheetFile';
 
 /**
@@ -93,6 +93,10 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
     frozenRows: sheet.frozenRows,
     frozenColumns: sheet.frozenColumns,
     hiddenRows: [...sheet.hiddenRows],
+    rowHeights: [...sheet.rowHeights].map(([row, share]) => [
+      row,
+      Math.min(Math.max(Math.round(share * ROW_HEIGHT), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT)
+    ]),
     columnWidths
   };
 }

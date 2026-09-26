@@ -16,7 +16,7 @@ import {
   type CellPaint,
   type NumberFormat
 } from '../sheet/Format';
-import { COLUMN_WIDTH } from './dimensions';
+import { COLUMN_WIDTH, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT } from './dimensions';
 import type { SheetDocument } from './SheetDocument';
 
 /**
@@ -122,6 +122,16 @@ export interface StoredSheet {
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
   /**
+   * Row heights that are not the default, as `[row, height]`: the ones
+   * set by hand, and the ones fitted to wrapped text or a large font.
+   *
+   * Absent in a file written before rows had heights, which reads as
+   * every row the default — so no version bump, on the rule the charts
+   * were added under.
+   */
+  readonly rowHeights?: readonly (readonly [number, number])[];
+  readonly fittedRows?: readonly (readonly [number, number])[];
+  /**
    * Column widths, in order from A.
    *
    * On the document rather than on the screen, which is a change from
@@ -198,6 +208,8 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
+      rowHeights: heightsBelow(page.rowHeights, rowCount),
+      fittedRows: heightsBelow(page.fittedRows, rowCount),
       columnWidths: [...page.columnWidths]
     });
   }
@@ -258,6 +270,14 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     page.hiddenRows.clear();
     for (const row of stored.hiddenRows) {
       page.hiddenRows.add(row);
+    }
+    page.rowHeights.clear();
+    for (const [row, height] of stored.rowHeights ?? []) {
+      page.rowHeights.set(row, height);
+    }
+    page.fittedRows.clear();
+    for (const [row, height] of stored.fittedRows ?? []) {
+      page.fittedRows.set(row, height);
     }
     page.columnWidths = [...stored.columnWidths];
     page.formats.restore(stored.palette, stored.formats, {
@@ -406,8 +426,33 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     hiddenRows: Array.isArray(source.hiddenRows)
       ? source.hiddenRows.filter((row): row is number => Number.isInteger(row) && row >= 0)
       : [],
+    rowHeights: rowHeightsFrom(source.rowHeights),
+    fittedRows: rowHeightsFrom(source.fittedRows),
     columnWidths: widthsFrom(source.columnWidths, columnCount)
   };
+}
+
+/** A sheet's non-default row heights, in order, for a file. */
+function heightsBelow(heights: ReadonlyMap<number, number>, rowCount: number): [number, number][] {
+  return [...heights].filter(([row]) => row < rowCount).sort((a, b) => a[0] - b[0]);
+}
+
+/** Row heights from a file: whole rows, and heights a row can have. */
+function rowHeightsFrom(source: unknown): [number, number][] {
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  const heights: [number, number][] = [];
+  for (const entry of source as unknown[]) {
+    if (!Array.isArray(entry) || entry.length !== 2) {
+      continue;
+    }
+    const [row, height] = entry as unknown[];
+    if (Number.isInteger(row) && (row as number) >= 0 && typeof height === 'number' && Number.isFinite(height)) {
+      heights.push([row as number, Math.min(Math.max(Math.round(height), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT)]);
+    }
+  }
+  return heights;
 }
 
 /**

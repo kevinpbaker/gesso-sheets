@@ -91,6 +91,13 @@ export interface SheetGeometry {
    */
   readonly hiddenRows: readonly number[];
   /**
+   * The rows that are not the default height, as `[row, height]`, in
+   * order: set by hand, or fitted to what they hold. Sparse for the
+   * reason the hidden rows are. A hidden row is still hidden whatever
+   * height it has here, and shows at that height again when shown.
+   */
+  readonly rowHeights: readonly (readonly [number, number])[];
+  /**
    * How many rows and columns stay put while the rest scrolls.
    *
    * The document's, not the screen's, for the reason the column
@@ -375,6 +382,40 @@ export interface SheetAutofitColumn {
   readonly bold: readonly boolean[];
 }
 
+/**
+ * The rows whose height depends on what they hold, and what that is.
+ *
+ * The same split as autofit, in the other direction: this side knows
+ * which cells wrap and how wide their columns are, and only the render
+ * worker can say how many lines a string takes at a width. A row is
+ * sent with the cells that could make it taller than one line — the
+ * wrapped ones and the ones in a large font — and a row sent with none
+ * is one that should go back to the default.
+ *
+ * `serial` for the reason `SheetAutofit` has one; the answer comes
+ * back as `fitRows` with it, so an answer to a question since replaced
+ * can be told apart and dropped.
+ */
+export interface SheetRowFit {
+  readonly serial: number;
+  readonly rows: readonly SheetRowFitRow[];
+}
+
+export interface SheetRowFitRow {
+  readonly row: number;
+  readonly cells: readonly SheetRowFitCell[];
+}
+
+export interface SheetRowFitCell {
+  readonly text: string;
+  /** The column's width, which is what wrapped text breaks at. */
+  readonly width: number;
+  /** In pixels; zero for the default. */
+  readonly fontSize: number;
+  readonly bold: boolean;
+  readonly wrap: boolean;
+}
+
 export interface SheetStatus {
   /** Cells whose value is still out of date. Zero when settled. */
   readonly pending: number;
@@ -599,6 +640,24 @@ export interface SheetCommands {
    * the application worker needs is the number to write down.
    */
   setColumnWidth(column: number, width: number): void;
+  /**
+   * A row was dragged to a new height, which it keeps whatever it
+   * holds. Sent when the drag ends, as a column's width is. A height
+   * of zero or less means "fit it to what it holds" again.
+   */
+  setRowHeight(row: number, height: number): void;
+  /**
+   * Forgets the heights set by hand in these rows, so they fit what
+   * they hold again — the way back from a drag.
+   */
+  fitRowsToContents(first: number, last: number): void;
+  /**
+   * The heights the rows in a `rowFit` request need, measured.
+   *
+   * Only rows nobody has set a height for take one; a row set by hand
+   * has been told what it is.
+   */
+  fitRows(serial: number, heights: readonly (readonly [number, number])[]): void;
   /**
    * Builds a chain of dependent cells and then disturbs its head.
    *
@@ -866,6 +925,8 @@ export interface SheetView {
   /** The rules over the active cell; see `SheetActiveRules`. */
   readonly activeRules: SheetActiveRules;
   readonly autofit: SheetAutofit;
+  /** The rows whose height the render worker should work out; see `SheetRowFit`. */
+  readonly rowFit: SheetRowFit;
   /** The charts floating over this sheet; see `SheetCharts`. */
   readonly charts: SheetCharts;
   /** What those charts draw; see `SheetSeriesView` for why it is apart. */
@@ -936,6 +997,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     columnWidth: 104,
     columnWidths: [],
     hiddenRows: [],
+    rowHeights: [],
     frozenRows: 0,
     frozenColumns: 0,
     merges: []
@@ -955,6 +1017,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
   activeRules: { conditional: null, validation: null },
   autofit: { serial: 0, columns: [] },
+  rowFit: { serial: 0, rows: [] },
   charts: { entries: [], selected: 0 },
   series: { charts: {} }
 });

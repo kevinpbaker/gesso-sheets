@@ -135,6 +135,16 @@ interface StructureEdit extends OnASheet {
   readonly rewritten: readonly { readonly row: number; readonly column: number; readonly input: string }[];
   /** Column widths as they were, so undo puts them back. */
   readonly widths: readonly number[];
+  /** And the rows' heights and which rows were hidden, for the same reason. */
+  readonly rows: RowsHeld;
+}
+
+/** What a row shift moves besides the cells, held so undo can put it back. */
+interface RowsHeld {
+  readonly heights: readonly (readonly [number, number])[];
+  readonly fitted: readonly (readonly [number, number])[];
+  readonly hidden: readonly number[];
+  readonly filtered: readonly number[];
 }
 
 /**
@@ -218,6 +228,22 @@ interface Page {
    */
   readonly hiddenRows: Set<number>;
   /**
+   * Rows somebody made taller or shorter by hand, by index.
+   *
+   * Sparse for the reason the hidden rows are. A height set by hand is
+   * kept whatever the row holds, which is Excel's rule: a row dragged
+   * to a height has been told what it is.
+   */
+  readonly rowHeights: Map<number, number>;
+  /**
+   * Rows made taller to fit what they hold: wrapped text, a large
+   * font. Worked out by the render worker, which is the only thread
+   * that can measure, and kept here so the sheet opens at the heights
+   * it had rather than growing a frame after it appears. Only rows
+   * that are not the default are in it, and a height set by hand wins.
+   */
+  readonly fittedRows: Map<number, number>;
+  /**
    * Rows a filter is hiding, kept apart from the ones somebody hid.
    *
    * Two sets rather than one because they are undone by different
@@ -257,6 +283,8 @@ function newPage(sheet: Sheet): Page {
     merges: new Merges(),
     columnWidths: [],
     hiddenRows: new Set<number>(),
+    rowHeights: new Map<number, number>(),
+    fittedRows: new Map<number, number>(),
     filteredRows: new Set<number>(),
     frozenRows: 0,
     frozenColumns: 0,
@@ -336,6 +364,14 @@ export class SheetDocument {
 
   get filteredRows(): Set<number> {
     return this.page.filteredRows;
+  }
+
+  get rowHeights(): Map<number, number> {
+    return this.page.rowHeights;
+  }
+
+  get fittedRows(): Map<number, number> {
+    return this.page.fittedRows;
   }
 
   get columnWidths(): number[] {
@@ -687,6 +723,7 @@ export class SheetDocument {
         this.sheet.shift(edit.shift);
         this.formats.shift(edit.shift);
         this.columnWidths = shiftWidths(edit.widths, edit.shift);
+        this.restoreRows(edit.rows, edit.shift);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.after);
       } else if (edit.kind === 'rules') {
@@ -715,11 +752,37 @@ export class SheetDocument {
     this.sheet.shift({ ...edit.shift, by: -edit.shift.by });
     this.formats.shift({ ...edit.shift, by: -edit.shift.by });
     this.columnWidths = [...edit.widths];
+    this.restoreRows(edit.rows, null);
     for (const cell of edit.removed) {
       this.writeCell(cell.row, cell.column, cell.input);
     }
     for (const cell of edit.rewritten) {
       this.writeCell(cell.row, cell.column, cell.input);
+    }
+  }
+
+  /**
+   * The rows' heights and hidden sets as a structural step held them,
+   * moved by `shift` for a redo or as they were for an undo.
+   */
+  private restoreRows(held: RowsHeld, shift: Shift | null): void {
+    const move = shift === null || shift.axis !== 'row' ? null : shift;
+    const heights = move === null ? held.heights : shiftHeights(held.heights, move);
+    const fitted = move === null ? held.fitted : shiftHeights(held.fitted, move);
+    this.rowHeights.clear();
+    for (const [row, height] of heights) {
+      this.rowHeights.set(row, height);
+    }
+    this.fittedRows.clear();
+    for (const [row, height] of fitted) {
+      this.fittedRows.set(row, height);
+    }
+    if (move === null) {
+      replaceRows(this.hiddenRows, held.hidden);
+      replaceRows(this.filteredRows, held.filtered);
+    } else {
+      shiftRows(this.hiddenRows, held.hidden, move);
+      shiftRows(this.filteredRows, held.filtered, move);
     }
   }
 
@@ -1019,6 +1082,12 @@ export class SheetDocument {
     const widths = [...this.columnWidths];
     const hidden = [...this.hiddenRows];
     const filtered = [...this.filteredRows];
+    const rows: RowsHeld = {
+      heights: [...this.rowHeights],
+      fitted: [...this.fittedRows],
+      hidden,
+      filtered
+    };
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.merges.shift(shift);
@@ -1027,8 +1096,7 @@ export class SheetDocument {
     // was among — an insert above a hidden row must not reveal it and
     // hide its neighbour instead.
     if (shift.axis === 'row') {
-      shiftRows(this.hiddenRows, hidden, shift);
-      shiftRows(this.filteredRows, filtered, shift);
+      this.restoreRows(rows, shift);
     }
 
     this.record({
@@ -1039,7 +1107,8 @@ export class SheetDocument {
       shift,
       removed,
       rewritten,
-      widths
+      widths,
+      rows
     });
   }
 
@@ -1144,6 +1213,8 @@ export class SheetDocument {
       merges: from.merges.copy(),
       columnWidths: [...from.columnWidths],
       hiddenRows: new Set(from.hiddenRows),
+      rowHeights: new Map(from.rowHeights),
+      fittedRows: new Map(from.fittedRows),
       filteredRows: new Set(from.filteredRows),
       frozenRows: from.frozenRows,
       frozenColumns: from.frozenColumns,
@@ -1277,6 +1348,25 @@ function shiftWidths(widths: readonly number[], shift: Shift): number[] {
  * Hiding is by index, so an insert above a hidden row must not reveal
  * it and hide its neighbour instead.
  */
+function replaceRows(rows: Set<number>, held: readonly number[]): void {
+  rows.clear();
+  for (const row of held) {
+    rows.add(row);
+  }
+}
+
+/** Row heights, by index, moved by a shift; a deleted row's height goes with it. */
+function shiftHeights(heights: readonly (readonly [number, number])[], shift: Shift): [number, number][] {
+  const moved: [number, number][] = [];
+  for (const [row, height] of heights) {
+    const at = shiftIndex(row, shift);
+    if (at !== -1) {
+      moved.push([at, height]);
+    }
+  }
+  return moved;
+}
+
 function shiftRows(rows: Set<number>, held: readonly number[], shift: Shift): void {
   rows.clear();
   for (const row of held) {

@@ -11,6 +11,12 @@ export const COLUMN_WIDTH = 104;
 export const GUTTER_WIDTH = 52;
 /** The frozen strip of column letters across the top. */
 export const HEADER_HEIGHT = 24;
+/**
+ * A row may be dragged short, but not to nothing — nothing is how a
+ * row is hidden — and no taller than Excel lets one be (409 points).
+ */
+export const MIN_ROW_HEIGHT = 8;
+export const MAX_ROW_HEIGHT = 545;
 /** A column may be dragged narrow, but not to nothing. */
 export const MIN_COLUMN_WIDTH = 32;
 /**

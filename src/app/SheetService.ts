@@ -18,7 +18,7 @@ import { aggregateOf } from './Aggregate';
 import { ConditionalPainter } from './ConditionalPaint';
 import type { CellPaint } from '../sheet/Format';
 import { validate } from '../sheet/Validation';
-import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH } from './dimensions';
+import { ROW_HEIGHT, COLUMN_WIDTH, MIN_COLUMN_WIDTH, CELL_FONT_SIZE, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT } from './dimensions';
 import {
   EMPTY_FORMATS,
   EMPTY_WINDOW,
@@ -38,6 +38,8 @@ import {
   type SheetDocumentView,
   type SheetDownload,
   type SheetAutofit,
+  type SheetRowFit,
+  type SheetRowFitRow,
   type SheetEdge,
   type SheetFormatChange,
   type SheetFormatWindow,
@@ -160,6 +162,7 @@ export class SheetService {
   readonly activeFormat: Observable<SheetActiveFormat>;
   readonly activeRules: Observable<SheetActiveRules>;
   readonly autofit: Observable<SheetAutofit>;
+  readonly rowFit: Observable<SheetRowFit>;
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
 
@@ -232,6 +235,12 @@ export class SheetService {
   private readonly activeRulesSubject = new BehaviorSubject<SheetActiveRules>({ conditional: null, validation: null });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
   private autofitSerial = 0;
+  private readonly rowFitSubject = new BehaviorSubject<SheetRowFit>({ serial: 0, rows: [] });
+  /**
+   * The rows the last fit asked about, until it is answered. A newer
+   * question replaces an older one, so it has to ask about both.
+   */
+  private rowFitPending: Set<number> | 'all' | null = null;
   private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0 });
   private readonly seriesSubject = new BehaviorSubject<SheetSeriesView>({ charts: {} });
   /**
@@ -316,6 +325,7 @@ export class SheetService {
       columnWidth: COLUMN_WIDTH,
       columnWidths: document.columnWidths,
       hiddenRows: [],
+      rowHeights: [],
       frozenRows: 0,
       frozenColumns: 0,
       merges: []
@@ -353,6 +363,7 @@ export class SheetService {
     this.activeFormat = this.activeFormatSubject;
     this.activeRules = this.activeRulesSubject;
     this.autofit = this.autofitSubject;
+    this.rowFit = this.rowFitSubject;
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
     this.publishStats();
@@ -649,6 +660,7 @@ export class SheetService {
     this.publishValidation();
     this.publishStats();
     this.publishStatus();
+    this.fitRowsLater('all');
   }
 
   setCell(row: number, column: number, input: string): void {
@@ -676,6 +688,7 @@ export class SheetService {
     this.publishEditor();
     this.publishStatus();
     this.redrawCharts();
+    this.fitRowsLater([row]);
     this.persist();
     this.pump();
   }
@@ -747,6 +760,8 @@ export class SheetService {
     const columnWidths = [...this.document.columnWidths];
     columnWidths[column] = Math.max(MIN_COLUMN_WIDTH, Math.round(width));
     this.document.columnWidths = columnWidths;
+    // Wrapped text breaks at the column's width.
+    this.fitRowsLater('all');
     this.publishGeometry();
     this.persist();
   }
@@ -757,9 +772,141 @@ export class SheetService {
       ...this.geometrySubject.value,
       columnWidths: this.document.columnWidths,
       hiddenRows: [...new Set([...this.document.hiddenRows, ...this.document.filteredRows])].sort((a, b) => a - b),
+      rowHeights: this.rowHeightsNow(),
       frozenRows: this.document.frozenRows,
       frozenColumns: this.document.frozenColumns,
       merges: this.document.merges.all.map(rect => ({ ...rect }))
+    });
+  }
+
+  /** Every row that is not the default height: set by hand first, then fitted. */
+  private rowHeightsNow(): [number, number][] {
+    const heights = new Map(this.document.fittedRows);
+    for (const [row, height] of this.document.rowHeights) {
+      heights.set(row, height);
+    }
+    return [...heights].sort((a, b) => a[0] - b[0]);
+  }
+
+  setRowHeight(row: number, height: number): void {
+    if (row < 0 || row >= this.geometrySubject.value.rowCount) {
+      return;
+    }
+    if (height <= 0) {
+      // Back to fitting what it holds, which only the render worker
+      // can say, so it is asked.
+      this.document.rowHeights.delete(row);
+      this.fitRowsLater([row]);
+    } else {
+      this.document.rowHeights.set(row, Math.min(Math.max(Math.round(height), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT));
+    }
+    this.publishGeometry();
+    this.persist();
+  }
+
+  fitRowsToContents(first: number, last: number): void {
+    const cleared: number[] = [];
+    for (const row of [...this.document.rowHeights.keys()]) {
+      if (row >= first && row <= last) {
+        this.document.rowHeights.delete(row);
+        cleared.push(row);
+      }
+    }
+    if (cleared.length === 0) {
+      return;
+    }
+    this.fitRowsLater(cleared);
+    this.publishGeometry();
+    this.persist();
+  }
+
+  fitRows(serial: number, heights: readonly (readonly [number, number])[]): void {
+    // An answer to a question since replaced — the sheet switched, or
+    // something changed again — would fit rows to what they held then.
+    if (serial !== this.rowFitSubject.value.serial) {
+      return;
+    }
+    this.rowFitPending = null;
+    const fitted = this.document.fittedRows;
+    let changed = false;
+    for (const [row, height] of heights) {
+      const next = Math.min(Math.round(height), MAX_ROW_HEIGHT);
+      if (next <= ROW_HEIGHT) {
+        changed = fitted.delete(row) || changed;
+      } else if (fitted.get(row) !== next) {
+        fitted.set(row, next);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.publishGeometry();
+      this.persist();
+    }
+  }
+
+  /**
+   * Asks the render worker how tall some rows need to be.
+   *
+   * A row is a candidate when a cell in it wraps or is set larger than
+   * the default, and has something in it. `'all'` looks at the whole
+   * sheet, and at every row fitted before, so a row whose last wrapped
+   * cell was emptied is sent with nothing and goes back to the default.
+   * A sheet with no wrapping and no large fonts anywhere in its palette
+   * and no fitted rows — nearly every sheet — costs one look at the
+   * palette.
+   */
+  private fitRowsLater(asked: readonly number[] | 'all'): void {
+    const pending = this.rowFitPending;
+    const rows: readonly number[] | 'all' =
+      asked === 'all' || pending === 'all' ? 'all' : pending === null ? asked : [...pending, ...asked];
+    const palette = this.document.formats.entries;
+    const tall = (format: CellFormat): boolean =>
+      format.paint.wrap || (format.paint.fontSize !== 0 && format.paint.fontSize > CELL_FONT_SIZE);
+    if (!palette.some(tall) && this.document.fittedRows.size === 0) {
+      return;
+    }
+    const wanted = rows === 'all' ? null : new Set(rows);
+    const { rowCount } = this.geometrySubject.value;
+    const found = new Map<number, SheetRowFitRow['cells'][number][]>();
+    if (wanted !== null) {
+      for (const row of wanted) {
+        found.set(row, []);
+      }
+    } else {
+      for (const row of this.document.fittedRows.keys()) {
+        found.set(row, []);
+      }
+    }
+    for (const cell of this.document.sheet.entries()) {
+      if (cell.row >= rowCount || (wanted !== null && !wanted.has(cell.row))) {
+        continue;
+      }
+      const format = this.document.formatAt(cell.row, cell.column);
+      // A merged cell is left to its own size, as Excel leaves it.
+      if (!tall(format) || this.document.merges.at(cell.row, cell.column) !== null) {
+        continue;
+      }
+      const text = this.document.display(cell.row, cell.column);
+      if (text === '') {
+        continue;
+      }
+      const list = found.get(cell.row) ?? [];
+      list.push({
+        text,
+        width: this.document.columnWidths[cell.column] ?? COLUMN_WIDTH,
+        fontSize: format.paint.fontSize,
+        bold: format.paint.bold,
+        wrap: format.paint.wrap
+      });
+      found.set(cell.row, list);
+    }
+    if (found.size === 0) {
+      return;
+    }
+    this.rowFitPending = rows === 'all' ? 'all' : new Set(rows);
+    this.rowFitSubject.next({
+      serial: this.rowFitSubject.value.serial + 1,
+      rows: [...found].sort((a, b) => a[0] - b[0]).map(([row, cells]) => ({ row, cells }))
     });
   }
 
@@ -1116,6 +1263,7 @@ export class SheetService {
     this.publishWindow();
     this.publishStatus();
     this.publishActiveFormat();
+    this.fitRowsLater('all');
     this.persist();
     this.pump();
   }
@@ -2111,6 +2259,7 @@ export class SheetService {
     this.publishStatus();
     this.publishStats();
     this.redrawCharts();
+    this.fitRowsLater('all');
     this.persist();
     this.pump();
   }
@@ -2131,6 +2280,7 @@ export class SheetService {
     this.publishActiveRules();
     this.publishStatus();
     this.publishStats();
+    this.fitRowsLater('all');
     // An undo is an edit as far as the file is concerned. Left out,
     // taking something back and closing the tab would bring it back on
     // the next open, which is the opposite of what undo promises.
@@ -2174,6 +2324,9 @@ export class SheetService {
     this.redrawCharts();
     if (result.done) {
       this.pumping = false;
+      // A formula's new value is new text, and wrapped text may now
+      // take more lines or fewer.
+      this.fitRowsLater('all');
       return;
     }
     this.schedule(() => this.step());
