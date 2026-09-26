@@ -464,6 +464,13 @@ export class SheetService {
   // ---------------------------------------------------------------------
 
   importCsv(fileName: string, text: string): void {
+    if (!/\.(csv|tsv|txt)$/i.test(fileName)) {
+      this.transferSubject.next({
+        ...this.transferSubject.value,
+        report: `${fileName} was not opened: only CSV files can be opened so far.`
+      });
+      return;
+    }
     const { rowCount, columnCount } = this.geometrySubject.value;
     const opened = importCsv(this.document, fileName, text, { rows: rowCount, columns: columnCount });
     if (opened.sheet !== -1) {
@@ -591,6 +598,11 @@ export class SheetService {
   }
 
   setCell(row: number, column: number, input: string): void {
+    // What the last dropped file became is news until somebody starts
+    // working, and then it is clutter.
+    if (this.transferSubject.value.report !== '') {
+      this.transferSubject.next({ ...this.transferSubject.value, report: '' });
+    }
     // A changed cell can move what a colour scale spreads between.
     this.painter.invalidate();
     const refused = this.document.setCell(row, column, input);

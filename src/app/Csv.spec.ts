@@ -89,6 +89,20 @@ describe('opening a CSV', () => {
     expect(transfer(service).report).toBe('Opened 3 rows from a.csv.');
   });
 
+  it('turns down a file it cannot read, and says so', () => {
+    const { document, service } = harness();
+    service.importCsv('photo.png', '\u0089PNG');
+    expect(document.sheetCount).toBe(1);
+    expect(transfer(service).report).toBe('photo.png was not opened: only CSV files can be opened so far.');
+  });
+
+  it('stops saying what it opened once somebody starts working', () => {
+    const { service } = harness();
+    service.importCsv('a.csv', 'a\n');
+    service.setCell(3, 3, 'x');
+    expect(transfer(service).report).toBe('');
+  });
+
   it('cuts a file at the sheet edges, and says by how much', () => {
     const { document, service } = harness();
     const wide = Array.from({ length: 12 }, (_, at) => `c${at}`).join(',');

@@ -1,4 +1,4 @@
-import { percent } from 'gesso-core';
+import { dropTarget, EXTERNAL_FILES, percent, type UiDroppedFile } from 'gesso-core';
 import { type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { Grid } from './Grid';
@@ -40,8 +40,40 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const edit = editing(ctx, sheet);
 
+  /**
+   * A file dragged in from the desktop, opened.
+   *
+   * The whole window is the zone rather than the grid, because a
+   * person dropping a file is aiming at the application and not at a
+   * cell — and the file lands on a sheet of its own either way, so
+   * where it was let go says nothing about where it goes.
+   *
+   * Decoded here, once, as UTF-8, which is what every exporter written
+   * this century produces and what a BOM would announce anyway. What
+   * the text *is* is the application worker's question; see
+   * `SheetService.importCsv`, which also turns down a file it cannot
+   * read and says so.
+   */
+  const drop = dropTarget({
+    accepts: EXTERNAL_FILES,
+    onDrop: payload => {
+      const decoder = new TextDecoder();
+      for (const file of payload.data as readonly UiDroppedFile[]) {
+        sheet.send.importCsv(file.name, file.bytes === undefined ? '' : decoder.decode(file.bytes));
+      }
+      return 'copy';
+    },
+    over: { borderColor: 'focusRing', borderWidth: 2 }
+  });
+
   return (
-    <column width={percent(100)} height={percent(100)} backgroundColor="background">
+    <column
+      width={percent(100)}
+      height={percent(100)}
+      backgroundColor="background"
+      borderColor="transparent"
+      borderWidth={0}
+      modifiers={[drop]}>
       <TopBar editing={edit} proof={inputs.proof.value === true} />
       <Grid editing={edit} />
       <SheetTabs editing={edit} />

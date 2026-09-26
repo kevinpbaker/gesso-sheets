@@ -51,6 +51,9 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
     })
   );
 
+  /** What the last file dropped on the window became, until the next edit. */
+  const report: Observable<string> = sheet.view.transfer.pipe(map(transfer => transfer.report));
+
   return (
     <column width={percent(100)} flexShrink={0}>
       <box width={percent(100)} height={1} backgroundColor="border" />
@@ -67,6 +70,14 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
         label="Sheet status">
         <text text={totals} fontSize={11} color="text" verticalAlign="middle" selectable={false} />
         <box flex={1} minWidth={0} />
+        <text
+          text={report}
+          fontSize={11}
+          color="textMuted"
+          verticalAlign="middle"
+          selectable={false}
+          live="polite"
+        />
         <text text={search} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
         <text
           text={work}
