@@ -56,6 +56,12 @@ export interface SheetSnapshot {
    * — so it reads as the first one, which is where those cells were.
    */
   readonly names: readonly StoredName[];
+  /**
+   * Whether circular formulas are gone round rather than refused; see
+   * `Workbook.iteration`. Absent, as in every file written before it,
+   * means off.
+   */
+  readonly iteration?: { readonly count: number; readonly delta: number };
 }
 
 /**
@@ -229,7 +235,8 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
       lastRow: Math.max(entry.range.start.row, entry.range.end.row),
       lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
-    }))
+    })),
+    ...(document.book.iteration === null ? {} : { iteration: { ...document.book.iteration } })
   };
 }
 
@@ -246,6 +253,7 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   // through. Named first too: a formula reading `Data!A1` can only
   // find `Data` if `Data` exists by the time it is parsed.
   document.restoreSheets(snapshot.sheets.map(stored => stored.name));
+  document.book.iteration = snapshot.iteration ?? null;
   for (const [index, stored] of snapshot.sheets.entries()) {
     document.activate(index);
     document.setSheetColour(index, stored.colour);
@@ -378,8 +386,21 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
     version: 3,
     sheets,
     active: Number.isInteger(active) && (active as number) >= 0 && (active as number) < sheets.length ? (active as number) : 0,
-    names: namesFrom(source.names)
+    names: namesFrom(source.names),
+    ...iterationFrom(source.iteration)
   };
+}
+
+/** Iterative calculation from a file: a sensible count and a positive step, or off. */
+function iterationFrom(source: unknown): { iteration?: { count: number; delta: number } } {
+  if (typeof source !== 'object' || source === null) {
+    return {};
+  }
+  const { count, delta } = source as Record<string, unknown>;
+  if (!Number.isInteger(count) || (count as number) < 1 || typeof delta !== 'number' || !(delta > 0)) {
+    return {};
+  }
+  return { iteration: { count: Math.min(count as number, 32_767), delta } };
 }
 
 /**

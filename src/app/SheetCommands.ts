@@ -89,6 +89,8 @@ export type CommandId =
   | 'showRows'
   | 'autofitColumns'
   | 'fitRows'
+  | 'iterate'
+  | 'stopIterating'
   | 'filterToSelection'
   | 'clearFilter'
   | 'freezeHere'
@@ -404,6 +406,8 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   unfreeze: { id: 'unfreeze', label: 'Unfreeze' },
   autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
   fitRows: { id: 'fitRows', label: 'Fit rows to contents' },
+  iterate: { id: 'iterate', label: 'Work out circular formulas by iteration' },
+  stopIterating: { id: 'stopIterating', label: 'Refuse circular formulas' },
   filterToSelection: {
     id: 'filterToSelection',
     label: 'Keep only rows like this one',
@@ -658,6 +662,9 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'autofitColumns',
       'fitRows',
+      SEPARATOR,
+      'iterate',
+      'stopIterating',
       SEPARATOR,
       'hideRows',
       'showRows',

@@ -267,6 +267,15 @@ describe('the shapes Excel writes', () => {
     ]);
   });
 
+  it('takes iterative calculation from the workbook, and leaves it off otherwise', () => {
+    const on = book('<sheetData/>', {
+      'xl/workbook.xml':
+        '<workbook><calcPr iterate="1" iterateCount="50"/><sheets><sheet name="One" r:id="rId1"/></sheets></workbook>'
+    });
+    expect(on.iteration).toEqual({ count: 50, delta: 0.001 });
+    expect(book('<sheetData/>').iteration).toBeNull();
+  });
+
   it('says a password-protected file is one, rather than not a workbook', async () => {
     const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');

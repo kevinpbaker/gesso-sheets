@@ -804,6 +804,20 @@ export class SheetService {
     this.persist();
   }
 
+  setIteration(on: boolean): void {
+    if (on === (this.document.book.iteration !== null)) {
+      return;
+    }
+    // Excel's defaults, which is also what a file that turns it on
+    // without saying how far means.
+    this.document.book.iteration = on ? { count: 100, delta: 0.001 } : null;
+    // Every circle has to be worked out again, one way or the other;
+    // re-reading every formula is what finds them.
+    this.document.book.namesChanged();
+    this.publishStatus();
+    this.afterEdit();
+  }
+
   fitRowsToContents(first: number, last: number): void {
     const cleared: number[] = [];
     for (const row of [...this.document.rowHeights.keys()]) {
@@ -2634,7 +2648,8 @@ export class SheetService {
       pending: this.document.sheet.pending,
       evaluated: this.document.sheet.stats.evaluated,
       canUndo: this.document.canUndo,
-      canRedo: this.document.canRedo
+      canRedo: this.document.canRedo,
+      iterating: this.document.book.iteration !== null
     };
   }
 }

@@ -91,6 +91,41 @@ describe('what is written down', () => {
   });
 });
 
+describe('iterative calculation in the file', () => {
+  it('is kept when it is on, and a circle comes back worked out', () => {
+    const document = new SheetDocument();
+    document.book.iteration = { count: 100, delta: 0.001 };
+    document.setCell(0, 0, '=A1/2+1');
+    const reopened = new SheetDocument();
+    applySnapshot(reopened, parseSnapshot(JSON.stringify(snapshotOf(document)), 10)!);
+    reopened.sheet.recalculate();
+    expect(reopened.book.iteration).toEqual({ count: 100, delta: 0.001 });
+    expect(reopened.sheet.value(0, 0) as number).toBeCloseTo(2, 2);
+  });
+
+  it('is turned on and off from the Data menu, and the circle follows', () => {
+    const document = new SheetDocument();
+    const service = new SheetService(document, { rowCount: 50, columnCount: 5, schedule: run => run() });
+    service.setCell(0, 0, '=A1/2+1');
+    document.sheet.recalculate();
+    expect(document.sheet.value(0, 0)).toEqual({ kind: 'error', code: '#CIRC!' });
+    service.setIteration(true);
+    document.sheet.recalculate();
+    expect(document.sheet.value(0, 0) as number).toBeCloseTo(2, 2);
+    service.setIteration(false);
+    document.sheet.recalculate();
+    expect(document.sheet.value(0, 0)).toEqual({ kind: 'error', code: '#CIRC!' });
+  });
+
+  it('is off in a file that does not say, or says nonsense', () => {
+    const document = new SheetDocument();
+    const written = JSON.parse(JSON.stringify(snapshotOf(document))) as Record<string, unknown>;
+    expect(written.iteration).toBeUndefined();
+    written.iteration = { count: -3, delta: 'small' };
+    expect(parseSnapshot(JSON.stringify(written), 10)?.iteration).toBeUndefined();
+  });
+});
+
 describe('reading a file that is not what this build writes', () => {
   /**
    * A v2 file is a workbook of one sheet, and is read as one.

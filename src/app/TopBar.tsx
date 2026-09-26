@@ -274,6 +274,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return status.value.canUndo;
       case 'redo':
         return status.value.canRedo;
+      // One of the pair at a time: the one that would change something.
+      case 'iterate':
+        return !status.value.iterating;
+      case 'stopIterating':
+        return status.value.iterating;
       case 'fillDown':
       case 'fillRight':
         // Always offered. Working out whether a fill would change
@@ -642,6 +647,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'fitRows':
         sheet.send.fitRowsToContents(rows().first, rows().last);
+        break;
+      case 'iterate':
+        sheet.send.setIteration(true);
+        break;
+      case 'stopIterating':
+        sheet.send.setIteration(false);
         break;
       case 'filterToSelection':
         sheet.send.filterToSelection();

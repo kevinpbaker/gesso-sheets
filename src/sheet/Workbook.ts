@@ -123,8 +123,23 @@ export class Workbook {
   private readonly graph = new DependencyGraph();
   /** Cells whose value is out of date. */
   private readonly dirty = new Set<number>();
-  /** The order the current slice is working through, and where it is. */
-  private plan: { order: number[]; at: number } | null = null;
+  /**
+   * The order the current slice is working through, and where it is,
+   * and the cells that could not be ordered because they are in a
+   * circle or downstream of one.
+   */
+  private plan: { order: number[]; at: number; circular: number[] } | null = null;
+
+  /**
+   * Whether circular formulas are worked out by going round them, and
+   * how far: Excel's iterative calculation, off unless a workbook asks
+   * for it. Off, a circle is `#CIRC!`, which is almost always what a
+   * circle is — a mistake. On, each cell in the circle is evaluated in
+   * turn, from the values the last round left, until no value moves by
+   * more than `delta` or `count` rounds have gone by: how an interest
+   * payment that depends on a balance that depends on it is written.
+   */
+  iteration: { readonly count: number; readonly delta: number } | null = null;
 
   /**
    * The clock and the dice the volatile functions read.
@@ -833,6 +848,9 @@ export class Workbook {
       if (plan.at < plan.order.length) {
         break;
       }
+      // The circle last, because it may read cells the plan has just
+      // brought up to date.
+      evaluated += this.goRound(plan.circular);
       this.plan = null;
     }
 
@@ -844,18 +862,73 @@ export class Workbook {
     return { evaluated, done };
   }
 
-  private buildPlan(): { order: number[]; at: number } {
+  private buildPlan(): { order: number[]; at: number; circular: number[] } {
     const { order, circular } = this.graph.topological(this.dirty);
     for (const key of circular) {
-      const cell = this.cells.get(key);
-      if (cell !== undefined) {
-        cell.value = CIRC;
+      if (this.iteration === null) {
+        const cell = this.cells.get(key);
+        if (cell !== undefined) {
+          cell.value = CIRC;
+        }
       }
       this.dirty.delete(key);
     }
     this.stats.plans++;
     this.stats.planned += order.length;
-    return { order, at: 0 };
+    return { order, at: 0, circular: this.iteration === null ? [] : circular };
+  }
+
+  /**
+   * The cells of a circle, evaluated in turn until they settle: the
+   * order Excel goes round in, sheet by sheet and row by row, each cell
+   * reading what the others were left at. Returns how many evaluations
+   * that took.
+   */
+  private goRound(circular: readonly number[]): number {
+    const iteration = this.iteration;
+    if (iteration === null || circular.length === 0) {
+      return 0;
+    }
+    const order = circular.filter(key => this.cells.get(key)?.formula != null).sort((a, b) => a - b);
+    // A circle refused before starts from nothing: `#CIRC!` is not a
+    // value to go round from, and every round would only copy it.
+    for (const key of order) {
+      const cell = this.cells.get(key);
+      if (cell !== undefined && cell.value === CIRC) {
+        cell.value = null;
+      }
+    }
+    let evaluated = 0;
+    for (let round = 0; round < iteration.count; round++) {
+      let moved = 0;
+      for (const key of order) {
+        const cell = this.cells.get(key);
+        if (cell === undefined) {
+          continue;
+        }
+        const before = cell.value;
+        this.evaluateCell(key);
+        evaluated++;
+        const after = cell.value;
+        moved = Math.max(
+          moved,
+          typeof before === 'number' && typeof after === 'number'
+            ? Math.abs(after - before)
+            : before === after
+              ? 0
+              : Number.POSITIVE_INFINITY
+        );
+      }
+      if (moved < iteration.delta) {
+        break;
+      }
+    }
+    // Evaluating put some of them back in the dirty set, through the
+    // spills or through the dynamic formulas; they are settled.
+    for (const key of order) {
+      this.dirty.delete(key);
+    }
+    return evaluated;
   }
 
   private evaluateCell(key: number): void {

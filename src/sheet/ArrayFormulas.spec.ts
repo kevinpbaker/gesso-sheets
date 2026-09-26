@@ -186,3 +186,49 @@ describe('arrays handed to functions', () => {
     expect(at(sheet, 'D1')).toBe(50);
   });
 });
+
+/**
+ * Excel's iterative calculation, which lives here beside the arrays
+ * because it is the other thing a formula can do that is not one pass.
+ */
+describe('a circle, gone round', () => {
+  it('is #CIRC! unless the workbook asks for iteration', () => {
+    const sheet = sheetOf({ A1: '6', B1: '=0.1*(A1+C1)', C1: '=A1+B1' });
+    expect(at(sheet, 'B1')).toEqual({ kind: 'error', code: '#CIRC!' });
+  });
+
+  it('settles to within the step it was given, from the values the last round left', () => {
+    const workbook = new Workbook();
+    workbook.iteration = { count: 100, delta: 0.001 };
+    const sheet = workbook.sheet(0);
+    sheet.setCell(0, 0, '6');
+    sheet.setCell(0, 1, '=0.1*(A1+C1)');
+    sheet.setCell(0, 2, '=A1+B1');
+    sheet.recalculate();
+    // B1 = 0.1 * (6 + 6 + B1), so B1 is 4/3 and C1 is 22/3.
+    expect(at(sheet, 'B1') as number).toBeCloseTo(4 / 3, 2);
+    expect(at(sheet, 'C1') as number).toBeCloseTo(22 / 3, 2);
+  });
+
+  it('stops after as many rounds as it was allowed', () => {
+    const workbook = new Workbook();
+    workbook.iteration = { count: 10, delta: 0.001 };
+    const sheet = workbook.sheet(0);
+    sheet.setCell(0, 0, '=A1+1');
+    sheet.recalculate();
+    expect(at(sheet, 'A1')).toBe(10);
+  });
+
+  it('reads what the circle reads after it has been brought up to date', () => {
+    const workbook = new Workbook();
+    workbook.iteration = { count: 100, delta: 1e-9 };
+    const sheet = workbook.sheet(0);
+    sheet.setCell(0, 0, '6');
+    sheet.setCell(0, 1, '=0.1*(A1+C1)');
+    sheet.setCell(0, 2, '=A1+B1');
+    sheet.recalculate();
+    sheet.setCell(0, 0, '9');
+    sheet.recalculate();
+    expect(at(sheet, 'B1') as number).toBeCloseTo(2, 6);
+  });
+});

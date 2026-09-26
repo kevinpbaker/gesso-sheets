@@ -104,6 +104,8 @@ export interface XlsxBook {
   readonly cut: { readonly rows: number; readonly columns: number };
   /** Defined names that are not a plain range, and so were not kept. */
   readonly namesSkipped: number;
+  /** Excel's iterative calculation, when the workbook turns it on; see `Workbook.iteration`. */
+  readonly iteration: { readonly count: number; readonly delta: number } | null;
 }
 
 export class XlsxError extends Error {}
@@ -206,7 +208,14 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   if (sheets.length === 0) {
     throw new XlsxError('It has no worksheets this can read.');
   }
-  return { sheets, names, valuesKept, cut, namesSkipped };
+  const calc = child(workbook, 'calcPr')?.attributes;
+  const iterate = calc?.iterate === '1' || calc?.iterate === 'true';
+  const count = Number(calc?.iterateCount ?? 100);
+  const delta = Number(calc?.iterateDelta ?? 0.001);
+  const iteration = iterate
+    ? { count: Number.isInteger(count) && count > 0 ? count : 100, delta: delta > 0 ? delta : 0.001 }
+    : null;
+  return { sheets, names, valuesKept, cut, namesSkipped, iteration };
 }
 
 // ---------------------------------------------------------------------------

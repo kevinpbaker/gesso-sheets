@@ -1343,6 +1343,20 @@ and the values Excel kept in the cells they cover are dropped so the
 formula can fill them. Checked against POI's files: both of the ones
 that were failing on arrays now agree with Excel, 325 of 352 in all.
 
+**Iterative calculation, after the phase.** A circle is `#CIRC!`,
+which is almost always what a circle is — a mistake. A workbook can
+ask otherwise, as Excel's can: Data ▸ Work out circular formulas by
+iteration goes round each circle in Excel's order, sheet by sheet and
+row by row, from the values the last round left, until nothing moves
+by a thousandth or a hundred rounds have gone. An `.xlsx` that turns
+it on (`calcPr iterate`) keeps it on, with its own count and step, and
+so does the `.gsheet` it is saved as. The circle is gone round after
+the rest of the recalculation, because it may read cells that have
+just changed. POI's one file that uses it now agrees with Excel to
+within its step and not to the last digit, and cannot: the answer
+depends on how many times the file was recalculated before it was
+saved, which the file does not say.
+
 Not yet: `A1#` for "the whole spill", a function lifted over an array
 (`ABS(A1:A9)` takes one value, where Excel 365 spills nine), and the
 formula bar showing the spilling formula, greyed, over a spilled cell.

@@ -29,7 +29,8 @@ export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapsh
       firstColumn: name.firstColumn,
       lastRow: name.lastRow,
       lastColumn: name.lastColumn
-    }))
+    })),
+    ...(book.iteration === null ? {} : { iteration: book.iteration })
   };
 }
 

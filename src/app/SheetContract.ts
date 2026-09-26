@@ -423,6 +423,8 @@ export interface SheetStatus {
   readonly evaluated: number;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /** Whether circular formulas are gone round rather than refused. */
+  readonly iterating: boolean;
 }
 
 /**
@@ -651,6 +653,12 @@ export interface SheetCommands {
    * they hold again — the way back from a drag.
    */
   fitRowsToContents(first: number, last: number): void;
+  /**
+   * Turns Excel's iterative calculation on or off for the workbook:
+   * circular formulas gone round a hundred times, or until nothing
+   * moves by a thousandth, rather than refused as `#CIRC!`.
+   */
+  setIteration(on: boolean): void;
   /**
    * The heights the rows in a `rowFit` request need, measured.
    *
@@ -1005,7 +1013,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '', explain: null },
   names: { entries: [], refused: '' },
-  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
+  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, iterating: false },
   clipboard: { text: '', serial: 0 },
   transfer: { download: null, report: '' },
   document: { id: '', name: '', file: null, edited: false, elsewhere: false },
