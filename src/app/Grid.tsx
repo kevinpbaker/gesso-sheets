@@ -857,9 +857,28 @@ export function Grid(
     }
   };
 
+  /**
+   * Where a block dragged by its border would land, drawn as a solid
+   * outline while the drag is on — the same rectangles a formula's
+   * references are drawn with, one row at a time.
+   */
+  let landing: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number } | null = null;
+
   const paintOutlines = (draft: string | null): void => {
     const references = draft === null ? [] : colouredReferences(draft);
     const rows = new Map<number, DecorationShape[]>();
+    if (landing !== null) {
+      const range = sheetWindow.range$.value;
+      const box = {
+        start: { row: landing.firstRow, column: landing.firstColumn },
+        end: { row: landing.lastRow, column: landing.lastColumn }
+      };
+      for (let row = Math.max(landing.firstRow, 0); row <= Math.min(landing.lastRow, range.lastRow); row++) {
+        const shapes: DecorationShape[] = [];
+        outlineSegments(box, 'primary', row, shapes);
+        rows.set(row, shapes);
+      }
+    }
     if (marked !== null) {
       // Only the rows the window has, so a whole column copied costs
       // thirty rows of dashes and not ten thousand.
@@ -1343,6 +1362,61 @@ export function Grid(
       focus.focus(gridNode);
     }
   };
+  /**
+   * Whether a point is on the selection's border — within three pixels
+   * outside one of its edges or two inside, and along it — which is
+   * where a press picks
+   * the block up rather than starting a sweep.
+   *
+   * Worked out from the offsets by the grid's own press, as a header
+   * is: a node along each edge would be four more nodes that move on
+   * every arrow key, for a question arithmetic answers. The fill handle
+   * sits on the corner and stops its own press, so it is never seen
+   * here.
+   */
+  const BORDER = 3;
+  const INSIDE = 2;
+  const onBorder = (event: { x: number; y: number }): boolean => {
+    const box = viewport.value;
+    if (box.width === 0) {
+      return false;
+    }
+    const x = event.x - box.x;
+    const y = event.y - box.y;
+    if (x < GUTTER_WIDTH || y < HEADER_HEIGHT) {
+      return false;
+    }
+    const at = edit.selectionNow();
+    const firstRow = Math.min(at.row, at.anchorRow);
+    const lastRow = Math.max(at.row, at.anchorRow);
+    const firstColumn = Math.min(at.column, at.anchorColumn);
+    const lastColumn = Math.max(at.column, at.anchorColumn);
+    const xOf = (column: number): number =>
+      GUTTER_WIDTH + sheetWindow.offsetOf(column) - (column < frozen.value.columns ? 0 : scrollX.value);
+    const yOf = (row: number): number =>
+      HEADER_HEIGHT + sheetWindow.rowOffsetOf(row) - (row < frozen.value.rows ? 0 : scrollY.value);
+    const left = xOf(firstColumn);
+    const right = xOf(lastColumn) + sheetWindow.widthOf(lastColumn);
+    const top = yOf(firstRow);
+    const bottom = yOf(lastRow) + sheetWindow.rowHeightOf(lastRow);
+    // Mostly outside the line, as Excel's is: a press a few pixels
+    // into a selected cell is a sweep starting there, not a pick-up.
+    // Along an edge means within its own span: past a corner, outside
+    // both edges at once, is the next cell over and not the border.
+    const alongX = x >= left && x <= right;
+    const alongY = y >= top && y <= bottom;
+    const near = (at: number, edge: number, outward: number): boolean =>
+      outward < 0 ? at >= edge - BORDER && at <= edge + INSIDE : at >= edge - INSIDE && at <= edge + BORDER;
+    return (
+      (alongY && (near(x, left, -1) || near(x, right, 1))) || (alongX && (near(y, top, -1) || near(y, bottom, 1)))
+    );
+  };
+  /** A block being dragged by its border: where it was picked up, and the cell under the press. */
+  let carrying: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number; row: number; column: number } | null =
+    null;
+  /** Over the border, the pointer says the block can be moved. */
+  const pointer = internalState<'move' | undefined>(undefined);
+
   /** A header click, which is also somewhere the painter paints. */
   const clickHeader = (hit: HeaderHit, extend: boolean): void => {
     selectHeader(hit, extend);
@@ -2798,6 +2872,24 @@ export function Grid(
         if (charts.value.selected !== 0) {
           sheet.send.selectChart(0);
         }
+        // A press on the selection's border picks the block up: Phase
+        // 20's cut and paste as one gesture, or a copy with Ctrl held.
+        if (!edit.openNow() && onBorder(event)) {
+          const at = cellUnder(event);
+          const held = edit.selectionNow();
+          if (at !== null) {
+            carrying = {
+              firstRow: Math.min(held.row, held.anchorRow),
+              lastRow: Math.max(held.row, held.anchorRow),
+              firstColumn: Math.min(held.column, held.anchorColumn),
+              lastColumn: Math.max(held.column, held.anchorColumn),
+              row: at.row,
+              column: at.column
+            };
+            event.stopPropagation();
+            return;
+          }
+        }
         // A drag across the letters or the numbers sweeps whole columns
         // or rows, as a drag across cells sweeps cells.
         const hit = headerOfNode(event.target) ?? headerHit(event);
@@ -2832,6 +2924,23 @@ export function Grid(
         }
       },
       onPanMove: (event: UiPointerEvent) => {
+        if (carrying !== null) {
+          const at = cellUnder(event);
+          if (at === null || event.buttons === 0) {
+            return;
+          }
+          const { rowCount: rows, columnCount: columns } = sheet.view.geometry.value;
+          const height = carrying.lastRow - carrying.firstRow;
+          const width = carrying.lastColumn - carrying.firstColumn;
+          const firstRow = Math.min(Math.max(0, carrying.firstRow + at.row - carrying.row), rows - 1 - height);
+          const firstColumn = Math.min(Math.max(0, carrying.firstColumn + at.column - carrying.column), columns - 1 - width);
+          const next = { firstRow, lastRow: firstRow + height, firstColumn, lastColumn: firstColumn + width };
+          if (landing === null || landing.firstRow !== next.firstRow || landing.firstColumn !== next.firstColumn) {
+            landing = next;
+            repaintOutlines();
+          }
+          return;
+        }
         if (headerSweep !== null) {
           if (event.buttons === 0) {
             return;
@@ -2867,7 +2976,20 @@ export function Grid(
           edit.extendTo(at.row, at.column);
         }
       },
-      onPanEnd: () => {
+      onPanEnd: (event: UiPointerEvent) => {
+        if (carrying !== null) {
+          const to = landing;
+          const from = carrying;
+          carrying = null;
+          landing = null;
+          repaintOutlines();
+          if (to !== null && (to.firstRow !== from.firstRow || to.firstColumn !== from.firstColumn)) {
+            // Ctrl at the drop, as in Excel: what the hand is holding
+            // when it lets go is what it meant.
+            sheet.send.moveRange(to.firstRow, to.firstColumn, event.modifiers.ctrl || event.modifiers.meta);
+          }
+          return;
+        }
         if (sweeping || headerSweep !== null) {
           paintIfLit();
         }
@@ -2883,8 +3005,13 @@ export function Grid(
       onPointerMove: (event: UiPointerEvent) => {
         if (event.buttons === 0) {
           hoverAt(cellUnder(event));
+          const over = !edit.openNow() && onBorder(event) ? 'move' : undefined;
+          if (over !== pointer.value) {
+            pointer.value = over;
+          }
         }
       },
+      cursor: pointer,
       onPointerLeave: () => hoverAt(null),
       onPaste: (event: UiPasteEvent) => {
         edit.pasteText(event.text, pasteMode);

@@ -866,6 +866,24 @@ export class SheetService {
     this.afterEdit();
   }
 
+  moveRange(row: number, column: number, copy: boolean): void {
+    this.editedOverMark();
+    const rect = rectOf(this.document.selection);
+    if (row === rect.firstRow && column === rect.firstColumn) {
+      return;
+    }
+    // A snapshot of the block, as a copy takes; the clipboard's own copy
+    // is left where it was.
+    const block = copiedOf(this.document, rect, !copy);
+    const corner = { row, column };
+    const written = copy
+      ? pasteCopied(this.document, block, corner, 'all')
+      : moveCopied(this.document, block, corner, this.document.active);
+    this.document.setSelection(written.firstRow, written.firstColumn, written.lastRow, written.lastColumn);
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
+  }
+
   pasteSpecial(mode: SheetPasteMode): void {
     if (this.copied === null) {
       this.report('Copy something first: Paste special pastes what this sheet last copied.');

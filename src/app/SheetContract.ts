@@ -752,6 +752,12 @@ export interface SheetCommands {
    * without the system clipboard — which a menu cannot read.
    */
   pasteSpecial(mode: SheetPasteMode): void;
+  /**
+   * The selection dragged by its border and let go with its top-left
+   * corner at a cell: a move, as a cut pasted there would be, or a copy
+   * with Ctrl held. The clipboard is not touched.
+   */
+  moveRange(row: number, column: number, copy: boolean): void;
   /** Escape over a marked copy: the outline goes, and a cut is called off. */
   unmark(): void;
   /** The format painter picks up the selection's formats, without touching the clipboard. */

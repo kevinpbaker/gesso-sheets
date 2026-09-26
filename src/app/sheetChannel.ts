@@ -76,6 +76,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       copy: cut => service.copy(cut),
       paste: (text, mode) => service.paste(text, mode),
       pasteSpecial: mode => service.pasteSpecial(mode),
+      moveRange: (row, column, copy) => service.moveRange(row, column, copy),
       unmark: () => service.unmark(),
       pickFormats: () => service.pickFormats(),
       paintFormats: () => service.paintFormats(),

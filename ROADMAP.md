@@ -2190,7 +2190,7 @@ it. Every spec that constructs a selection still passes, with the
 active cell defaulting to the corner it is today. `pnpm proof` does not
 move: the selection is on the hot path of every arrow key.
 
-### Phase 25 — Moving by the border
+### Phase 25 — Moving by the border — **done**
 
 A press on the edge of the selection, dragged, moves the cells: the
 cut-and-paste of Phase 20 as one gesture, references and all, with
@@ -2211,6 +2211,33 @@ Finding that out is the first step, and the answer goes here.
 values and formats there, the formulas that read them rewritten, and
 B2:C3 empty; the same with Ctrl, finding both; one undo each. And a
 drag that begins inside the selection, not on its edge, still sweeps.
+
+**Met.** `MoveByBorder.spec.tsx`: B2:C3 dragged by its top edge to E5
+is at E5:F6 with its bold and its formula reading `=E5+F5`, a
+`=SUM(B2:C3)` elsewhere reads `=SUM(E5:F6)` and still says 9, and B2:C3
+is empty; with Ctrl the original stays and the copy's formula moves as
+a paste's would; one undo each. A drag that starts inside the selection
+sweeps, the clipboard is not touched, and the pointer turns to *move*
+over the border and back inside it. `pnpm proof` holds all its runs.
+
+**The engine question had the answer the phase guessed, one step
+further: no engine change, and no border node either.** A node along
+each edge would be four more nodes moving on every arrow key, for a
+question the offsets already answer. So the grid's own press asks it,
+as it asks whether a press landed on a header: within three pixels
+outside an edge or two inside it, and along that edge's own span. Both
+limits were found by the specs. A band four pixels deep on both sides
+took the start of every sweep from a selected cell — the clipboard
+specs press four pixels into a cell — and a band that ran on past the
+corners took a press on the next cell diagonally, outside both edges
+at once. The fill handle sits on the corner and stops its own press,
+so it is never asked about.
+
+The drop is Phase 20's code: a move is `moveCopied`, so whatever read
+the block reads it in its new place, and a copy is `pasteCopied`. The
+block is snapshotted for the gesture and the clipboard's own copy is
+left as it was, as in Excel. Checked by specs and by `pnpm proof`, not
+yet by eye in a browser.
 
 ### Phase 26 — A finger
 
