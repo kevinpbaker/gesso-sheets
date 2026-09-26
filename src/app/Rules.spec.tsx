@@ -215,6 +215,25 @@ describe('rules over a selection', () => {
       expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('3');
     });
 
+    /**
+     * The bar is wider than a window of 900 pixels, and its one field
+     * was the only thing in it allowed to shrink — so on anything much
+     * narrower than a full-width monitor the value a rule had been
+     * given was drawn zero pixels wide, and the bar looked as if it had
+     * not read the rule at all. It wraps now, and the field keeps its
+     * width.
+     */
+    it('keeps its value field whole on a window too narrow for one line', async () => {
+      await menu('o', 'Conditional formatting…');
+      const field = h.ui.getLayout(h.ui.getByRole('textbox', { name: 'Value' }));
+      const form = h.ui.getLayout(h.ui.getByRole('form'));
+      expect(field.width).toBe(110);
+      expect(field.x + field.width).toBeLessThanOrEqual(900);
+      // And the grid moves down for the second line rather than being
+      // drawn over by it.
+      expect(h.ui.getLayout(h.ui.getByRole('grid')).y).toBeGreaterThanOrEqual(form.y + form.height);
+    });
+
     it('opens on a colour scale as a colour scale', async () => {
       await menu('o', 'Conditional formatting…');
       h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Colour scale' }));

@@ -329,6 +329,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
       ref={ref}
       value={value as never}
       width={width}
+      flexShrink={0}
       fontSize={12}
       color="text"
       textWrap="none"
@@ -555,6 +556,8 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
       flexShrink={0}
       y="center"
       gap={8}
+      flexWrap="wrap"
+      rowGap={4}
       paddingLeft={10}
       paddingRight={10}
       paddingTop={5}

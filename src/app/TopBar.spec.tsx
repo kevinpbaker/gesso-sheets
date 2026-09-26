@@ -480,6 +480,16 @@ describe('the top bar from the keyboard', () => {
       await press('h', { ctrl: true });
       expect(h.ui.getByRole('searchbox', { name: 'Replace with' })).toBeDefined();
     });
+
+    /** Both fields at their width in a window too narrow for the bar on one line. */
+    it('keeps both fields whole when replace does not fit on one line', async () => {
+      await press('h', { ctrl: true });
+      for (const name of ['Find', 'Replace with']) {
+        const field = h.ui.getLayout(h.ui.getByRole('searchbox', { name }));
+        expect(field.width).toBe(170);
+        expect(field.x + field.width).toBeLessThanOrEqual(900);
+      }
+    });
   });
 
   describe('the status bar', () => {

@@ -99,6 +99,7 @@ export function FindBar(inputs: Inputs<FindBarProps>, ctx: ComponentContext) {
       ref={node}
       value={value as never}
       width={170}
+      flexShrink={0}
       fontSize={12}
       color="text"
       textWrap="none"
@@ -159,6 +160,10 @@ export function FindBar(inputs: Inputs<FindBarProps>, ctx: ComponentContext) {
       flexShrink={0}
       y="center"
       gap={8}
+      // Wraps rather than squeezing a field to nothing, which is what
+      // a window narrower than the bar used to do to the rules bar's.
+      flexWrap="wrap"
+      rowGap={4}
       paddingLeft={10}
       paddingRight={10}
       paddingTop={5}
@@ -167,7 +172,7 @@ export function FindBar(inputs: Inputs<FindBarProps>, ctx: ComponentContext) {
       role="search"
       label="Find in sheet">
       {field('Find', query, onQueryKey, inputs.ref.value ?? undefined)}
-      <text text={count} width={54} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
+      <text text={count} width={54} flexShrink={0} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
       {button('Previous', () => sheet.send.findStep(false))}
       {button('Next', () => sheet.send.findStep(true))}
       {toggle('Match case', matchCase, matchCase)}
