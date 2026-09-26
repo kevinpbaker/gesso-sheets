@@ -28,6 +28,8 @@ with borders, sort, insert and delete rows and columns, freeze a
 pane, merge cells, fit a column to its contents, filter to what the
 cursor is on, and navigate by typing an address — and which remembers
 what you typed.
+[Part Three](#part-three--quality-of-life) is the list of what a hand
+that knows Excel reaches for and does not find yet.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -1343,6 +1345,37 @@ and the values Excel kept in the cells they cover are dropped so the
 formula can fill them. Checked against POI's files: both of the ones
 that were failing on arrays now agree with Excel, 325 of 352 in all.
 
+**`.xlsx` export, after the phase.** File ▸ Download as Excel workbook
+writes the whole workbook: values and formulas, number formats, fonts,
+fills, borders, alignment and wrap, column widths, row heights, hidden
+rows and columns, merges, frozen panes, defined names and iterative
+calculation — what the reader brings in, taken back out, so a workbook
+from Excel goes back with what it came with. Conditional formats,
+validations and charts are left out, as the reader leaves them out,
+and the line that reports the download says which of them the
+workbook had.
+
+Formulas are written as Excel reads them. A function newer than the
+format carries Excel's `_xlfn.` prefix; a formula that spills is an
+array formula over the cells it fills, with their values beside it as
+Excel writes them; and one that does arithmetic over ranges without
+spilling — `=SUM(A1:A3*B1:B3)` — is an array formula of one cell,
+because written plainly an Excel from before dynamic arrays would take
+one value from each range. It is the reader's `@` rule run the other
+way, and uses the same code to decide.
+
+The engine had to learn one thing: `saveFile` wrote text, and an
+`.xlsx` is a zip. It takes bytes now, which cross the barrier as they
+already did on the way in. The zip writer is this project's, beside
+the reader, and deflates through the platform's `CompressionStream`.
+
+Checked twice. The seeded workbook, written and read back through the
+reader, is cell for cell what it was, formats, widths and panes
+included. And LibreOffice, given the same file headless, recalculated
+it and showed every cell of the sales sheet — dates, currency,
+percentages, a spilled array, an array `SUM`, an `XLOOKUP` — exactly
+as this sheet does, with no error anywhere in the workbook.
+
 **Iterative calculation, after the phase.** A circle is `#CIRC!`,
 which is almost always what a circle is — a mistake. A workbook can
 ask otherwise, as Excel's can: Data ▸ Work out circular formulas by
@@ -1365,8 +1398,8 @@ formula bar showing the spilling formula, greyed, over a spilled cell.
 
 ## Still not in it, after all seventeen
 
-Pivot tables, macros and scripting, collaborative editing, `.xlsx`
-export, rich text runs *within* a single cell (formatting is
+Pivot tables, macros and scripting, collaborative editing, rich text
+runs *within* a single cell (formatting is
 per-cell, and a bold word inside a cell is a different text model),
 and touch.
 
@@ -1540,6 +1573,182 @@ all: see the struck-through entry below.
   thousand. The grid here can drop its hand-rolled version whenever
   somebody wants to; it has not, because the hand-rolled one works and
   a rewrite of the hot path wants its own phase.
+
+---
+
+# Part three — quality of life
+
+Part Two made a spreadsheet somebody would keep a budget in. Part
+Three is about the second hour of keeping it: the gestures that
+people's hands make before they have decided to, and which this sheet
+answers with nothing.
+
+None of it is a feature anybody would put on a list, and that is the
+problem. Clicking a column's letter selects the column in every
+spreadsheet ever made; here it does nothing, and the only way to hide
+a column is to drag a selection across it first. Ctrl+Down goes to the
+end of the data everywhere else; here it goes nowhere. Each one is
+small, and each one is the moment someone who came from Excel decides
+this is a toy. A reviewer will not report them. They will just stop.
+
+So the bar for this part is not "does it exist" but "does the hand
+that already knows Excel find it where it reaches". Where Excel and
+Google Sheets agree, do what they do. Where they disagree, do Excel's,
+and say so. Where Chrome owns the key — Ctrl+=, Ctrl+N, Ctrl+T, Ctrl+W
+— the Ctrl+Alt fallback Phase 10 already uses is the answer, and the
+shortcuts sheet has to say it.
+
+**The rule Part Two runs under still holds**, all three of it. Two of
+these phases put new handlers on the header row and the gutter, which
+are mounted for every visible row and column, and a handler per header
+is exactly the per-cell binding cliff this file has now learned three
+times. The pointer work goes through one handler on the header strip
+that works out what was pressed, the way the grid's own press does.
+
+---
+
+### Phase 18 — The pointer
+
+Clicking a column letter selects the column, and a row number the
+row. Shift+click extends from where the selection was, and a drag
+across the headers sweeps several — the same sweep the cells already
+have. Clicking the corner above row 1 selects the sheet. Every command
+already written for "the selected columns" starts working from the
+mouse the moment this does.
+
+A double-click on a column's grip fits it to its contents, and on a
+row's grip fits the row: Phase 10's autofit, reached where everybody
+looks for it. A double-click on the fill handle fills down as far as
+the column to its left goes, which is the single most-used fill in
+anybody's sheet and today takes a drag across however many thousand
+rows there are.
+
+Right-click opens a context menu, built from the command table like
+every other menu so that it cannot drift: cut, copy, paste; insert and
+delete of whatever is under the pointer — rows on a row header,
+columns on a column header, either on a cell; hide; sort; clear. It is
+a menu, so it inherits the top bar's keyboard model, and the
+Menu key and Shift+F10 open it at the cursor for anybody without a
+second button.
+
+**Exit:** a spec for each gesture through the semantics tree, and a
+header click on a sheet of a million rows that selects the column
+without walking it: the selection is a range, and neither selecting
+it nor the status bar's Sum over it may cost a million of anything. `pnpm proof` with the
+context menu open over a scrolling sheet, under Phase 8's fifth
+budget.
+
+### Phase 19 — The keyboard Excel users already have
+
+`SheetKeys` answers arrows, Home, End, PageUp and PageDown, and
+nothing with Ctrl on it but Home and End. The missing half:
+
+- **Ctrl+Arrow** to the edge of the data — the next non-empty cell
+  after an empty one, or the last before one — and **Ctrl+Shift+Arrow**
+  to select there. This is the key people use to find out how long a
+  column is, and it needs the sheet model to answer "next occupied
+  cell in this row or column" without scanning a million, which is a
+  question for `src/sheet` and gets its own budget spec.
+- **Ctrl+Space** selects the column, **Shift+Space** the row.
+- **Ctrl+Enter** commits what was typed into every cell of the
+  selection, relative references shifted as fill shifts them.
+- **Alt+Enter** puts a line break in the cell being edited instead of
+  committing it. Wrap is already there; without this, the only way to
+  get a second line into a cell is to paste one.
+- **Ctrl+;** types today's date, **Ctrl+Shift+;** the time — as
+  values, not `TODAY()`, which is the difference that makes them
+  useful in a log.
+- **Enter inside a selection** walks the selection and wraps, rather
+  than leaving it, and **Tab then Enter** comes back to the column the
+  Tab started from — how everybody types a row of a table.
+
+Each goes into the `NAVIGATION` table beside the switch that answers
+it, so the shortcuts sheet lists it without anybody writing it down.
+
+**Exit:** `Keyboard.spec.tsx` covers every key above, and the
+shortcuts sheet's generated list contains every one of them — a spec
+that fails when a key is answered but not advertised. And a budget
+spec in `src/sheet`, in the style of `Sheet.budget.spec.ts`: the next
+occupied cell down a column of a million, found without visiting
+them.
+
+### Phase 20 — Paste that asks
+
+Paste today brings everything: value, formula, format. What people
+want at least as often is less.
+
+- **Paste values only** — Ctrl+Shift+V, which is also what Chrome
+  means by it, so the text arrives already plain. Formulas land as
+  their answers.
+- **Paste formats only**, and its pointer form, a **format painter**:
+  a toolbar button that takes the selection's formats and puts them
+  on the next thing clicked, and a double-click that keeps it lit
+  until Escape.
+- **Paste transposed**, from Edit ▸ Paste special, next to the other
+  two.
+- **The copied range is marked** with a moving dashed outline until
+  it is pasted, Escape is pressed, or the sheet is edited — so it is
+  possible to see what Ctrl+V is about to do. A cut that is pasted
+  moves the cells and the references that point into them, the way
+  Phase 10's structural edits already move references; a cut today is
+  a copy and a clear.
+
+**Exit:** specs for each paste against the clipboard harness, and one
+for a cut-and-paste of a range that a formula elsewhere reads, which
+reads the new place afterwards. Undo takes each back as one step.
+
+### Phase 21 — Typing less
+
+- **AutoComplete from the column.** Typing the first letters of a
+  value that already appears above in the same column offers the rest,
+  selected, so Enter takes it and typing on replaces it — Excel's
+  behaviour, and the thing that makes a column of categories
+  bearable. It stops at the first blank row, as Excel's does, which is
+  also what keeps it proportional.
+- **Undo says what it undoes.** Edit ▸ Undo reads "Undo sort", "Undo
+  paste", "Undo delete columns", and the toolbar's tooltip does the
+  same. The history already knows; the menu should say.
+- **The formula bar shows the spilling formula**, greyed, over a
+  spilled cell — the item Part Two left undone, and the reason a
+  spilled cell currently looks like a value that came from nowhere.
+
+**Exit:** a budget spec for AutoComplete on a column of a hundred
+thousand entries — a keystroke's offer costs what a column of ten
+does — and a spec that the spilled cell's formula bar is the
+formula's, and cannot be edited as if it were its own.
+
+### Phase 22 — Knowing where you are
+
+- **Zoom** from View, Ctrl+Alt+= and Ctrl+Alt+-, per sheet, saved with
+  the document. It scales the grid, not the chrome. This one is not
+  free: the grid's row and column offsets are pixels, and a zoom that
+  merely scales the paint leaves hit-testing and the fill handle in
+  the wrong place. It wants a design note before it wants code.
+- **Show formulas** — Ctrl+` — draws every cell's formula instead of
+  its answer, columns widened to fit, for checking a sheet somebody
+  else wrote.
+- **The status bar's readout is chosen.** Sum, Average and Count stay
+  the default; a click on it offers Min, Max and Count numbers, and
+  a click on a figure copies it.
+- **Notes on a cell.** A small corner mark, the text on hover and on
+  the keyboard focus, and Shift+F2 to write one. `.xlsx` comments come
+  in as notes, and `.gsheet` saves them. This is the one item here
+  with a file format attached, which is why it is last.
+
+**Exit:** a zoomed sheet whose click, drag, fill and resize land on
+the cell under the pointer at 50%, 100% and 200%, and `pnpm proof`
+run at 200%, which is four times the cells' area in paint and the
+same number of cells mounted.
+
+---
+
+## Not in Part Three
+
+Touch — its own phase, for the reasons recorded above. Flash fill,
+which is a feature and not a habit. Drag-to-move a selection by its
+border, which is worth having but needs Gesso's Drag and the grid's
+Pan to agree about who owns a press on a cell edge, and that is an
+engine question first.
 
 ---
 
