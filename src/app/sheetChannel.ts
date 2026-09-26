@@ -28,6 +28,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       formats: service.formats,
       palette: service.palette,
       activeFormat: service.activeFormat,
+      activeRules: service.activeRules,
       autofit: service.autofit,
       charts: service.charts,
       series: service.chartSeries
@@ -64,6 +65,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       fill: (toRow, toColumn) => service.fill(toRow, toColumn),
       setColumnWidth: (column, width) => service.setColumnWidth(column, width),
       stress: cells => service.stress(cells),
+      chartStress: points => service.chartStress(points),
       fillDown: () => service.fillDown(),
       fillRight: () => service.fillRight(),
       find: (query, matchCase, wholeCell, inFormulas) => service.find(query, matchCase, wholeCell, inFormulas),

@@ -11,7 +11,7 @@ import { internalState, type ComponentContext, type Inputs } from 'gesso-framewo
 
 import type { ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
 import type { ValidationRule } from '../sheet/Validation';
-import { Sheet } from './SheetContract';
+import { Sheet, type SheetConditionalRule } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -83,6 +83,93 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   const check = internalState<ValidationRule['kind']>('list');
   const allowed = internalState('');
   const strict = internalState(false);
+
+  /**
+   * The bar opens on the rule the active cell is already under.
+   *
+   * Only when that rule *changes*, which is the guard: the key moves
+   * on every arrow key, and refilling the fields on each one would
+   * throw away a value somebody typed before selecting the range it
+   * was for. Moving onto a cell with no rule clears what an earlier
+   * cell's rule put there, and leaves a draft of somebody's own alone.
+   */
+  let loadedFormat = 'null';
+  let loadedCheck = 'null';
+  ctx.effect(sheet.view.activeRules, active => {
+    const format = JSON.stringify(active.conditional);
+    if (format !== loadedFormat) {
+      const had = loadedFormat !== 'null';
+      loadedFormat = format;
+      if (active.conditional !== null) {
+        loadFormat(active.conditional);
+      } else if (had) {
+        test.value = 'greaterThan';
+        first.value = '';
+        second.value = '';
+        fill.value = 0;
+      }
+    }
+    const validation = JSON.stringify(active.validation);
+    if (validation !== loadedCheck) {
+      const had = loadedCheck !== 'null';
+      loadedCheck = validation;
+      if (active.validation !== null) {
+        loadCheck(active.validation.rule, active.validation.strict);
+      } else if (had) {
+        check.value = 'list';
+        allowed.value = '';
+        strict.value = false;
+      }
+    }
+  });
+
+  function loadFormat(rule: SheetConditionalRule): void {
+    if (rule.scale !== undefined) {
+      const to = rule.scale.to.toLowerCase();
+      test.value = 'scale';
+      fill.value = Math.max(0, FILLS.findIndex(entry => entry.color === to));
+      return;
+    }
+    const held = rule.test;
+    if (held === null || !TESTS.some(entry => entry.id === held.kind)) {
+      return;
+    }
+    test.value = held.kind;
+    first.value =
+      held.kind === 'between'
+        ? String(held.low)
+        : held.kind === 'textContains'
+          ? held.text
+          : held.kind === 'formula'
+            ? held.input
+            : 'value' in held
+              ? String(held.value)
+              : '';
+    second.value = held.kind === 'between' ? String(held.high) : '';
+    const paint = rule.paint?.fill?.toLowerCase();
+    fill.value = Math.max(0, FILLS.findIndex(entry => entry.fill === paint));
+  }
+
+  function loadCheck(rule: ValidationRule, refuses: boolean): void {
+    check.value = rule.kind;
+    strict.value = refuses;
+    switch (rule.kind) {
+      case 'list':
+        allowed.value = rule.values.join(', ');
+        return;
+      case 'number':
+        allowed.value =
+          rule.min === undefined && rule.max === undefined
+            ? ''
+            : `${rule.min ?? ''}, ${rule.max ?? ''}`.replace(/, $/, '');
+        return;
+      case 'text':
+        allowed.value = rule.maxLength === undefined ? '' : String(rule.maxLength);
+        return;
+      default:
+        allowed.value = '';
+    }
+  }
 
   const close = (): void => {
     inputs.onClose.value();

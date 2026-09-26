@@ -344,6 +344,21 @@ export interface SheetConditionalRule {
 export type SheetValidationRule = ValidationRule;
 
 /**
+ * The rules the active cell is under, for the rules bar to open on.
+ *
+ * One cell and not the selection, for the reason `activeFormat` is:
+ * the bar has one set of controls and a selection can straddle three
+ * rules. The conditional is the *last* one covering the cell, because
+ * later rules paint over earlier ones and the one on top is the one
+ * somebody is looking at; the validation is the first, because that
+ * is the one `validationAt` enforces.
+ */
+export interface SheetActiveRules {
+  readonly conditional: SheetConditionalRule | null;
+  readonly validation: { readonly rule: SheetValidationRule; readonly strict: boolean } | null;
+}
+
+/**
  * A chart on the sheet: what it is, and where it floats.
  *
  * The placement is in the sheet's own pixels, so the render worker
@@ -504,6 +519,8 @@ export interface SheetCommands {
    * Built once and bumped on every call after.
    */
   stress(cells: number): void;
+  /** The proof page's other instrument; see `SheetService.chartStress`. */
+  chartStress(points: number): void;
   /**
    * Repeats the top row of the selection down it, or the left column
    * across it.
@@ -752,6 +769,8 @@ export interface SheetView {
    * this from the active cell and this one does too.
    */
   readonly activeFormat: SheetActiveFormat;
+  /** The rules over the active cell; see `SheetActiveRules`. */
+  readonly activeRules: SheetActiveRules;
   readonly autofit: SheetAutofit;
   /** The charts floating over this sheet; see `SheetCharts`. */
   readonly charts: SheetCharts;
@@ -838,6 +857,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   palette: { entries: [PLAIN_PAINT] },
   validation: { firstRow: 0, lastRow: -1, cells: {}, refused: '', list: [] },
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
+  activeRules: { conditional: null, validation: null },
   autofit: { serial: 0, columns: [] },
   charts: { entries: [], selected: 0 },
   series: { charts: {} }

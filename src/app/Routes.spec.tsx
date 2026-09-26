@@ -6,7 +6,7 @@ import 'gesso-testing/matchers';
 
 import { isProofPath, PROOF_PATH } from '../route';
 import { AppRoot, ROUTES, SHEET } from './Routes';
-import { COMMANDS, menusFor, MENUS, SEPARATOR } from './SheetCommands';
+import { COMMANDS, menusFor, MENUS, PROOF_ONLY, SEPARATOR, type CommandId } from './SheetCommands';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
@@ -123,11 +123,15 @@ describe('the menus a route shows', () => {
 
   it('drops the proof-only commands everywhere else', () => {
     const entries = menusFor(false).flatMap(menu => menu.entries);
-    expect(entries).not.toContain('recalculate');
+    for (const id of PROOF_ONLY) {
+      expect(entries, id).not.toContain(id);
+    }
     // Every other command survives, so the filter is a filter and not
     // a second, shorter menu bar that will drift from the first.
     const all = MENUS.flatMap(menu => menu.entries).filter(entry => entry !== SEPARATOR);
-    expect(entries.filter(entry => entry !== SEPARATOR)).toEqual(all.filter(entry => entry !== 'recalculate'));
+    expect(entries.filter(entry => entry !== SEPARATOR)).toEqual(
+      all.filter(entry => !PROOF_ONLY.includes(entry as CommandId))
+    );
   });
 
   /**

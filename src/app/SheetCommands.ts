@@ -33,6 +33,7 @@ export type CommandId =
   | 'replace'
   | 'gotoCell'
   | 'recalculate'
+  | 'chartStress'
   | 'shortcuts'
   | 'menuBar'
   | 'sheetTabs'
@@ -113,6 +114,14 @@ export type CommandId =
  * number.
  */
 export const STRESS_CELLS = 200_000;
+/**
+ * How many readings the proof page puts behind one chart.
+ *
+ * The roadmap's number. It is chosen to be far past anything a chart
+ * can draw — a chart four hundred pixels wide holds four hundred
+ * points — so the run measures the thinning rather than the drawing.
+ */
+export const CHART_POINTS = 50_000;
 
 /**
  * A key and the modifiers held with it.
@@ -199,6 +208,19 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     id: 'recalculate',
     label: `Recalculate ${STRESS_CELLS.toLocaleString('en-US')} cells`,
     accelerator: { key: 'F9' }
+  },
+  /**
+   * Phase 15's half of the proof page, beside Phase 7's.
+   *
+   * A chart is the one thing on screen that reads cells outside the
+   * window, so it is the one thing whose cost cannot be argued from
+   * the viewport. The button puts fifty thousand readings behind one
+   * and leaves it open, so the scroll underneath has something real
+   * to be measured against.
+   */
+  chartStress: {
+    id: 'chartStress',
+    label: `Chart ${CHART_POINTS.toLocaleString('en-US')} points`
   },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
   menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
@@ -620,7 +642,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'hideColumns',
       'showColumns',
       SEPARATOR,
-      'recalculate'
+      'recalculate',
+      'chartStress'
     ]
   },
   {
@@ -647,7 +670,7 @@ export const MENUS: readonly MenuDefinition[] = [
  * it, `commandFor` still answers F9 with it, and the specs that keep
  * the two tables honest still see every row.
  */
-export const PROOF_ONLY: readonly CommandId[] = ['recalculate'];
+export const PROOF_ONLY: readonly CommandId[] = ['recalculate', 'chartStress'];
 
 /** Whether a route offers a command at all. */
 export function offers(id: CommandId, proof: boolean): boolean {

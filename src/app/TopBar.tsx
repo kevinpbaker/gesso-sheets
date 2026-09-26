@@ -19,7 +19,15 @@ import { ChartBar } from './ChartBar';
 import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
 import { Sheet } from './SheetContract';
-import { acceleratorLabel, COMMANDS, menusFor, offers, STRESS_CELLS, type CommandId } from './SheetCommands';
+import {
+  acceleratorLabel,
+  CHART_POINTS,
+  COMMANDS,
+  menusFor,
+  offers,
+  STRESS_CELLS,
+  type CommandId
+} from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
 import { formatRange, relativeRef } from '../sheet/A1';
 import type { CellPaint } from '../sheet/Format';
@@ -451,6 +459,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'recalculate':
         if (proof) {
           sheet.send.stress(STRESS_CELLS);
+        }
+        break;
+      case 'chartStress':
+        if (proof) {
+          sheet.send.chartStress(CHART_POINTS);
         }
         break;
       case 'shortcuts':

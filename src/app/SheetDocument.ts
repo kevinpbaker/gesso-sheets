@@ -912,6 +912,16 @@ export class SheetDocument {
     return null;
   }
 
+  /** The conditional rule on top at a cell: the last one covering it, since later rules paint over earlier ones. */
+  conditionalAt(row: number, column: number): ConditionalRule | null {
+    for (let at = this.page.conditional.length - 1; at >= 0; at--) {
+      if (coversCell(this.page.conditional[at].range, row, column)) {
+        return this.page.conditional[at];
+      }
+    }
+    return null;
+  }
+
   private changeRules(change: (page: Page) => void, row: number, column: number): void {
     const page = this.page;
     const before = {

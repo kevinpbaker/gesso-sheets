@@ -1015,9 +1015,9 @@ when the rule is a list.
 `pnpm proof` unchanged; and a patch-count spec saying the rule
 published palette indices for the window and nothing else.
 
-### Phase 15 — Charts
+### Phase 15 — Charts — **done**
 
-`<paint>` is the element — a box the application draws into over a
+`Paint` is the element — a box the application draws into over a
 full path surface — so a chart is a component that subscribes to a
 series and strokes it. Line, bar, column, stacked, area, pie and
 scatter, with axes, a legend and a title.
@@ -1043,6 +1043,38 @@ later reuse.
 **Exit:** a 50,000-point chart open while the sheet scrolls, with
 `pnpm proof` unchanged; and a spec asserting the series published for
 a chart 400 px wide holds at most 400 points.
+
+**Both met, and the numbers are these.** The proof grew a seventh
+scenario: a chart of fifty thousand readings open over a scroll costs
+a median frame of 4.30 ms against 4.00 ms without it, a difference of
+0.30 ms against a budget of 2. The series claim is asserted twice —
+in `Series.spec.ts` at every width that could fall off an end, and in
+`Charts.spec.ts` end to end through the service, where the limit the
+thinning is given is the chart's own width in pixels.
+
+Two things are worth carrying forward.
+
+**The thinning keeps extremes, not samples.** Every nth point loses a
+spike one sample wide, and a spike is what somebody drew the chart to
+find. Points are bucketed and the smallest and the largest of each
+bucket are kept in the order they occur, so the envelope survives:
+two per bucket, hence `limit / 2` buckets, hence never more than the
+limit. On the proof page every peak of the sine still reaches exactly
+±1000 through four hundred points.
+
+**The floating object layer is a child of a row.** A chart hangs off
+the row it starts in, so it travels with the scroll and its node is
+never rebuilt by one; `extendRange` keeps that row mounted while any
+part of the chart is on screen, which is the hook a merge reaching up
+out of the window already used. The row holding one is lifted for the
+same reason a merge's anchor is — without a stacking context the rows
+below paint over it, and a chart came out twenty-four pixels tall in
+a browser, which is exactly the height of one row.
+
+Placement is in sheet pixels rather than anchored to a cell, which is
+a choice with a cost: widen a column above a chart and the cells move
+under it. An anchor is a translation into this coordinate space
+rather than a different one, and the space had to exist first.
 
 ### Phase 16 — Files that leave the tab
 
@@ -1126,9 +1158,10 @@ the application rather than in the engine: every one of them was found
 by trying to build something, and none of them would have been found by
 reading the engine.
 
-What is genuinely left is the floating object layer, which Phase 15
-needs and nothing before it does, and first-class per-edge border
-properties, which `borders()` may well have made unnecessary.
+What is genuinely left is first-class per-edge border properties,
+which `borders()` may well have made unnecessary. The floating object
+layer that used to be named here turned out not to need the engine at
+all: see the struck-through entry below.
 
 - ~~**Menu bar traversal.**~~ *Closed, and upstreamed.* `Menu` is a
   popup that traps focus, so the arrows could not reach the bar to
@@ -1176,9 +1209,12 @@ properties, which `borders()` may well have made unnecessary.
   in the application to describe a sheet where every row but two is
   the same. The offsets stay a multiplication plus a binary search
   over the exceptions, so a sheet with none pays what it always paid.
-- **A floating object layer over a scroll surface.** Selectable,
-  movable, resizable things in a scrolled coordinate space, which
-  charts need and images would reuse. Phase 15.
+- ~~**A floating object layer over a scroll surface.**~~ *Closed, and
+  it needed no engine change at all.* The expectation was a new
+  primitive; what it took was `Paint` — which already existed — and
+  the observation that a child of a row scrolls with the row. The two
+  hooks it leans on, `extendRange` and a lifted row, were both grown
+  for merges. Images and shapes would reuse the same three lines.
 - **Per-edge borders — and the note this used to be was wrong.**
   `borderWidth` is one number and `borderColor` one colour, so a cell
   cannot have a heavy bottom edge and a hairline top. This file then

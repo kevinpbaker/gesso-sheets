@@ -10,6 +10,7 @@ import {
   type ChartKind
 } from '../sheet/Chart';
 import { headersIn, orientationOf, seriesFrom } from '../sheet/Series';
+import { STRESS_CELLS } from './SheetCommands';
 import type { CellValue } from '../sheet/Values';
 import { addressOf, explainCell } from '../sheet/Explain';
 import { nameProblemText } from '../sheet/Names';
@@ -32,6 +33,7 @@ import {
   type SheetSelection,
   type BorderPattern,
   type SheetActiveFormat,
+  type SheetActiveRules,
   type SheetAutofit,
   type SheetEdge,
   type SheetFormatChange,
@@ -126,6 +128,7 @@ export class SheetService {
   readonly formats: Observable<SheetFormatWindow>;
   readonly palette: Observable<SheetPalette>;
   readonly activeFormat: Observable<SheetActiveFormat>;
+  readonly activeRules: Observable<SheetActiveRules>;
   readonly autofit: Observable<SheetAutofit>;
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
@@ -176,6 +179,7 @@ export class SheetService {
     paint: PLAIN_PAINT,
     number: { kind: 'general' }
   });
+  private readonly activeRulesSubject = new BehaviorSubject<SheetActiveRules>({ conditional: null, validation: null });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
   private autofitSerial = 0;
   private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0 });
@@ -231,6 +235,9 @@ export class SheetService {
   /** How long the stress chain is, so it is built once. */
   private stressCells = 0;
   private stressRuns = 0;
+  /** How long the proof chart's series is, so it is built once. */
+  private chartPoints = 0;
+  private stressChart = 0;
 
   constructor(
     private readonly document: SheetDocument,
@@ -281,11 +288,13 @@ export class SheetService {
     this.formats = this.formatsSubject;
     this.palette = this.paletteSubject;
     this.activeFormat = this.activeFormatSubject;
+    this.activeRules = this.activeRulesSubject;
     this.autofit = this.autofitSubject;
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
     this.publishStats();
     this.publishActiveFormat();
+    this.publishActiveRules();
   }
 
   // ---------------------------------------------------------------------
@@ -452,6 +461,7 @@ export class SheetService {
     this.painter.setRules(this.document.conditional);
     this.publishFormats();
     this.publishValidation();
+    this.publishActiveRules();
     this.publishStatus();
     this.persist();
   }
@@ -533,6 +543,7 @@ export class SheetService {
     this.selectionSubject.next(this.document.selection);
     this.publishEditor();
     this.publishActiveFormat();
+    this.publishActiveRules();
     this.publishValidation();
     this.publishStats();
     this.publishStatus();
@@ -568,6 +579,7 @@ export class SheetService {
     this.publishEditor();
     this.publishStats();
     this.publishActiveFormat();
+    this.publishActiveRules();
     // Which match the selection is on, not which matches there are.
     // Moving off a match with the find bar open has to stop saying
     // "3 of 412", and the only thing that changed is where we are.
@@ -1343,6 +1355,7 @@ export class SheetService {
     this.publishStatus();
     this.publishStats();
     this.publishActiveFormat();
+    this.publishActiveRules();
     // A search's matches are cell keys, and every one of them past
     // the line is now the wrong cell.
     if (this.findSubject.value.query !== '') {
@@ -1571,6 +1584,54 @@ export class SheetService {
     return { categories: read.categories, series: read.series, read: read.read };
   }
 
+  /**
+   * Fifty thousand readings, and a chart of them.
+   *
+   * The proof page's second instrument, beside the recalculation
+   * chain and built the same way: the cells go *past the end of the
+   * sheet*, where nobody can scroll to them, select them or type in
+   * them, and where `snapshotOf` will not write them to anybody's
+   * file. A chart reads by key and does not care that the keys are
+   * out there, which is the one place that property is useful.
+   *
+   * Past the chain as well as past the sheet, so the two instruments
+   * do not write over each other.
+   *
+   * Built once. Calling it again re-selects the chart rather than
+   * making a second one, so a script that presses the button twice
+   * measures one chart.
+   */
+  chartStress(points: number): void {
+    const sheet = this.document.sheet;
+    const geometry = this.geometrySubject.value;
+    if (this.chartPoints !== points) {
+      const first = geometry.rowCount + STRESS_CELLS + 16;
+      for (let at = 0; at < points; at++) {
+        // A sine rather than a ramp, so the thinning has extremes to
+        // keep and the picture shows whether it kept them.
+        sheet.setCell(first + at, 0, String(Math.round(Math.sin(at / 400) * 1000)));
+      }
+      this.chartPoints = points;
+      this.stressChart = this.document.addChart({
+        kind: 'line',
+        title: `${points.toLocaleString('en-US')} readings`,
+        range: { start: relativeRef(first, 0), end: relativeRef(first + points - 1, 0) },
+        place: {
+          x: offsetOfColumn(geometry, 3),
+          y: geometry.rowHeight * 2,
+          width: DEFAULT_CHART_WIDTH,
+          height: DEFAULT_CHART_HEIGHT
+        },
+        legend: false
+      });
+    }
+    this.selectedChart = this.stressChart;
+    this.publishCharts();
+    this.publishSeries();
+    this.publishStatus();
+    this.pump();
+  }
+
   /** The snapshot as it stands, for a spec or a worker shutting down. */
   snapshot(): SheetSnapshot {
     return snapshotOf(this.document, this.geometrySubject.value.rowCount);
@@ -1646,6 +1707,7 @@ export class SheetService {
     this.publishFormats();
     this.publishPalette();
     this.publishEditor();
+    this.publishActiveRules();
     this.publishStatus();
     this.publishStats();
     // An undo is an edit as far as the file is concerned. Left out,
@@ -1893,6 +1955,23 @@ export class SheetService {
     const { row, column } = this.document.selection;
     const format = this.document.formatAt(row, column);
     this.activeFormatSubject.next({ paint: format.paint, number: format.number });
+  }
+
+  private publishActiveRules(): void {
+    const { row, column } = this.document.selection;
+    const conditional = this.document.conditionalAt(row, column);
+    const validation = this.document.validationAt(row, column);
+    this.activeRulesSubject.next({
+      conditional:
+        conditional === null
+          ? null
+          : {
+              test: conditional.test,
+              ...(conditional.paint === undefined ? {} : { paint: conditional.paint }),
+              ...(conditional.scale === undefined ? {} : { scale: conditional.scale })
+            },
+      validation: validation === null ? null : { rule: validation.rule, strict: validation.strict === true }
+    });
   }
 
   private publishEditor(): void {

@@ -90,7 +90,30 @@ const BUDGET = {
    * rule covering none: the work per publish is one comparison per
    * visible cell, which should not be measurable.
    */
-  costOfAConditionalFormat: 2
+  costOfAConditionalFormat: 2,
+  /**
+   * How much slower a frame is allowed to get with a chart of fifty
+   * thousand readings open over the sheet.
+   *
+   * Phase 15's exit criterion, and the budget that guards the phase's
+   * one admission. A chart is the first thing that lets the render
+   * worker know about cells outside the window, so it is the first
+   * thing whose cost cannot be argued from the viewport — the
+   * argument has to be made here instead.
+   *
+   * It is made in two halves. The series is thinned to the chart's own
+   * width before it crosses, so what the render worker holds is four
+   * hundred points and not fifty thousand; and the picture is made
+   * when the painter's inputs change rather than once a frame, so a
+   * chart standing still over a scrolling sheet is one image draw.
+   * Neither should be measurable, and a regression in either would
+   * show here as frames that got slower when a chart was opened.
+   *
+   * Stated as a *difference* against the run immediately before it,
+   * like the three above, so it means the same thing on a slower
+   * machine.
+   */
+  costOfAChart: 2
 };
 
 const PORT = Number(process.env.PROOF_PORT ?? '4319');
@@ -338,6 +361,53 @@ async function main(): Promise<void> {
       `a colour scale over every cell: median frame ${ruled.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms with no rules`,
       ruled.median - idle.median <= BUDGET.costOfAConditionalFormat,
       BUDGET.costOfAConditionalFormat
+    );
+
+    // --------------------------------------------------------------
+    // A chart of fifty thousand readings, open over the scroll
+    // --------------------------------------------------------------
+    //
+    // Phase 15's exit criterion. Every phase before this one could
+    // say that the render worker learns the window and nothing else;
+    // a chart cannot say it, because a chart of a range is a chart of
+    // all of it. What it learns instead is a *series*, thinned to the
+    // chart's own width — four hundred points out of fifty thousand —
+    // and it learns it on a key of its own so that moving the chart
+    // does not republish the numbers and a settling formula does not
+    // republish the title.
+    //
+    // The readings live past the end of the sheet, like the
+    // recalculation chain and for the same reason: nobody can scroll
+    // to them, select them, or save them by accident. A chart reads by
+    // key and does not care.
+    //
+    // Measured against the run before it rather than against `idle`,
+    // because the colour scale is still on the sheet and this is a
+    // question about the chart.
+    await openMenu(devtools, 'Data');
+    await chooseItem(devtools, `Chart ${(50_000).toLocaleString('en-US')} points`);
+    await sleep(900);
+
+    // And the chart really is there, or the run below measures a
+    // sheet quietly doing nothing — the same trap the two runs above
+    // have. A chart is an `image` in the accessibility tree.
+    const charted = await devtools.evaluate<number>(
+      `[...document.querySelectorAll('[role="image"]')].filter(el => (el.getAttribute('aria-label') ?? '').includes('readings')).length`
+    );
+    if (charted === 0) {
+      throw new Error('The chart was not inserted: nothing in the tree is labelled with its readings.');
+    }
+
+    const charting = report(
+      'scrolling with a 50,000-point chart open',
+      await scrollRun(devtools, 'scrolling with a 50,000-point chart open'),
+      failures
+    );
+    check(
+      failures,
+      `a 50,000-point chart open: median frame ${charting.median.toFixed(2)}ms against ${ruled.median.toFixed(2)}ms without it`,
+      charting.median - ruled.median <= BUDGET.costOfAChart,
+      BUDGET.costOfAChart
     );
 
     // --------------------------------------------------------------

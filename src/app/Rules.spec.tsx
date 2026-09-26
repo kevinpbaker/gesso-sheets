@@ -187,6 +187,48 @@ describe('rules over a selection', () => {
       expect(fillOf(1, 0)).toBe('');
     });
 
+    it('opens on the rule the active cell is already under', async () => {
+      await menu('o', 'Conditional formatting…');
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Less than' }));
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Green' }));
+      await h.ui.settle();
+      await type('3');
+      await press('Enter');
+
+      // Off the range, where there is no rule, and back onto it.
+      h.service.setSelection(10, 5, 10, 5);
+      await h.served.settle();
+      await h.ui.settle();
+      await menu('o', 'Conditional formatting…');
+      expect(h.ui.getByRole('radio', { name: 'Less than' })).toHaveSemantics({ states: [] });
+      expect(h.ui.getByRole('radio', { name: 'Greater than' })).toHaveSemantics({ states: ['checked'] });
+      await press('Escape');
+
+      h.service.setSelection(1, 0, 1, 0);
+      await h.served.settle();
+      await h.ui.settle();
+      await menu('o', 'Conditional formatting…');
+      expect(h.ui.getByRole('radio', { name: 'Less than' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('radio', { name: 'Green' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('3');
+    });
+
+    it('opens on a colour scale as a colour scale', async () => {
+      await menu('o', 'Conditional formatting…');
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Colour scale' }));
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Blue' }));
+      await h.ui.settle();
+      await click('Apply');
+
+      h.service.setSelection(10, 5, 10, 5);
+      h.service.setSelection(0, 0, 0, 0);
+      await h.served.settle();
+      await h.ui.settle();
+      await menu('o', 'Conditional formatting…');
+      expect(h.ui.getByRole('radio', { name: 'Colour scale' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('radio', { name: 'Blue' })).toHaveSemantics({ states: ['checked'] });
+    });
+
     it('is cleared from the Data menu', async () => {
       await menu('o', 'Conditional formatting…');
       await type('5');
@@ -223,6 +265,20 @@ describe('rules over a selection', () => {
       await type('North, South');
       await press('Enter');
       expect(validation().cells[150]).toBeUndefined();
+    });
+
+    it('opens on the validation the active cell is already under', async () => {
+      await menu('d', 'Data validation…');
+      await type('North, South');
+      await press('Enter');
+
+      h.service.setSelection(10, 5, 10, 5);
+      h.service.setSelection(0, 0, 0, 0);
+      await h.served.settle();
+      await h.ui.settle();
+      await menu('d', 'Data validation…');
+      expect(h.ui.getByRole('radio', { name: 'One of a list' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('textbox', { name: 'Allowed values' })).toHaveText('North, South');
     });
 
     it('offers the list to the cell that has one', async () => {
