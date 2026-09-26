@@ -2389,6 +2389,19 @@ with a spec that fails without it. `StatusFigures.spec.tsx` chooses
 Min, reloads through a stand-in `localStorage`, and finds Min. It also
 finds the default when what was stored is not a choice.
 
+**And a second engine bug, found the same way.** Checked in Chrome,
+the status bar's menu of figures opened downward from the bottom of
+the window, where most of it could not be seen. A menu at a point was
+placed by a `top` and a `left` and nothing more, and nothing kept it on
+the screen. The grid's right-click menu has the same flaw, and had
+never been opened near an edge. Gesso edd9384 gives the layout engine
+`anchorPoint`: a point placed beside as an anchor of no size would be,
+with the same flip and clamp, so a menu at a point opens below and to
+the right and moves above or to the left when there is no room.
+Checked in Chrome: the figures' menu now opens above the status bar,
+Max chosen there comes back after a reload, and the status bar reads
+*Sum 695 · Average 231.6667 · Count 3 · Max 420*.
+
 **Not done: the two other preferences.** What a new document is zoomed
 to, and whether a new sheet shows formulas, were guesses at what the
 next preference would be. Nothing has asked for either. Each would
