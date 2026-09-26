@@ -1092,44 +1092,31 @@ select.
 
 ## What Gesso still does not have
 
-### A bar switched in by a menu choice is never laid out — **open**
+### ~~A bar switched in by a menu choice is never laid out~~ — **fixed**
 
-Found in Phase 14, and it predates it: `Edit ▸ Find…` has been giving
-a find bar of zero height since Phase 8, for anybody using a mouse.
-Ctrl+F gives the same bar at its full size.
+`Edit ▸ Find…` had been giving a find bar of zero height since Phase
+8, for anybody using a mouse; Ctrl+F gave the same bar at full size.
+Phase 14's conditional formatting bar inherited it, and the menu was
+its only route in.
 
-Narrowed, in a headless browser, to a window of a few lines. The
-command runs from `MenuBar.choose`, which hides the overlay and then
-calls `onChoose`; the children arrive and the chrome's column is
-marked. All of that is confirmed working:
+The cause was in the engine. `markLayoutDirty` walks a changed node's
+ancestors setting `measureDirty` and stops at the nearest relayout
+boundary — sound only while the pass really does start at that
+boundary. It does not always: another node dirtied in the same frame
+can drag the layout root into the set, and then the pass is a
+`fullLayout` that measures from the root, down through ancestors the
+walk left clean, every one of which short-circuits on its own measure
+memo. A menu's own teardown is exactly what drags the root in, which
+is why the menu was the route that failed and an accelerator was not.
 
-    CHILDREN  …component:0:0:component:0:0 count=2
-    MARK      …component:0:0:component:0:0 newlyDirty=true suppressed=false
-    COLLECT   chrome flags=16          ← DirtyFlags.Children, in the frame
+Fixed in gesso by carrying the walk past the boundary to the root
+while still recording the boundary as where a bounded relayout
+starts. Both bars now measure 1400x32 by either route.
 
-So the node is marked, a frame is armed, and the frame collects it
-carrying `Children`. What does not happen is any layout for it:
-`LayoutEngine.layoutForFrame` produces neither a `fullLayout` nor a
-`relayoutAt` at that node, in that frame or any frame after. The same
-three lines appear for the two routes that *work* — an accelerator,
-and a plain toolbar button — and there they are followed by a
-relayout and a bar of 1400x32.
-
-What separates the routes is the overlay: a pointer is not the
-problem (a toolbar button is a pointer and works), and neither is
-lasting damage (opening the same bar 200ms later works). Something
-about hiding an overlay in the same turn swallows the layout for a
-mark that is demonstrably in the frame.
-
-It does not reproduce in `renderTest`, nor in a hand-built gesso tree
-with an overlay opened and closed over it — both lay out correctly —
-so the next step is to narrow the *application's* tree rather than to
-build a smaller one, or to instrument `layoutForFrame` between
-`frame.entries()` and `relayout` and find which of the two decisions
-is taken.
-
-The application works around it: the conditional formatting bar has
-an accelerator, `Ctrl+Shift+R`.
+It took a browser to find and a browser to prove: the shape does not
+reproduce in either repo's harness, so there is no unit spec, and
+that is written down in the engine's commit rather than papered over
+with one that passes when the fix is reverted.
 
 Carried forward from the head of this file, with what Part Two adds.
 Most of it is struck through now. Two of these were closed by the

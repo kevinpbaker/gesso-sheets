@@ -14,26 +14,26 @@
     "icons": "node --experimental-strip-types scripts/icons.ts"
   },
   "dependencies": {
-    "gesso-components": "file:vendor/gesso-components-0.2.1-af57cdae.tgz",
-    "gesso-core": "file:vendor/gesso-core-0.2.1-5557b181.tgz",
-    "gesso-framework": "file:vendor/gesso-framework-0.2.1-79e263b3.tgz",
+    "gesso-components": "file:vendor/gesso-components-0.3.0-389ceb14.tgz",
+    "gesso-core": "file:vendor/gesso-core-0.3.0-9f621382.tgz",
+    "gesso-framework": "file:vendor/gesso-framework-0.3.0-73b956ab.tgz",
     "rxjs": "^7.8.2"
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
-    "gesso-devtools": "file:vendor/gesso-devtools-0.2.1-8ba1b124.tgz",
-    "gesso-testing": "file:vendor/gesso-testing-0.2.1-38196b17.tgz",
-    "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz",
+    "gesso-devtools": "file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz",
+    "gesso-testing": "file:vendor/gesso-testing-0.3.0-9084ae26.tgz",
+    "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz",
     "heroicons": "^2.2.0",
     "typescript": "~7.0.2",
     "vite": "^8.2.0",
     "vitest": "^4.1.11"
   },
   "overrides": {
-    "gesso-core": "file:vendor/gesso-core-0.2.1-5557b181.tgz",
-    "gesso-framework": "file:vendor/gesso-framework-0.2.1-79e263b3.tgz",
-    "gesso-components": "file:vendor/gesso-components-0.2.1-af57cdae.tgz",
-    "gesso-devtools": "file:vendor/gesso-devtools-0.2.1-8ba1b124.tgz",
-    "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.2.1-19701287.tgz"
+    "gesso-core": "file:vendor/gesso-core-0.3.0-9f621382.tgz",
+    "gesso-framework": "file:vendor/gesso-framework-0.3.0-73b956ab.tgz",
+    "gesso-components": "file:vendor/gesso-components-0.3.0-389ceb14.tgz",
+    "gesso-devtools": "file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz",
+    "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz"
   }
 }
