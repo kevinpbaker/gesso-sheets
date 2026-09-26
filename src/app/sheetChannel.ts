@@ -69,8 +69,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       duplicateSheet: sheet => service.duplicateSheet(sheet),
       setSheetColour: (sheet, colour) => service.setSheetColour(sheet, colour),
       setCell: (row, column, input) => service.setCell(row, column, input),
-      setSelection: (row, column, anchorRow, anchorColumn) =>
-        service.setSelection(row, column, anchorRow, anchorColumn),
+      setSelection: (row, column, anchorRow, anchorColumn, cornerRow, cornerColumn) =>
+        service.setSelection(row, column, anchorRow, anchorColumn, cornerRow, cornerColumn),
       undo: () => service.undo(),
       redo: () => service.redo(),
       copy: cut => service.copy(cut),

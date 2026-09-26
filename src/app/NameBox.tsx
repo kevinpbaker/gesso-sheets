@@ -5,7 +5,7 @@ import { internalState, type ComponentContext, type Inputs } from 'gesso-framewo
 
 import { columnName, parseAddress, relativeRef, type RangeRef } from '../sheet/A1';
 import { nameProblem, nameProblemText } from '../sheet/Names';
-import type { SheetName } from './SheetContract';
+import { cornerOf, isOneCell, type SheetName } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -62,11 +62,11 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
   /** Where the selection is, as a person would write it. */
   const address: Observable<string> = edit.selection.pipe(
     map(at =>
-      at.row === at.anchorRow && at.column === at.anchorColumn
+      isOneCell(at)
         ? `${columnName(at.column)}${at.row + 1}`
-        : `${columnName(Math.min(at.column, at.anchorColumn))}${Math.min(at.row, at.anchorRow) + 1}:${columnName(
-            Math.max(at.column, at.anchorColumn)
-          )}${Math.max(at.row, at.anchorRow) + 1}`
+        : `${columnName(Math.min(cornerOf(at).column, at.anchorColumn))}${Math.min(cornerOf(at).row, at.anchorRow) + 1}:${columnName(
+            Math.max(cornerOf(at).column, at.anchorColumn)
+          )}${Math.max(cornerOf(at).row, at.anchorRow) + 1}`
     )
   );
 
@@ -128,7 +128,7 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
       return;
     }
     const at = edit.selectionNow();
-    if (at.row === at.anchorRow && at.column === at.anchorColumn) {
+    if (isOneCell(at)) {
       notice(ONE_CELL);
       return;
     }
@@ -155,16 +155,9 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
     }
     draft.value = null;
     notice('');
-    // The anchor goes on the *far* corner and the active cell is
-    // extended back to the near one, because `extendTo` moves the
-    // active corner and leaves the anchor. Somebody who asked for
-    // `A1:C9` expects to start typing in A1; done the other way round
-    // the same nine cells are selected with the cursor in the wrong
-    // corner of them.
-    edit.moveTo(range.end.row, range.end.column);
-    if (range.end.row !== range.start.row || range.end.column !== range.start.column) {
-      edit.extendTo(range.start.row, range.start.column);
-    }
+    // Somebody who asked for `A1:C9` expects to start typing in A1, so
+    // the active cell is the range's first; the rest runs to C9.
+    edit.selectRect(range.start.row, range.start.column, range.end.row, range.end.column);
     edit.focusSheet();
   };
 

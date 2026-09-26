@@ -129,11 +129,37 @@ export interface SheetMerge {
 }
 
 /** The active cell, and the rectangle anchored from it. */
+/**
+ * A range and the active cell inside it, as Excel has them.
+ *
+ * `row` and `column` are the **active cell**: where typing goes, what
+ * the name box and the formula bar show, where the editor opens. The
+ * range runs from the anchor to the **corner**, which is the end Shift
+ * moves. The corner is absent when it is the active cell — which it is
+ * after a click, an arrow, or any selection made before Phase 24 — so
+ * every selection written the old way still means what it meant.
+ *
+ * What wants the rectangle asks `rectOf` in `SheetRanges`, or
+ * `cornerOf` here; what wants the active cell reads `row` and `column`.
+ */
 export interface SheetSelection {
   readonly row: number;
   readonly column: number;
   readonly anchorRow: number;
   readonly anchorColumn: number;
+  readonly cornerRow?: number;
+  readonly cornerColumn?: number;
+}
+
+/** The end of the range Shift moves: the corner when there is one, the active cell otherwise. */
+export function cornerOf(selection: SheetSelection): { row: number; column: number } {
+  return { row: selection.cornerRow ?? selection.row, column: selection.cornerColumn ?? selection.column };
+}
+
+/** Whether the range is one cell. */
+export function isOneCell(selection: SheetSelection): boolean {
+  const corner = cornerOf(selection);
+  return corner.row === selection.anchorRow && corner.column === selection.anchorColumn;
 }
 
 /**
@@ -695,7 +721,11 @@ export interface SheetCommands {
   setSheetColour(sheet: number, colour: string | null): void;
   /** Commits what was typed into a cell. */
   setCell(row: number, column: number, input: string): void;
-  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void;
+  /**
+   * The active cell, the anchor, and — when the range's far end is not
+   * the active cell — the corner; see `SheetSelection`.
+   */
+  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number, cornerRow?: number, cornerColumn?: number): void;
   /**
    * Ctrl+Arrow: moves the cursor to the edge of the data in a
    * direction, keeping the anchor with `extend`.

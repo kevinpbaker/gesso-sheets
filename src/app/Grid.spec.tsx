@@ -824,8 +824,9 @@ describe('merged cells', () => {
 
     // The far corner is the merge's anchor, not the covered cell the
     // pointer is literally over.
-    expect(h.document.selection.row).toBe(1);
-    expect(h.document.selection.column).toBe(1);
+    // The corner the sweep moved, which is the merge's anchor.
+    expect(h.document.selection.cornerRow).toBe(1);
+    expect(h.document.selection.cornerColumn).toBe(1);
   });
 });
 

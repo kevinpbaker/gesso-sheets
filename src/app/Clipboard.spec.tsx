@@ -106,7 +106,7 @@ describe('clipboard and fill', () => {
       await press('ArrowDown', { shift: true });
       await press('ArrowRight', { shift: true });
 
-      expect(h.document.selection).toEqual({ row: 1, column: 1, anchorRow: 0, anchorColumn: 0 });
+      expect(h.document.selection).toEqual({ row: 0, column: 0, anchorRow: 0, anchorColumn: 0, cornerRow: 1, cornerColumn: 1 });
     });
 
     it('copies the rectangle as tab-separated rows', async () => {
@@ -153,13 +153,13 @@ describe('clipboard and fill', () => {
     it('selects the rectangle the pointer swept', async () => {
       await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
 
-      expect(h.document.selection).toMatchObject({ anchorRow: 1, anchorColumn: 1, row: 3, column: 3 });
+      expect(h.document.selection).toMatchObject({ anchorRow: 1, anchorColumn: 1, row: 1, column: 1, cornerRow: 3, cornerColumn: 3 });
     });
 
     it('sweeps backwards as well as forwards', async () => {
       await sweep({ row: 3, column: 3 }, { row: 1, column: 1 });
 
-      expect(h.document.selection).toMatchObject({ anchorRow: 3, anchorColumn: 3, row: 1, column: 1 });
+      expect(h.document.selection).toMatchObject({ anchorRow: 3, anchorColumn: 3, row: 3, column: 3, cornerRow: 1, cornerColumn: 1 });
     });
 
     it('copies what was swept', async () => {
@@ -175,7 +175,7 @@ describe('clipboard and fill', () => {
      */
     it('collapses to one cell when a cell is clicked afterwards', async () => {
       await sweep({ row: 1, column: 1 }, { row: 3, column: 3 });
-      expect(h.document.selection).toMatchObject({ anchorRow: 1, row: 3 });
+      expect(h.document.selection).toMatchObject({ anchorRow: 1, row: 1, cornerRow: 3 });
 
       h.ui.fireEvent.click(h.ui.getByRole('cell', { name: 'b' }));
       await h.ui.settle();
@@ -227,10 +227,10 @@ describe('clipboard and fill', () => {
       await press('c', { ctrl: true });
       const text = h.copied();
 
-      // Down to row 4, column A. Home first, because an arrow from a
-      // range leaves the selection on the corner it was steering, not
-      // on the corner it started from.
+      // Down to row 4, column A. The arrows go from the active cell,
+      // which Shift left on A1, as in Excel.
       await press('Home');
+      await press('ArrowDown');
       await press('ArrowDown');
       await press('ArrowDown');
       await paste(text);
@@ -277,8 +277,9 @@ describe('clipboard and fill', () => {
       expect(h.copied()).toBe('2\n=A1*10');
       expect(h.document.sheet.input(0, 0)).toBe('2');
 
-      // To C2: Home keeps the row the selection was steering.
+      // To C2, from the active cell Shift left on A1.
       await press('Home');
+      await press('ArrowDown');
       await press('ArrowRight');
       await press('ArrowRight');
       await paste(h.copied());
@@ -296,6 +297,7 @@ describe('clipboard and fill', () => {
       await press('c', { ctrl: true });
       const text = h.copied();
       await press('Home');
+      await press('ArrowDown');
       await press('ArrowDown');
       await press('ArrowDown');
       await paste(text);

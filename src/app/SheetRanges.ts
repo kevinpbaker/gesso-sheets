@@ -5,7 +5,7 @@ import { fromTsv, toTsv, type Block } from '../sheet/Tsv';
 import { isError, type CellValue } from '../sheet/Values';
 import { literalOf } from '../sheet/Workbook';
 import type { SheetDocument } from './SheetDocument';
-import type { SheetSelection } from './SheetContract';
+import { cornerOf, type SheetSelection } from './SheetContract';
 
 /** A selection as the rectangle it covers, corners normalised. */
 export interface Rect {
@@ -17,10 +17,10 @@ export interface Rect {
 
 export function rectOf(selection: SheetSelection): Rect {
   return {
-    firstRow: Math.min(selection.row, selection.anchorRow),
-    lastRow: Math.max(selection.row, selection.anchorRow),
-    firstColumn: Math.min(selection.column, selection.anchorColumn),
-    lastColumn: Math.max(selection.column, selection.anchorColumn)
+    firstRow: Math.min(cornerOf(selection).row, selection.anchorRow),
+    lastRow: Math.max(cornerOf(selection).row, selection.anchorRow),
+    firstColumn: Math.min(cornerOf(selection).column, selection.anchorColumn),
+    lastColumn: Math.max(cornerOf(selection).column, selection.anchorColumn)
   };
 }
 

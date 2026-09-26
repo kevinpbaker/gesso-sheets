@@ -122,7 +122,7 @@ describe('a block dragged by its border', () => {
     const three = h.ui.getVisibleBox(h.ui.getByRole('rowheader', { name: '3' }));
     await drag({ x: c.x + c.width / 2, y: three.y + three.height / 2 }, { x: 2 * COLUMN_WIDTH, y: 2 * ROW_HEIGHT });
     expect(h.document.sheet.input(1, 1)).toBe('1');
-    expect(h.document.selection).toMatchObject({ anchorRow: 2, anchorColumn: 2, row: 4, column: 4 });
+    expect(h.document.selection).toMatchObject({ anchorRow: 2, anchorColumn: 2, row: 2, column: 2, cornerRow: 4, cornerColumn: 4 });
   });
 
   it('leaves the clipboard alone', async () => {

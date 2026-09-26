@@ -95,7 +95,7 @@ describe('clicking a header', () => {
     h.ui.fireEvent.click(column('E'), { modifiers: { shift: true } });
     await settle();
 
-    expect(h.document.selection).toEqual({ row: 0, column: 4, anchorRow: ROWS - 1, anchorColumn: 2 });
+    expect(h.document.selection).toEqual({ row: 0, column: 2, anchorRow: ROWS - 1, anchorColumn: 2, cornerRow: 0, cornerColumn: 4 });
   });
 
   it('extends backwards as well as forwards', async () => {
@@ -104,7 +104,7 @@ describe('clicking a header', () => {
     h.ui.fireEvent.click(row('2'), { modifiers: { shift: true } });
     await settle();
 
-    expect(h.document.selection).toEqual({ row: 1, column: 0, anchorRow: 4, anchorColumn: COLUMNS - 1 });
+    expect(h.document.selection).toEqual({ row: 4, column: 0, anchorRow: 4, anchorColumn: COLUMNS - 1, cornerRow: 1, cornerColumn: 0 });
   });
 
   it('selects the sheet from the corner', async () => {
@@ -166,7 +166,7 @@ describe('dragging across the headers', () => {
     h.ui.fireEvent.pointerUp(to.x, to.y);
     await settle();
 
-    expect(h.document.selection).toEqual({ row: 0, column: 2, anchorRow: ROWS - 1, anchorColumn: 0 });
+    expect(h.document.selection).toEqual({ row: 0, column: 0, anchorRow: ROWS - 1, anchorColumn: 0, cornerRow: 0, cornerColumn: 2 });
   });
 
   it('sweeps several rows', async () => {
@@ -179,7 +179,7 @@ describe('dragging across the headers', () => {
     h.ui.fireEvent.pointerUp(to.x, to.y);
     await settle();
 
-    expect(h.document.selection).toEqual({ row: 3, column: 0, anchorRow: 1, anchorColumn: COLUMNS - 1 });
+    expect(h.document.selection).toEqual({ row: 1, column: 0, anchorRow: 1, anchorColumn: COLUMNS - 1, cornerRow: 3, cornerColumn: 0 });
   });
 
   it('keeps sweeping letters when the pointer wanders down into the cells', async () => {
@@ -192,7 +192,7 @@ describe('dragging across the headers', () => {
     h.ui.fireEvent.pointerUp(to.x, to.y + 60);
     await settle();
 
-    expect(h.document.selection).toEqual({ row: 0, column: 1, anchorRow: ROWS - 1, anchorColumn: 0 });
+    expect(h.document.selection).toEqual({ row: 0, column: 0, anchorRow: ROWS - 1, anchorColumn: 0, cornerRow: 0, cornerColumn: 1 });
   });
 });
 

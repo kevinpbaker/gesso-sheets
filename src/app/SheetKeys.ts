@@ -36,7 +36,15 @@ export type SheetAction =
    * which is what shift does to every selection everywhere.
    */
   /** `tab` marks Tab and Shift+Tab, which Enter comes back from; see `SheetEditing`. */
-  | { readonly kind: 'move'; readonly rows: number; readonly columns: number; readonly extend: boolean; readonly tab?: true }
+  | {
+      readonly kind: 'move';
+      readonly rows: number;
+      readonly columns: number;
+      readonly extend: boolean;
+      readonly tab?: true;
+      /** Enter or Tab, which walk a selection of several cells rather than leave it; see `SheetEditing`. */
+      readonly walks?: true;
+    }
   /** Move to an edge of the sheet. */
   | { readonly kind: 'jump'; readonly to: 'rowStart' | 'sheetStart' | 'rowEnd' | 'sheetEnd'; readonly extend: boolean }
   /** Ctrl+Arrow: to the edge of the data, which only the other thread can see. */
@@ -168,9 +176,9 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
     // do on a cell nobody is typing into. Shift reverses them rather
     // than extending: that is what it means on these two keys.
     case 'Enter':
-      return { kind: 'move', rows: shift ? -1 : 1, columns: 0, extend: false };
+      return { kind: 'move', rows: shift ? -1 : 1, columns: 0, extend: false, walks: true };
     case 'Tab':
-      return { kind: 'move', rows: 0, columns: shift ? -1 : 1, extend: false, tab: true };
+      return { kind: 'move', rows: 0, columns: shift ? -1 : 1, extend: false, tab: true, walks: true };
     case 'F2':
       return { kind: 'edit' };
     case 'Delete':

@@ -45,10 +45,11 @@ describe('keys on a selected cell', () => {
   it('moves down on Enter and right on Tab, and back with shift', () => {
     // Shift reverses these two rather than extending, which is what it
     // means on Enter and Tab.
-    expect(onGrid('Enter')).toEqual({ kind: 'move', rows: 1, columns: 0, extend: false });
-    expect(onGrid('Enter', { shift: true })).toEqual({ kind: 'move', rows: -1, columns: 0, extend: false });
-    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false, tab: true });
-    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false, tab: true });
+    // And both walk a selection of several cells rather than leave it.
+    expect(onGrid('Enter')).toEqual({ kind: 'move', rows: 1, columns: 0, extend: false, walks: true });
+    expect(onGrid('Enter', { shift: true })).toEqual({ kind: 'move', rows: -1, columns: 0, extend: false, walks: true });
+    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false, tab: true, walks: true });
+    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false, tab: true, walks: true });
   });
 
   it('pages by less than a screen, so something stays in common', () => {

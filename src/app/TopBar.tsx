@@ -20,7 +20,7 @@ import type { FileActions } from './Files';
 import { RecentBar } from './RecentBar';
 import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
-import { Sheet, zoomStep } from './SheetContract';
+import { cornerOf, isOneCell, Sheet, zoomStep } from './SheetContract';
 import {
   acceleratorLabel,
   CHART_POINTS,
@@ -357,14 +357,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   /** The rows and columns the selection covers, corners normalised. */
   const rows = () => {
     const at = edit.selectionNow();
-    const first = Math.min(at.row, at.anchorRow);
-    const last = Math.max(at.row, at.anchorRow);
+    const first = Math.min(cornerOf(at).row, at.anchorRow);
+    const last = Math.max(cornerOf(at).row, at.anchorRow);
     return { first, last, count: last - first + 1 };
   };
   const columns = () => {
     const at = edit.selectionNow();
-    const first = Math.min(at.column, at.anchorColumn);
-    const last = Math.max(at.column, at.anchorColumn);
+    const first = Math.min(cornerOf(at).column, at.anchorColumn);
+    const last = Math.max(cornerOf(at).column, at.anchorColumn);
     return { first, last, count: last - first + 1 };
   };
 
@@ -381,8 +381,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    */
   const sortBy = (ascending: boolean): void => {
     const at = edit.selectionNow();
-    const single = at.row === at.anchorRow && at.column === at.anchorColumn;
-    sheet.send.sortRange(single ? at.column : Math.min(at.column, at.anchorColumn), ascending, single);
+    const single = isOneCell(at);
+    sheet.send.sortRange(single ? at.column : Math.min(cornerOf(at).column, at.anchorColumn), ascending, single);
   };
 
   const run = (id: CommandId): void => {
@@ -499,10 +499,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'defineName': {
         const at = edit.selectionNow();
         const range = formatRange({
-          start: relativeRef(Math.min(at.row, at.anchorRow), Math.min(at.column, at.anchorColumn)),
-          end: relativeRef(Math.max(at.row, at.anchorRow), Math.max(at.column, at.anchorColumn))
+          start: relativeRef(Math.min(cornerOf(at).row, at.anchorRow), Math.min(cornerOf(at).column, at.anchorColumn)),
+          end: relativeRef(Math.max(cornerOf(at).row, at.anchorRow), Math.max(cornerOf(at).column, at.anchorColumn))
         });
-        if (at.row === at.anchorRow && at.column === at.anchorColumn) {
+        if (isOneCell(at)) {
           // Said rather than greyed out. A disabled item tells
           // somebody they cannot, and this tells them how.
           notice.value = ONE_CELL;

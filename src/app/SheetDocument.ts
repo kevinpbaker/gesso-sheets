@@ -9,6 +9,7 @@ import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
 import type { NamedRange, NameProblem } from '../sheet/Names';
 import { Sheet } from '../sheet/Sheet';
+import type { SheetSelection } from './SheetContract';
 import { literalOf, Workbook } from '../sheet/Workbook';
 import { validate } from '../sheet/Validation';
 import { shiftIndex, type Shift } from '../sheet/Shift';
@@ -280,7 +281,7 @@ interface Page {
    * the frozen panes, so it is saved with the sheet and is not an edit.
    */
   zoom: number;
-  selection: { row: number; column: number; anchorRow: number; anchorColumn: number };
+  selection: SheetSelection;
   /**
    * Formats that think, and what a cell is allowed to hold.
    *
@@ -461,11 +462,11 @@ export class SheetDocument {
     this.page.frozenColumns = columns;
   }
 
-  get selection(): { row: number; column: number; anchorRow: number; anchorColumn: number } {
+  get selection(): SheetSelection {
     return this.page.selection;
   }
 
-  set selection(at: { row: number; column: number; anchorRow: number; anchorColumn: number }) {
+  set selection(at: SheetSelection) {
     this.page.selection = at;
   }
 
@@ -1161,8 +1162,11 @@ export class SheetDocument {
     this.selection = { row: firstRow, column: firstColumn, anchorRow: lastRow, anchorColumn: lastColumn };
   }
 
-  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void {
-    this.selection = { row, column, anchorRow, anchorColumn };
+  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number, cornerRow?: number, cornerColumn?: number): void {
+    // A corner that is the active cell is not written down, so a
+    // selection made the old way is the same object shape it always was.
+    const corner = cornerRow === undefined || cornerColumn === undefined || (cornerRow === row && cornerColumn === column);
+    this.selection = corner ? { row, column, anchorRow, anchorColumn } : { row, column, anchorRow, anchorColumn, cornerRow, cornerColumn };
   }
 
   /**

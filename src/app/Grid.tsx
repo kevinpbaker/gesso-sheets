@@ -47,6 +47,8 @@ import * as dims from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import {
   cellIn,
+  cornerOf,
+  isOneCell,
   PLAIN_PAINT,
   Sheet,
   type SheetExplain,
@@ -1333,14 +1335,14 @@ export function Grid(
    * started, as a Shift+click on the cells has it: the end that moves
    * is the active one.
    */
-  const selectColumns = (active: number, anchor: number): void => {
+  const selectColumns = (corner: number, anchor: number, active?: { row: number; column: number }): void => {
     keepScroll = true;
-    edit.selectRect(0, active, rowCount.value - 1, anchor);
+    edit.selectRect(0, corner, rowCount.value - 1, anchor, active);
     keepScroll = false;
   };
-  const selectRows = (active: number, anchor: number): void => {
+  const selectRows = (corner: number, anchor: number, active?: { row: number; column: number }): void => {
     keepScroll = true;
-    edit.selectRect(active, 0, anchor, columnCount() - 1);
+    edit.selectRect(corner, 0, anchor, columnCount() - 1, active);
     keepScroll = false;
   };
   const columnCount = (): number => sheet.view.geometry.value.columnCount;
@@ -1354,9 +1356,10 @@ export function Grid(
       edit.selectRect(0, 0, rowCount.value - 1, columnCount() - 1);
       keepScroll = false;
     } else if (hit.kind === 'column') {
-      selectColumns(hit.column, extend ? held.anchorColumn : hit.column);
+      // Shift keeps the active cell, here as on the cells.
+      selectColumns(hit.column, extend ? held.anchorColumn : hit.column, extend ? held : undefined);
     } else {
-      selectRows(hit.row, extend ? held.anchorRow : hit.row);
+      selectRows(hit.row, extend ? held.anchorRow : hit.row, extend ? held : undefined);
     }
     if (gridNode !== null) {
       focus.focus(gridNode);
@@ -1387,10 +1390,10 @@ export function Grid(
       return false;
     }
     const at = edit.selectionNow();
-    const firstRow = Math.min(at.row, at.anchorRow);
-    const lastRow = Math.max(at.row, at.anchorRow);
-    const firstColumn = Math.min(at.column, at.anchorColumn);
-    const lastColumn = Math.max(at.column, at.anchorColumn);
+    const firstRow = Math.min(cornerOf(at).row, at.anchorRow);
+    const lastRow = Math.max(cornerOf(at).row, at.anchorRow);
+    const firstColumn = Math.min(cornerOf(at).column, at.anchorColumn);
+    const lastColumn = Math.max(cornerOf(at).column, at.anchorColumn);
     const xOf = (column: number): number =>
       GUTTER_WIDTH + sheetWindow.offsetOf(column) - (column < frozen.value.columns ? 0 : scrollX.value);
     const yOf = (row: number): number =>
@@ -1451,10 +1454,10 @@ export function Grid(
   const onContext = (at: { x: number; y: number }): void => {
     const hit = headerHit(at);
     const held = edit.selectionNow();
-    const firstRow = Math.min(held.row, held.anchorRow);
-    const lastRow = Math.max(held.row, held.anchorRow);
-    const firstColumn = Math.min(held.column, held.anchorColumn);
-    const lastColumn = Math.max(held.column, held.anchorColumn);
+    const firstRow = Math.min(cornerOf(held).row, held.anchorRow);
+    const lastRow = Math.max(cornerOf(held).row, held.anchorRow);
+    const firstColumn = Math.min(cornerOf(held).column, held.anchorColumn);
+    const lastColumn = Math.max(cornerOf(held).column, held.anchorColumn);
     if (hit?.kind === 'column') {
       const whole = firstRow === 0 && lastRow >= rowCount.value - 1;
       if (!whole || hit.column < firstColumn || hit.column > lastColumn) {
@@ -2729,9 +2732,9 @@ export function Grid(
         onDoubleClick: (event: UiPointerEvent) => {
           event.stopPropagation();
           const at = edit.selectionNow();
-          const first = Math.min(at.column, at.anchorColumn);
-          const last = Math.max(at.column, at.anchorColumn);
-          const whole = Math.min(at.row, at.anchorRow) === 0 && Math.max(at.row, at.anchorRow) >= rowCount.value - 1;
+          const first = Math.min(cornerOf(at).column, at.anchorColumn);
+          const last = Math.max(cornerOf(at).column, at.anchorColumn);
+          const whole = Math.min(cornerOf(at).row, at.anchorRow) === 0 && Math.max(cornerOf(at).row, at.anchorRow) >= rowCount.value - 1;
           if (whole && column >= first && column <= last) {
             sheet.send.measureColumns(first, last);
           } else {
@@ -2879,10 +2882,10 @@ export function Grid(
           const held = edit.selectionNow();
           if (at !== null) {
             carrying = {
-              firstRow: Math.min(held.row, held.anchorRow),
-              lastRow: Math.max(held.row, held.anchorRow),
-              firstColumn: Math.min(held.column, held.anchorColumn),
-              lastColumn: Math.max(held.column, held.anchorColumn),
+              firstRow: Math.min(cornerOf(held).row, held.anchorRow),
+              lastRow: Math.max(cornerOf(held).row, held.anchorRow),
+              firstColumn: Math.min(cornerOf(held).column, held.anchorColumn),
+              lastColumn: Math.max(cornerOf(held).column, held.anchorColumn),
               row: at.row,
               column: at.column
             };
@@ -2948,10 +2951,11 @@ export function Grid(
           const box = viewport.value;
           const x = event.x - box.x;
           const y = event.y - box.y;
+          const held = edit.selectionNow();
           if (headerSweep.kind === 'column') {
-            selectColumns(columnAtX(Math.max(GUTTER_WIDTH, x)), headerSweep.from);
+            selectColumns(columnAtX(Math.max(GUTTER_WIDTH, x)), headerSweep.from, held);
           } else {
-            selectRows(rowAtY(Math.max(HEADER_HEIGHT, y)), headerSweep.from);
+            selectRows(rowAtY(Math.max(HEADER_HEIGHT, y)), headerSweep.from, held);
           }
           return;
         }
@@ -3333,7 +3337,7 @@ export function Grid(
    */
   let cornerBefore: { row: number; column: number } | null = null;
   ctx.effect(edit.selection, at => {
-    const next = { row: Math.max(at.row, at.anchorRow), column: Math.max(at.column, at.anchorColumn) };
+    const next = { row: Math.max(cornerOf(at).row, at.anchorRow), column: Math.max(cornerOf(at).column, at.anchorColumn) };
     if (sameCell(next, cornerBefore)) {
       return;
     }
@@ -3401,9 +3405,19 @@ export function Grid(
     scrollY.value = bring(scrollY.value, top, sheetWindow.rowHeightOf(at.row), view.height, HEADER_HEIGHT);
     scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
   };
-  ctx.effect(edit.selection, at => {
+  // What moved is what is brought into view: the corner, when Shift
+  // moved it and left the active cell where it was; the active cell
+  // otherwise — an arrow, a click, Enter walking the selection.
+  let lastBrought: SheetSelection | null = null;
+  ctx.effect(edit.selection, held => {
+    const cornerMoved =
+      lastBrought !== null &&
+      lastBrought.row === held.row &&
+      lastBrought.column === held.column &&
+      (cornerOf(lastBrought).row !== cornerOf(held).row || cornerOf(lastBrought).column !== cornerOf(held).column);
+    lastBrought = held;
     if (!keepScroll) {
-      bringIntoView(at);
+      bringIntoView(cornerMoved ? { ...held, ...cornerOf(held) } : held);
     }
   });
   // A grid built again — a new zoom — starts at the top of the sheet,
@@ -3527,10 +3541,10 @@ function standingOf(selection: SheetSelection, row: number, column: number): Sta
 
 /** Whether the selection rectangle covers a cell. */
 function inRange(selection: SheetSelection, row: number, column: number): boolean {
-  const firstRow = Math.min(selection.row, selection.anchorRow);
-  const lastRow = Math.max(selection.row, selection.anchorRow);
-  const firstColumn = Math.min(selection.column, selection.anchorColumn);
-  const lastColumn = Math.max(selection.column, selection.anchorColumn);
+  const firstRow = Math.min(cornerOf(selection).row, selection.anchorRow);
+  const lastRow = Math.max(cornerOf(selection).row, selection.anchorRow);
+  const firstColumn = Math.min(cornerOf(selection).column, selection.anchorColumn);
+  const lastColumn = Math.max(cornerOf(selection).column, selection.anchorColumn);
   return row >= firstRow && row <= lastRow && column >= firstColumn && column <= lastColumn;
 }
 

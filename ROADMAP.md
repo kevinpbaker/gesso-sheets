@@ -2159,7 +2159,7 @@ And the POI corpus's files that use them are read, with the count of
 rules, validations and charts recorded here, as Phase 17 recorded its
 325 of 352.
 
-### Phase 24 — An active cell
+### Phase 24 — An active cell — **done**
 
 `SheetSelection` is an anchor and a cursor, and the cursor *is* the
 active cell, so the active cell is always a corner. Excel's model is a
@@ -2189,6 +2189,37 @@ in both directions, Ctrl+Enter from the active cell, and Shift keeping
 it. Every spec that constructs a selection still passes, with the
 active cell defaulting to the corner it is today. `pnpm proof` does not
 move: the selection is on the hot path of every arrow key.
+
+**Met.** `Keyboard.spec.tsx`'s *an active cell inside the selection*:
+B2:C3 made with Shift from B2 keeps its active cell on B2 and shows
+`B2:C3` in the name box; Enter walks B3, C2, C3 and round to B2, Shift
+reverses it, Tab walks along and on to the next row, a block of four
+figures typed with Enter after each lands in the four cells, and an
+arrow lets go of the selection from where the active cell is. Ctrl+Enter
+writes from the active cell. Every spec that builds a selection the old
+way passes unchanged, and `pnpm proof` is where it was — 2.8ms idle,
+once another session's test run had stopped sharing the machine with it.
+
+**The one field went on the other side.** The phase proposed adding
+an active cell to a selection whose cursor was the moving corner. It
+was cheaper the other way round: `row` and `column` *are* the active
+cell — the editor, the name box, the formula bar, the note, the active
+format already read them as that — and the range gains an optional
+corner, absent whenever it is the active cell. So a selection written
+the old way means what it meant, the fields that need no change are
+the many, and what does change is everything that builds a
+*rectangle*: those ask `cornerOf` now, or `rectOf`, and a rewrite of
+`Math.min(x.row, x.anchorRow)` found all of them.
+
+What changed in behaviour was the specs'. Nineteen of them had written
+down the old rule — that Shift moves the active cell — in the shape of
+a sweep's result, in a navigation that went Home from the corner, in a
+Ctrl+Enter typed into the corner, in the name box's own trick of
+extending back to the first cell to put the cursor there. Each was read
+and changed to Excel's, and the name box's trick became one call
+saying which cell is active. Shift+click on a header and a sweep along
+the headers keep the active cell too. What scrolls into view is what
+moved: the corner under Shift, the active cell otherwise.
 
 ### Phase 25 — Moving by the border — **done**
 

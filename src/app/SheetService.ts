@@ -765,7 +765,14 @@ export class SheetService {
   ): void {
     const { rowCount, columnCount } = this.geometrySubject.value;
     const to = this.document.sheet.edgeFrom(row, column, rows, columns, { rowCount, columnCount });
-    this.setSelection(to.row, to.column, extend ? anchorRow : to.row, extend ? anchorColumn : to.column);
+    // Extending moves the corner and keeps the active cell, as Shift
+    // does everywhere; `row` and `column` are where the corner was.
+    const held = this.document.selection;
+    if (extend) {
+      this.setSelection(held.row, held.column, anchorRow, anchorColumn, to.row, to.column);
+    } else {
+      this.setSelection(to.row, to.column, to.row, to.column);
+    }
   }
 
   /**
@@ -788,8 +795,8 @@ export class SheetService {
     this.afterEdit();
   }
 
-  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void {
-    this.document.setSelection(row, column, anchorRow, anchorColumn);
+  setSelection(row: number, column: number, anchorRow: number, anchorColumn: number, cornerRow?: number, cornerColumn?: number): void {
+    this.document.setSelection(row, column, anchorRow, anchorColumn, cornerRow, cornerColumn);
     this.selectionSubject.next(this.document.selection);
     this.publishEditor();
     this.publishStats();

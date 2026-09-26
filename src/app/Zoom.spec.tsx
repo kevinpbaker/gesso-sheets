@@ -89,7 +89,7 @@ describe.each([0.5, 1, 2])('at %s', zoom => {
     h.ui.fireEvent.pointerMove(to.x, to.y, { buttons: 1 });
     h.ui.fireEvent.pointerUp(to.x, to.y);
     await settle();
-    expect(h.document.selection).toEqual({ row: 4, column: 3, anchorRow: 1, anchorColumn: 1 });
+    expect(h.document.selection).toEqual({ row: 1, column: 1, anchorRow: 1, anchorColumn: 1, cornerRow: 4, cornerColumn: 3 });
   });
 
   it('fills to the cell the handle is dragged to', async () => {

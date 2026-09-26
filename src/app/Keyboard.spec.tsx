@@ -399,7 +399,8 @@ describe('the sheet from the keyboard', () => {
 
       it('selects as far as it goes with Shift', async () => {
         await press('ArrowDown', { ctrl: true, shift: true });
-        expect(selection()).toEqual({ row: 4, column: 0, anchorRow: 0, anchorColumn: 0 });
+        // The corner goes to the edge; the active cell stays where Shift found it.
+        expect(selection()).toEqual({ row: 0, column: 0, anchorRow: 0, anchorColumn: 0, cornerRow: 4, cornerColumn: 0 });
       });
 
       it('counts a cell an array spilled into as filled', async () => {
@@ -466,16 +467,16 @@ describe('the sheet from the keyboard', () => {
         await press('ArrowRight');
         await press('ArrowDown', { shift: true });
         await press('ArrowDown', { shift: true });
-        // Typed in the cell the cursor is on, which is B3: the corner
-        // Shift moved, and the one the editor opens in.
+        // Typed in the active cell, which Shift left on B1 and where the
+        // editor opens — Phase 24's rule, and Excel's.
         await press('=');
-        await type('A3*2');
+        await type('A1*2');
         await press('Enter', { ctrl: true });
 
         expect([0, 1, 2].map(r => h.document.sheet.input(r, 1))).toEqual(['=A1*2', '=A2*2', '=A3*2']);
         expect(h.document.sheet.value(2, 1)).toBe(60);
         // The selection is still the three cells, and it is one undo.
-        expect(selection()).toEqual({ row: 2, column: 1, anchorRow: 0, anchorColumn: 1 });
+        expect(selection()).toEqual({ row: 0, column: 1, anchorRow: 0, anchorColumn: 1, cornerRow: 2, cornerColumn: 1 });
         await press('z', { ctrl: true });
         expect([0, 1, 2].map(r => h.document.sheet.input(r, 1))).toEqual(['', '', '']);
       });
@@ -538,6 +539,89 @@ describe('the sheet from the keyboard', () => {
         await press('Enter');
         expect(h.document.sheet.input(0, 0)).toMatch(/^Due \d{4}-\d{2}-\d{2}$/);
       });
+    });
+  });
+
+  /**
+   * Phase 24: an active cell inside the selection, as Excel has it.
+   * The selection is B2:C3 made with Shift from B2 — the active cell on
+   * B2, the corner on C3.
+   */
+  describe('an active cell inside the selection', () => {
+    const selection = () => h.document.selection;
+    const active = () => ({ row: h.document.selection.row, column: h.document.selection.column });
+    const rect = () => {
+      const at = h.document.selection;
+      const corner = { row: at.cornerRow ?? at.row, column: at.cornerColumn ?? at.column };
+      return [Math.min(corner.row, at.anchorRow), Math.min(corner.column, at.anchorColumn), Math.max(corner.row, at.anchorRow), Math.max(corner.column, at.anchorColumn)];
+    };
+
+    beforeEach(async () => {
+      h = await mount();
+      await press('ArrowDown');
+      await press('ArrowRight');
+      await press('ArrowDown', { shift: true });
+      await press('ArrowRight', { shift: true });
+    });
+
+    it('stays where Shift found it, and the name box shows it', async () => {
+      expect(active()).toEqual({ row: 1, column: 1 });
+      expect(rect()).toEqual([1, 1, 2, 2]);
+      expect(address()).toBe('B2:C3');
+      await press('ArrowDown', { shift: true });
+      expect(active()).toEqual({ row: 1, column: 1 });
+      expect(rect()).toEqual([1, 1, 3, 2]);
+    });
+
+    it('walks down the selection on Enter, on to the next column, and round', async () => {
+      const walked: [number, number][] = [];
+      for (let at = 0; at < 4; at++) {
+        await press('Enter');
+        walked.push([selection().row, selection().column]);
+      }
+      expect(walked).toEqual([
+        [2, 1],
+        [1, 2],
+        [2, 2],
+        [1, 1]
+      ]);
+      expect(rect()).toEqual([1, 1, 2, 2]);
+    });
+
+    it('walks back up it with Shift+Enter, wrapping the other way', async () => {
+      await press('Enter', { shift: true });
+      expect(active()).toEqual({ row: 2, column: 2 });
+      expect(rect()).toEqual([1, 1, 2, 2]);
+    });
+
+    it('walks along it on Tab, on to the next row, and back with Shift+Tab', async () => {
+      await press('Tab');
+      expect(active()).toEqual({ row: 1, column: 2 });
+      await press('Tab');
+      expect(active()).toEqual({ row: 2, column: 1 });
+      await press('Tab', { shift: true });
+      expect(active()).toEqual({ row: 1, column: 2 });
+      expect(rect()).toEqual([1, 1, 2, 2]);
+    });
+
+    it('types a block of figures into the range, Enter after each', async () => {
+      for (const figure of ['1', '2', '3', '4']) {
+        await press(figure);
+        await press('Enter');
+      }
+      expect([
+        [1, 1],
+        [2, 1],
+        [1, 2],
+        [2, 2]
+      ].map(([row, column]) => h.document.sheet.input(row, column))).toEqual(['1', '2', '3', '4']);
+      expect(rect()).toEqual([1, 1, 2, 2]);
+    });
+
+    it('lets go of the selection on an arrow, which moves from the active cell', async () => {
+      await press('Enter');
+      await press('ArrowRight');
+      expect(selection()).toEqual({ row: 2, column: 2, anchorRow: 2, anchorColumn: 2 });
     });
   });
 

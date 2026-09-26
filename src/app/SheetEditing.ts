@@ -3,7 +3,7 @@ import { combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs'
 import { internalState, type ChannelReplica, type ComponentContext } from 'gesso-framework';
 
 import type { CommandId } from './SheetCommands';
-import type { SheetCommands, SheetNames, SheetPasteMode, SheetSelection, SheetView } from './SheetContract';
+import { cornerOf, type SheetCommands, type SheetNames, type SheetPasteMode, type SheetSelection, type SheetView } from './SheetContract';
 import { stampText, type SheetAction } from './SheetKeys';
 
 export interface SheetEditing {
@@ -43,7 +43,7 @@ export interface SheetEditing {
    * click on a column's letter or a row's number means. The active
    * cell is one corner and the anchor the other.
    */
-  selectRect(row: number, column: number, anchorRow: number, anchorColumn: number): void;
+  selectRect(row: number, column: number, anchorRow: number, anchorColumn: number, active?: { row: number; column: number }): void;
   /**
    * Puts the keyboard back on the sheet.
    *
@@ -168,41 +168,71 @@ export function editing(
     }
   });
 
+  /** A selection, set here and sent over. */
+  const put = (next: SheetSelection): void => {
+    if (same(next, selection.value)) {
+      return;
+    }
+    selection.value = next;
+    const corner = cornerOf(next);
+    if (corner.row === next.row && corner.column === next.column) {
+      sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
+    } else {
+      sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn, corner.row, corner.column);
+    }
+  };
+
+  /**
+   * A cell as the selection: collapsed to it, or — extending — the far
+   * corner moved to it with the active cell left where it was, which is
+   * Shift's rule in Excel. The name box and the formula bar go on
+   * showing the cell the selection started from.
+   */
   const place = (row: number, column: number, keepAnchor: boolean): void => {
     const { rowCount, columnCount } = extent();
     const clampedRow = clamp(row, 0, Math.max(0, rowCount - 1));
     const clampedColumn = clamp(column, 0, Math.max(0, columnCount - 1));
     const held = selection.value;
-    const next = {
-      row: clampedRow,
-      column: clampedColumn,
-      anchorRow: keepAnchor ? held.anchorRow : clampedRow,
-      anchorColumn: keepAnchor ? held.anchorColumn : clampedColumn
-    };
-    if (same(next, held)) {
+    if (!keepAnchor) {
+      put({ row: clampedRow, column: clampedColumn, anchorRow: clampedRow, anchorColumn: clampedColumn });
       return;
     }
-    selection.value = next;
-    sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
+    put({
+      row: held.row,
+      column: held.column,
+      anchorRow: held.anchorRow,
+      anchorColumn: held.anchorColumn,
+      cornerRow: clampedRow,
+      cornerColumn: clampedColumn
+    });
   };
 
   const painter = internalState<'off' | 'once' | 'held'>('off');
-  const selectRect = (row: number, column: number, anchorRow: number, anchorColumn: number): void => {
+  /**
+   * A rectangle from `row, column` to the anchor. The active cell is
+   * the first corner unless it is given — a Shift+click on a header
+   * keeps the one the selection had.
+   */
+  const selectRect = (
+    row: number,
+    column: number,
+    anchorRow: number,
+    anchorColumn: number,
+    active?: { row: number; column: number }
+  ): void => {
     tabFrom = null;
     const { rowCount, columnCount } = extent();
     const lastRow = Math.max(0, rowCount - 1);
     const lastColumn = Math.max(0, columnCount - 1);
-    const next = {
-      row: clamp(row, 0, lastRow),
-      column: clamp(column, 0, lastColumn),
+    const corner = { row: clamp(row, 0, lastRow), column: clamp(column, 0, lastColumn) };
+    const at = active === undefined ? corner : { row: clamp(active.row, 0, lastRow), column: clamp(active.column, 0, lastColumn) };
+    put({
+      row: at.row,
+      column: at.column,
       anchorRow: clamp(anchorRow, 0, lastRow),
-      anchorColumn: clamp(anchorColumn, 0, lastColumn)
-    };
-    if (same(next, selection.value)) {
-      return;
-    }
-    selection.value = next;
-    sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
+      anchorColumn: clamp(anchorColumn, 0, lastColumn),
+      ...(at.row === corner.row && at.column === corner.column ? {} : { cornerRow: corner.row, cornerColumn: corner.column })
+    });
   };
 
   /**
@@ -229,11 +259,59 @@ export function editing(
    * run of Tabs as. Down one row after a run of Tabs goes back to the
    * column the run began in.
    */
-  const step = (rows: number, columns: number, tab: boolean): void => {
+  const step = (rows: number, columns: number, tab: boolean, walks = true): void => {
     const at = selection.value;
+    if (walks && walk(at, rows, columns)) {
+      tabFrom = null;
+      return;
+    }
     const back = !tab && rows === 1 && columns === 0 && tabFrom !== null ? tabFrom : null;
     tabFrom = tab ? (tabFrom ?? at.column) : null;
     place(at.row + rows, back ?? at.column + columns, false);
+  };
+
+  /**
+   * Enter and Tab inside a selection of more than one cell move the
+   * active cell through it and leave it selected: Enter down the
+   * column and on to the top of the next, Tab along the row and on to
+   * the start of the next, Shift going back, both wrapping at the end —
+   * how a block of figures is typed into a range selected first.
+   * Returns false for a selection of one cell, which moves as it always
+   * did.
+   */
+  const walk = (at: SheetSelection, rows: number, columns: number): boolean => {
+    const corner = cornerOf(at);
+    const firstRow = Math.min(corner.row, at.anchorRow);
+    const lastRow = Math.max(corner.row, at.anchorRow);
+    const firstColumn = Math.min(corner.column, at.anchorColumn);
+    const lastColumn = Math.max(corner.column, at.anchorColumn);
+    if (firstRow === lastRow && firstColumn === lastColumn) {
+      return false;
+    }
+    if (Math.abs(rows) + Math.abs(columns) !== 1) {
+      return false;
+    }
+    const height = lastRow - firstRow + 1;
+    const width = lastColumn - firstColumn + 1;
+    // The cells in the order the key walks them: down columns for
+    // Enter, along rows for Tab.
+    const down = rows !== 0;
+    const index = down
+      ? (at.column - firstColumn) * height + (at.row - firstRow)
+      : (at.row - firstRow) * width + (at.column - firstColumn);
+    const count = height * width;
+    const next = (((index + (rows + columns)) % count) + count) % count;
+    const row = down ? firstRow + (next % height) : firstRow + Math.floor(next / width);
+    const column = down ? firstColumn + Math.floor(next / height) : firstColumn + (next % width);
+    put({
+      row,
+      column,
+      anchorRow: at.anchorRow,
+      anchorColumn: at.anchorColumn,
+      cornerRow: corner.row,
+      cornerColumn: corner.column
+    });
+    return true;
   };
 
   const commit = (rows: number, columns: number, tab = false): void => {
@@ -280,13 +358,22 @@ export function editing(
       case 'move':
         if (action.extend) {
           tabFrom = null;
-          place(at.row + action.rows, at.column + action.columns, true);
+          // From the corner, which is the end Shift moves.
+          place(cornerOf(at).row + action.rows, cornerOf(at).column + action.columns, true);
         } else {
-          step(action.rows, action.columns, action.tab === true);
+          step(action.rows, action.columns, action.tab === true, action.walks === true);
         }
         return true;
       case 'edge':
-        sheet.send.jumpToEdge(at.row, at.column, at.anchorRow, at.anchorColumn, action.rows, action.columns, action.extend);
+        sheet.send.jumpToEdge(
+          action.extend ? cornerOf(at).row : at.row,
+          action.extend ? cornerOf(at).column : at.column,
+          at.anchorRow,
+          at.anchorColumn,
+          action.rows,
+          action.columns,
+          action.extend
+        );
         return true;
       case 'selectLine': {
         const { rowCount, columnCount } = extent();
@@ -321,10 +408,10 @@ export function editing(
       case 'jump':
         switch (action.to) {
           case 'rowStart':
-            place(at.row, 0, action.extend);
+            place(action.extend ? cornerOf(at).row : at.row, 0, action.extend);
             return true;
           case 'rowEnd':
-            place(at.row, extent().columnCount - 1, action.extend);
+            place(action.extend ? cornerOf(at).row : at.row, extent().columnCount - 1, action.extend);
             return true;
           case 'sheetStart':
             place(0, 0, action.extend);
@@ -435,8 +522,15 @@ export function editing(
 }
 
 function same(a: SheetSelection, b: SheetSelection): boolean {
+  const cornerA = cornerOf(a);
+  const cornerB = cornerOf(b);
   return (
-    a.row === b.row && a.column === b.column && a.anchorRow === b.anchorRow && a.anchorColumn === b.anchorColumn
+    a.row === b.row &&
+    a.column === b.column &&
+    a.anchorRow === b.anchorRow &&
+    a.anchorColumn === b.anchorColumn &&
+    cornerA.row === cornerB.row &&
+    cornerA.column === cornerB.column
   );
 }
 
