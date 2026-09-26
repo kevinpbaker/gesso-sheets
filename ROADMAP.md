@@ -710,7 +710,9 @@ regardless — and even wired, `LazySheet` takes one row height for
 every row, so a wrapped cell has nowhere to put its second line. The
 property is bound correctly now and the control is out of the
 toolbar, on this file's own rule: a control that silently does
-nothing is worse than one that is missing.
+nothing is worse than one that is missing. *Back after Phase 17,*
+once rows could be of different heights — see "Wrapped text and row
+heights" there.
 
 **Freezing a pane took three bugs to finish, and two of them were
 the engine's.** `frozenRows` and `frozenColumns` mount the pane; the
@@ -1261,6 +1263,45 @@ dates, twelve-hour times and elapsed time. The eleven are fraction
 codes with literals wedged between the placeholders, where Excel's
 answers contradict each other. A sample of the cases is
 `FormatCode.spec.ts`; POI is Apache-2.0 and is credited there.
+
+**Wrapped text and row heights, after the phase.** A row is as tall
+as what it holds, and a row somebody dragged is as tall as they made
+it. The engine had carried a sparse height per row since Phase 10 and
+hiding rows was its only consumer; this is the second, and it needed
+no engine change.
+
+Fitting a row is autofit turned on its side, and split the same way:
+the application worker knows which cells wrap, how wide their columns
+are and what they say, and knows nothing about fonts; the render
+worker can measure and holds thirty rows. So the application worker
+sends the rows that could be taller than one line — a wrapped cell or
+a large font, with something in it — and the render worker measures
+them at the column's width through the layout's own measurer and
+sends the heights back. A row sent with nothing in it goes back to
+the default, which is how emptying a wrapped cell brings its row
+down. It is asked after an edit, a format, a width, an undo and a
+recalculation; a sheet with no wrapping and no large fonts anywhere in
+its palette answers with one look at the palette, and that is nearly
+every sheet. The fitted heights are saved, so a sheet opens at the
+heights it had rather than growing a frame after it appears, and an
+answer to a question since replaced is dropped by its serial.
+
+A height set by hand wins, which is Excel's rule: a row told what it
+is keeps it whatever goes in it, until "Fit rows to contents" gives it
+back. Excel's own row heights come in from an `.xlsx` only where the
+file says somebody set them (`customHeight`); the rest were Excel
+fitting its rows, and this sheet fits its own.
+
+Found on the way: an undone row insert put the widths back and left
+the hidden rows where the insert had moved them, so undoing an insert
+above a hidden row revealed it and hid its neighbour. Row heights and
+hidden rows are held by the step now, and both come back. And pressing
+the new grip swept a selection as well, since the gutter is over a
+row of cells as far as the offsets are concerned; it stops the pan
+the way the fill handle always has. Checked in Chrome: a sentence
+wrapped in B21 grew the row to four lines and moved everything below
+it, kept that height through a reload, and a drag on the row's foot
+resized it without moving the selection.
 
 ---
 
