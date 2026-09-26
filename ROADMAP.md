@@ -1303,6 +1303,50 @@ wrapped in B21 grew the row to four lines and moved everything below
 it, kept that height through a reload, and a drag on the row's foot
 resized it without moving the selection.
 
+**A bar too wide for its window, after the phase.** The rules bar is
+wider than a window of 900 pixels, and its value field was the one
+thing in it allowed to shrink — so on anything much narrower than a
+full-width monitor the value a rule had been given was drawn zero
+pixels wide, and the bar looked as if it had not read the rule at all.
+That was the report "it only shows up after I click another cell",
+and it had survived an engine fix for a different zero-height bar
+because a spec asking whether the field *existed* passed. The rules
+and find bars wrap onto a second line now, their fields keep their
+widths, and the specs ask for the width.
+
+**Arrays, after the phase.** A formula whose answer is more than one
+value spills it into the cells beside and below its own, as Excel 365
+does: `=A1:A3`, `=A1:B3*2`, `=IF(A1:A9>1, "big", "small")`,
+`TRANSPOSE`, `SEQUENCE`, `FILTER`, `SORT`, `UNIQUE`, and an `XLOOKUP`
+that returns a whole record. A cell in the way stops it with
+`#SPILL!`, and clearing that cell lets it through. Arithmetic over
+ranges handed to a function arrives as an array, which is what
+`SUMPRODUCT((A1:A9>1)*B1:B9)` and `SUM(A1:A3*B1:B3)` need.
+
+The cells an array spills into hold nothing of their own. Reading one
+reads the array, and each carries one edge in the dependency graph —
+to the formula — so everything that reads a spilled cell is ordered
+after the formula that fills it by the same topological sort as every
+other cell, and nothing about spilling is saved: the formula is the
+cell, and the rest is its answer.
+
+The one real decision was what an older file means. In an `.xlsx`
+written before Excel 365, `=B1:B9*2` in C5 means `B5*2` — implicit
+intersection — and this sheet would spill it. So a formula read from a
+file is given the `@` Excel 365 itself shows when it opens one,
+wherever the difference would show: before a range or a named range
+that is an operand, or the test of an `IF`, and never inside
+`SUMPRODUCT`, which has always worked on arrays. `_xlfn.SINGLE` is
+how Excel 365 writes `@` into a file, and it reads back as one.
+Excel's own array formulas (`t="array"`) come in as the formula alone,
+and the values Excel kept in the cells they cover are dropped so the
+formula can fill them. Checked against POI's files: both of the ones
+that were failing on arrays now agree with Excel, 325 of 352 in all.
+
+Not yet: `A1#` for "the whole spill", a function lifted over an array
+(`ABS(A1:A9)` takes one value, where Excel 365 spills nine), and the
+formula bar showing the spilling formula, greyed, over a spilled cell.
+
 ---
 
 ## Still not in it, after all seventeen
