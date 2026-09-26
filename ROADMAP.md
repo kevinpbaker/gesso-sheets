@@ -2178,7 +2178,7 @@ POI's corpus, read with the same code:
 |---|---:|---:|---:|
 | validations | 38 | 54 | 11 |
 | conditional formats | 616 | 60 | 19 |
-| charts | 16 | 16 | 21 |
+| charts | 27 | 5 | 21 |
 
 What is left out is left out for a reason the import's sentence can
 name, and counted there.
@@ -2197,15 +2197,33 @@ name, and counted there.
   - A cell-value rule with an operator this sheet has no shorthand for
     is kept as the equivalent formula, written for the range's first
     cell.
-- **Charts.** 13 of the 16 chart data on another sheet. A chart here
-  reads the sheet it is on, and charting another would mean following
-  that sheet through a rename or a deletion, which is its own change.
-  The other three are a bar-and-line combination, a chart whose only
-  data is the file's cache, and one naming an external workbook. The
-  one known inexactness is a scatter's x values. Scatter here plots
-  by position, so a file whose x column is real numbers reads back
-  with that column as another series. That is a gap in the scatter,
-  not the file.
+- **Charts.** The five left out are two charts over two sheets at
+  once, a bar-and-line combination, a chart whose only data is the
+  file's cache, and one naming an external workbook. When the phase
+  closed, the count was 16 kept and 16 left out, because 13 of those
+  charts read data on another sheet and a chart here could not. It
+  can now; see below. The one known inexactness is a scatter's x
+  values. Scatter here plots by position, so a file whose x column is
+  real numbers reads back with that column as another series. That is
+  a gap in the scatter, not the file.
+
+**After the phase: charts of another sheet, and a bug found building
+them.** A chart's range can name a sheet, as a formula's can
+(`'Q3 data'!A1:B4`). It reads that sheet's cells, is written into an
+`.xlsx` with its series quoted on that sheet, and follows it through a
+rename. A summary sheet charting a data sheet opens in LibreOffice as a
+line chart over `'Q3 data'.B2:B4`.
+
+Following that sheet through an inserted row turned up the bug. An
+insert or a delete moved the cells, the formats, the merges and the
+notes, and *not* the conditional formats, the validations or the
+charts. So a rule over B2:B9 sat over B2:B9 after a row went in above
+it, painting and refusing the wrong cells. That had been true since
+Phase 14. Now the rules move with the cells, growing and shrinking the
+way a formula's range does. A rule whose every row was deleted goes
+with its rows. A chart keeps its place over empty data, as a formula
+keeps `#REF!`. And every sheet's rules and charts are held in the
+structural step, so one undo puts them all back. `ChartRanges.spec.ts`.
 
 **How the charts are written.** Each chart's series are spelled out by
 `layoutOf`, which is the one reading of a range that the chart on screen

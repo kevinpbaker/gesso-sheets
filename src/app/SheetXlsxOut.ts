@@ -135,7 +135,13 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
       notes: page.notes.all().filter(note => note.row < rowCount),
       validations: [...page.validations],
       conditional: [...page.conditional],
-      charts: page.charts.map(chart => chartOut(chart, names[index] ?? `Sheet${index + 1}`, (row, column) => page.sheet.value(row, column)))
+      charts: page.charts.map(chart => {
+        // The sheet the chart reads, which is its own unless it names another.
+        const named = chart.range.start.sheet;
+        const at = named === undefined ? index : document.book.sheetFor(named);
+        const source = at === null ? null : document.book.sheet(at);
+        return chartOut(chart, named ?? names[index] ?? `Sheet${index + 1}`, (row, column) => source?.value(row, column) ?? null);
+      })
     });
   }
 

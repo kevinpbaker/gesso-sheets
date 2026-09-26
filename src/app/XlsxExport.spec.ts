@@ -363,3 +363,44 @@ describe('charts in an exported workbook', () => {
     expect(xlsxOfDocument(charted(), ROWS).leftOut).toEqual([]);
   });
 });
+
+/** A summary sheet of charts over a data sheet — after Part Four. */
+describe('a chart of another sheet in an exported workbook', () => {
+  function summary(): SheetDocument {
+    const document = new SheetDocument();
+    document.renameSheet(0, 'Summary');
+    document.addSheet('Q3 data');
+    document.activate(1);
+    document.setCell(0, 0, 'Month');
+    document.setCell(0, 1, 'Units');
+    ['Jul', 'Aug', 'Sep'].forEach((month, row) => {
+      document.setCell(row + 1, 0, month);
+      document.setCell(row + 1, 1, String((row + 1) * 5));
+    });
+    document.activate(0);
+    document.addChart({
+      kind: 'line',
+      title: 'Q3',
+      legend: true,
+      range: {
+        start: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false, sheet: 'Q3 data' },
+        end: { row: 3, column: 1, rowAbsolute: false, columnAbsolute: false }
+      },
+      place: { x: 20, y: 20, width: 400, height: 260 }
+    });
+    return document;
+  }
+
+  it('writes the series as references to the other sheet, quoted', () => {
+    const chart = xlsxParts(xlsxOfDocument(summary(), ROWS).book).find(part => part.name === 'xl/charts/chart1.xml')!.text;
+    expect(chart).toContain("<c:val><c:numRef><c:f>'Q3 data'!$B$2:$B$4</c:f>");
+    expect(chart).toContain("<c:tx><c:strRef><c:f>'Q3 data'!$B$1</c:f>");
+  });
+
+  it('comes back on the summary sheet, reading the data sheet', async () => {
+    const back = await roundTrip(summary());
+    back.activate(0);
+    expect(back.charts).toHaveLength(1);
+    expect(back.charts[0].range).toMatchObject({ start: { row: 0, column: 0, sheet: 'Q3 data' }, end: { row: 3, column: 1 } });
+  });
+});

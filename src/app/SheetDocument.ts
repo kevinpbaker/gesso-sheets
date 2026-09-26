@@ -3,7 +3,7 @@ import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format'
 import { Formats, type FormatPlacement } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import type { Chart } from '../sheet/Chart';
-import { columnName, type RangeRef } from '../sheet/A1';
+import { columnName, MAX_COLUMNS as MAX_COLUMNS_HERE, MAX_ROWS as MAX_ROWS_HERE, type RangeRef } from '../sheet/A1';
 import { Notes, type Note } from '../sheet/Notes';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
@@ -12,7 +12,7 @@ import { Sheet } from '../sheet/Sheet';
 import type { SheetSelection } from './SheetContract';
 import { literalOf, Workbook } from '../sheet/Workbook';
 import { validate } from '../sheet/Validation';
-import { shiftIndex, type Shift } from '../sheet/Shift';
+import { shiftIndex, shiftRange, type Shift } from '../sheet/Shift';
 
 /**
  * One change to one cell, and what it replaced.
@@ -156,6 +156,21 @@ interface StructureEdit extends OnASheet {
    * destroys nothing and keeps nothing.
    */
   readonly formats: FormatPlacement | null;
+  /**
+   * Every sheet's rules and charts as they were. The rules of the sheet
+   * that changed shape move with its cells, and so do the charts on any
+   * sheet that read those cells, so an undo has more than one page to
+   * put back — and a rule over rows that were deleted is gone, which
+   * shifting back cannot undo either.
+   */
+  readonly ranges: readonly PageRanges[];
+}
+
+/** One page's rules and charts, held whole for an undo. */
+interface PageRanges {
+  readonly conditional: readonly ConditionalRule[];
+  readonly validations: readonly Validation[];
+  readonly charts: readonly Chart[];
 }
 
 /** What a row shift moves besides the cells, held so undo can put it back. */
@@ -831,6 +846,8 @@ export class SheetDocument {
         this.restoreRows(edit.rows, edit.shift);
         this.page.notes.restore(edit.notes);
         this.page.notes.shift(edit.shift);
+        this.restoreRanges(edit.ranges);
+        this.shiftRanges(edit.shift);
       } else if (edit.kind === 'note') {
         this.page.notes.set(edit.row, edit.column, edit.after);
       } else if (edit.kind === 'names') {
@@ -866,6 +883,7 @@ export class SheetDocument {
     this.columnWidths = [...edit.widths];
     this.restoreRows(edit.rows, null);
     this.page.notes.restore(edit.notes);
+    this.restoreRanges(edit.ranges);
     for (const cell of edit.removed) {
       this.writeCell(cell.row, cell.column, cell.input);
     }
@@ -1206,6 +1224,12 @@ export class SheetDocument {
     };
     const notes = this.page.notes.all();
     const formats = shift.by < 0 ? this.formats.placement() : null;
+    const ranges = this.pages.map(page => ({
+      conditional: [...page.conditional],
+      validations: [...page.validations],
+      charts: [...page.charts]
+    }));
+    this.shiftRanges(shift);
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.merges.shift(shift);
@@ -1229,7 +1253,8 @@ export class SheetDocument {
       widths,
       rows,
       notes,
-      formats
+      formats,
+      ranges
     });
   }
 
@@ -1279,9 +1304,68 @@ export class SheetDocument {
     return index;
   }
 
+  /**
+   * The rules and charts, moved with the cells a shift moved.
+   *
+   * The active sheet's conditional formats and validations move with
+   * its cells; one whose every row or column was deleted goes with them,
+   * as a merge does. A chart moves when its range is on the sheet that
+   * changed shape — its own, or another it names — and keeps its place
+   * over nothing when all its cells are deleted, as a formula keeps
+   * `#REF!`: a chart that vanished with its data would be worse.
+   */
+  private shiftRanges(shift: Shift): void {
+    const name = this.sheet.name.toUpperCase();
+    const gone = (range: RangeRef) =>
+      shift.axis === 'row'
+        ? Math.min(range.start.row, range.end.row) >= MAX_ROWS_HERE
+        : Math.min(range.start.column, range.end.column) >= MAX_COLUMNS_HERE;
+    const page = this.page;
+    const conditional = page.conditional.map(rule => ({ ...rule, range: shiftRange(rule.range, shift) })).filter(rule => !gone(rule.range));
+    page.conditional.length = 0;
+    page.conditional.push(...conditional);
+    const validations = page.validations.map(rule => ({ ...rule, range: shiftRange(rule.range, shift) })).filter(rule => !gone(rule.range));
+    page.validations.length = 0;
+    page.validations.push(...validations);
+    for (const other of this.pages) {
+      for (const [at, chart] of other.charts.entries()) {
+        const named = chart.range.start.sheet;
+        const reads = named === undefined ? other === page : named.toUpperCase() === name;
+        if (reads) {
+          other.charts[at] = { ...chart, range: shiftRange(chart.range, shift) };
+        }
+      }
+    }
+  }
+
+  private restoreRanges(held: readonly PageRanges[]): void {
+    held.forEach((ranges, index) => {
+      const page = this.pages[index];
+      if (page === undefined) {
+        return;
+      }
+      page.conditional.length = 0;
+      page.conditional.push(...ranges.conditional);
+      page.validations.length = 0;
+      page.validations.push(...ranges.validations);
+      page.charts.length = 0;
+      page.charts.push(...ranges.charts);
+    });
+  }
+
   renameSheet(index: number, to: string): boolean {
     if (this.pages[index] === undefined) {
       return false;
+    }
+    // A chart that reads this sheet from another names it, as a formula
+    // does, and follows the rename the formulas do.
+    const from = this.book.nameOf(index);
+    for (const page of this.pages) {
+      for (const [at, chart] of page.charts.entries()) {
+        if (chart.range.start.sheet !== undefined && chart.range.start.sheet.toUpperCase() === from.toUpperCase()) {
+          page.charts[at] = { ...chart, range: { ...chart.range, start: { ...chart.range.start, sheet: to } } };
+        }
+      }
     }
     // The name is in the text of every formula that reads across, so
     // the rename rewrites them — and the undo stack holds the text

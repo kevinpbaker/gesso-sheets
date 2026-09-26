@@ -184,7 +184,7 @@ function chartIn(chart: XlsxChart, sheet: XlsxSheet, id: number): Chart {
     kind: chart.kind,
     title: chart.title,
     legend: chart.legend,
-    range: rangeOfRect(chart.firstRow, chart.firstColumn, chart.lastRow, chart.lastColumn),
+    range: onSheet(rangeOfRect(chart.firstRow, chart.firstColumn, chart.lastRow, chart.lastColumn), chart.sheet),
     place: {
       x: Math.max(0, place.x),
       y: Math.max(0, place.y),
@@ -192,4 +192,9 @@ function chartIn(chart: XlsxChart, sheet: XlsxSheet, id: number): Chart {
       height: Math.max(MIN_CHART_HEIGHT, place.height)
     }
   };
+}
+
+/** A range read from another sheet, naming it, as a formula's would. */
+function onSheet(range: Chart['range'], sheet: string | undefined): Chart['range'] {
+  return sheet === undefined ? range : { ...range, start: { ...range.start, sheet } };
 }

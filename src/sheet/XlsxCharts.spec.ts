@@ -82,14 +82,21 @@ describe('charts from an .xlsx', () => {
     ]);
   });
 
-  it('counts a radar, a combination, and a chart of another sheet as left out', () => {
+  it('counts a radar, a combination, and a chart over two sheets as left out', () => {
     const read = book([
       `<c:plotArea><c:radarChart>${series('Sales!$B$2:$B$9')}</c:radarChart></c:plotArea>`,
       `<c:plotArea><c:barChart>${series('Sales!$B$2:$B$9')}</c:barChart><c:lineChart>${series('Sales!$C$2:$C$9')}</c:lineChart></c:plotArea>`,
-      `<c:plotArea><c:lineChart>${series('Other!$B$2:$B$9')}</c:lineChart></c:plotArea>`
+      `<c:plotArea><c:lineChart>${series('Other!$B$2:$B$9')}${series('Sales!$C$2:$C$9')}</c:lineChart></c:plotArea>`
     ]);
     expect(read.sheets[0].charts).toEqual([]);
     expect(read.leftOut.charts).toBe(3);
+  });
+
+  it('reads a chart of another sheet’s data, naming that sheet', () => {
+    const read = book([
+      `<c:plotArea><c:lineChart>${series("'Q3 data'!$B$2:$B$9", "'Q3 data'!$B$1", "'Q3 data'!$A$2:$A$9")}</c:lineChart></c:plotArea>`
+    ]);
+    expect(read.sheets[0].charts[0]).toMatchObject({ kind: 'line', sheet: 'Q3 data', firstRow: 0, firstColumn: 0, lastRow: 8, lastColumn: 1 });
   });
 
   it('passes over a picture in the drawing without counting it', () => {

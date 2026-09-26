@@ -143,7 +143,12 @@ export interface XlsxChart {
   readonly kind: ChartKind;
   readonly title: string;
   readonly legend: boolean;
-  /** The rectangle its series' references cover, on the sheet it is on. */
+  /**
+   * The sheet its data is on, when that is not the sheet the chart is
+   * on — the usual shape of a workbook with a summary sheet of charts.
+   */
+  readonly sheet?: string;
+  /** The rectangle its series' references cover, on that sheet. */
   readonly firstRow: number;
   readonly firstColumn: number;
   readonly lastRow: number;
@@ -269,24 +274,31 @@ function kindOf(node: XmlElement): ChartKind | null {
 }
 
 /**
- * The rectangle a chart's references cover, when every one of them is
- * a plain range on the sheet the chart is on — the one shape a chart
- * here can read.
+ * The rectangle a chart's references cover, and the sheet they are on
+ * when it is not the chart's own — when every one of them is a plain
+ * range on one sheet, which is the one shape a chart here can read.
  */
-function boxOf(refs: readonly string[], sheetName: string): { firstRow: number; firstColumn: number; lastRow: number; lastColumn: number } | null {
+function boxOf(
+  refs: readonly string[],
+  sheetName: string
+): { sheet?: string; firstRow: number; firstColumn: number; lastRow: number; lastColumn: number } | null {
   if (refs.length === 0) {
     return null;
   }
   let box: { firstRow: number; firstColumn: number; lastRow: number; lastColumn: number } | null = null;
+  let on: string | undefined;
   for (const ref of refs) {
     const match = /^(?:(?:'((?:[^']|'')+)'|([^!'\s]+))!)?\$?([A-Z]{1,3})\$?(\d+)(?::\$?([A-Z]{1,3})\$?(\d+))?$/i.exec(ref);
     if (match === null) {
       return null;
     }
-    const sheet = match[1]?.replace(/''/g, "'") ?? match[2];
-    if (sheet !== undefined && sheet.toUpperCase() !== sheetName.toUpperCase()) {
+    const named = match[1]?.replace(/''/g, "'") ?? match[2];
+    const sheet = named === undefined || named.toUpperCase() === sheetName.toUpperCase() ? undefined : named;
+    // Every reference on the same sheet, or the chart reads as neither.
+    if (box !== null && (sheet ?? '').toUpperCase() !== (on ?? '').toUpperCase()) {
       return null;
     }
+    on = sheet;
     const first = { row: Number(match[4]) - 1, column: columnNumber(match[3]) };
     const last = match[5] === undefined ? first : { row: Number(match[6]) - 1, column: columnNumber(match[5]) };
     const here = {
@@ -305,7 +317,7 @@ function boxOf(refs: readonly string[], sheetName: string): { firstRow: number; 
             lastColumn: Math.max(box.lastColumn, here.lastColumn)
           };
   }
-  return box;
+  return box === null ? null : { ...box, ...(on === undefined ? {} : { sheet: on }) };
 }
 
 function anchorOf(node: XmlElement): XlsxAnchor | null {

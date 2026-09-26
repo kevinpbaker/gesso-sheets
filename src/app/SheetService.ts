@@ -2421,11 +2421,17 @@ export class SheetService {
       firstColumn: Math.min(chart.range.start.column, chart.range.end.column),
       lastColumn: Math.max(chart.range.start.column, chart.range.end.column)
     };
+    // The sheet the range names, when it names one: a chart can read
+    // another sheet's cells, as a formula can. One that names a sheet
+    // since deleted reads nothing, and draws nothing.
+    const named = chart.range.start.sheet;
+    const at = named === undefined ? this.document.active : this.document.book.sheetFor(named);
+    const source = at === null ? null : this.document.book.sheet(at);
     const grid: CellValue[][] = [];
-    for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+    for (let row = rect.firstRow; row <= rect.lastRow && source !== null; row++) {
       const line: CellValue[] = [];
       for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
-        line.push(this.document.sheet.value(row, column));
+        line.push(source.value(row, column));
       }
       grid.push(line);
     }
