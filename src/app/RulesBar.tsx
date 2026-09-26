@@ -9,7 +9,7 @@ import {
 } from 'gesso-core';
 import { internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
-import type { ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
+import type { ColourScale, ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
 import type { ValidationRule } from '../sheet/Validation';
 import { Sheet, type SheetConditionalRule } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
@@ -52,6 +52,9 @@ const FILLS: readonly { readonly name: string; readonly fill: string; readonly c
   { name: 'Grey', fill: '#f1f3f4', color: '#5f6368' }
 ];
 
+/** The `fill` that means "the colours the rule already had"; see `current`. */
+const CURRENT = -1;
+
 /** What a rule can ask, as the bar offers it. */
 const TESTS: readonly { readonly id: string; readonly label: string; readonly values: number }[] = [
   { id: 'greaterThan', label: 'Greater than', values: 1 },
@@ -78,7 +81,15 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   const test = internalState('greaterThan');
   const first = internalState('');
   const second = internalState('');
+  /** An index into `FILLS`, or `CURRENT` for the loaded rule's own colours. */
   const fill = internalState(0);
+  /**
+   * The colours of the rule the bar was opened on, when they are not
+   * one of `FILLS` — the seeded pink-to-green scale, or bold red text
+   * with no fill. Kept whole so that Apply puts back what was there
+   * rather than the nearest swatch, which would quietly repaint it.
+   */
+  const current = internalState<Pick<SheetConditionalRule, 'paint' | 'scale'> | null>(null);
 
   const check = internalState<ValidationRule['kind']>('list');
   const allowed = internalState('');
@@ -107,6 +118,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
         first.value = '';
         second.value = '';
         fill.value = 0;
+        current.value = null;
       }
     }
     const validation = JSON.stringify(active.validation);
@@ -125,9 +137,13 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
 
   function loadFormat(rule: SheetConditionalRule): void {
     if (rule.scale !== undefined) {
-      const to = rule.scale.to.toLowerCase();
+      const scale = rule.scale;
+      const at = FILLS.findIndex(
+        entry => scale.from.toLowerCase() === '#ffffff' && scale.middle === undefined && entry.color === scale.to.toLowerCase()
+      );
       test.value = 'scale';
-      fill.value = Math.max(0, FILLS.findIndex(entry => entry.color === to));
+      current.value = at === -1 ? { scale } : null;
+      fill.value = at === -1 ? CURRENT : at;
       return;
     }
     const held = rule.test;
@@ -146,8 +162,16 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
               ? String(held.value)
               : '';
     second.value = held.kind === 'between' ? String(held.high) : '';
-    const paint = rule.paint?.fill?.toLowerCase();
-    fill.value = Math.max(0, FILLS.findIndex(entry => entry.fill === paint));
+    const paint = rule.paint ?? {};
+    const at = FILLS.findIndex(
+      entry =>
+        entry.fill === paint.fill?.toLowerCase() &&
+        entry.color === paint.color?.toLowerCase() &&
+        paint.bold !== true &&
+        paint.italic !== true
+    );
+    current.value = at === -1 ? { paint } : null;
+    fill.value = at === -1 ? CURRENT : at;
   }
 
   function loadCheck(rule: ValidationRule, refuses: boolean): void {
@@ -191,6 +215,10 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
   };
 
   const paintOf = (): ConditionalPaint => {
+    const kept = current.value?.paint;
+    if (fill.value === CURRENT && kept !== undefined) {
+      return kept;
+    }
     const chosen = FILLS[fill.value] ?? FILLS[0];
     return { fill: chosen.fill, color: chosen.color };
   };
@@ -223,8 +251,12 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
 
   const applyFormat = (): void => {
     if (test.value === 'scale') {
+      const kept = current.value?.scale;
       const chosen = FILLS[fill.value] ?? FILLS[0];
-      sheet.send.addConditional({ test: null, scale: { from: '#ffffff', to: chosen.color } });
+      sheet.send.addConditional({
+        test: null,
+        scale: fill.value === CURRENT && kept !== undefined ? kept : { from: '#ffffff', to: chosen.color }
+      });
       close();
       return;
     }
@@ -353,8 +385,75 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
     </row>
   );
 
-  const swatches = () => (
+  /**
+   * A scale drawn as its stops side by side, inside the swatch's
+   * border.
+   *
+   * A scale is two or three colours, and a square of any one of them
+   * says the wrong thing: the pale fill the swatches show for a plain
+   * rule is not what a scale made from it runs to, and the middle of
+   * a pink-yellow-green scale is only yellow.
+   */
+  const stops = (colours: readonly string[]) => (
+    <row width={percent(100)} height={percent(100)}>
+      {colours.map((colour, at) => (
+        <box key={`stop-${at}`} flex={1} height={percent(100)} backgroundColor={colour} />
+      ))}
+    </row>
+  );
+
+  const stopsOf = (scale: ColourScale): readonly string[] =>
+    scale.middle === undefined ? [scale.from, scale.to] : [scale.from, scale.middle, scale.to];
+
+  /**
+   * The swatch for colours none of `FILLS` has, drawn in them.
+   *
+   * A scale shows its stops; a paint with no fill shows its text
+   * colour as a letter, because red bold text on white is a thing
+   * somebody has to be able to see is selected.
+   */
+  const currentSwatch = (kept: Pick<SheetConditionalRule, 'paint' | 'scale'>) => (
+    <button
+      key="current"
+      focusable={false}
+      width={20}
+      height={18}
+      borderRadius={4}
+      cursor="pointer"
+      padding={kept.scale === undefined ? 0 : 2}
+      backgroundColor={kept.scale === undefined ? (kept.paint?.fill ?? '#ffffff') : '#ffffff'}
+      borderColor={fill.pipe(map(is => (is === CURRENT ? 'focusRing' : 'controlBorder')))}
+      borderWidth={fill.pipe(map(is => (is === CURRENT ? 2 : 1)))}
+      x="center"
+      y="center"
+      role="radio"
+      label="Current colours"
+      states={fill.pipe(map((is): readonly UiSemanticState[] => (is === CURRENT ? ['checked'] : [])))}
+      onClick={() => (fill.value = CURRENT)}>
+      {kept.scale !== undefined ? (
+        stops(stopsOf(kept.scale))
+      ) : kept.paint !== undefined && kept.paint.fill === undefined ? (
+        <text
+          text="A"
+          fontSize={11}
+          fontWeight={kept.paint.bold === true ? 'bold' : 'normal'}
+          color={kept.paint.color ?? 'text'}
+          selectable={false}
+        />
+      ) : (
+        <box width={0} height={0} />
+      )}
+    </button>
+  );
+
+  /**
+   * The five colours, drawn as what choosing one will paint: its fill
+   * for a rule, and white to its colour for a scale, which is what
+   * `applyFormat` sends.
+   */
+  const swatches = (kept: Pick<SheetConditionalRule, 'paint' | 'scale'> | null, scale: boolean) => (
     <row key="swatches" gap={3} y="center" role="radiogroup" label="Colour">
+      {kept === null ? [] : [currentSwatch(kept)]}
       {FILLS.map((entry, index) => (
         <button
           key={entry.name}
@@ -363,7 +462,8 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
           height={18}
           borderRadius={4}
           cursor="pointer"
-          backgroundColor={entry.fill}
+          padding={scale ? 2 : 0}
+          backgroundColor={scale ? '#ffffff' : entry.fill}
           borderColor={fill.pipe(map(is => (is === index ? 'focusRing' : 'controlBorder')))}
           borderWidth={fill.pipe(map(is => (is === index ? 2 : 1)))}
           role="radio"
@@ -371,7 +471,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
           states={fill.pipe(map((is): readonly UiSemanticState[] => (is === index ? ['checked'] : [])))}
           onClick={() => (fill.value = index)}
         >
-          <box width={0} height={0} />
+          {scale ? stops(['#ffffff', entry.color]) : <box width={0} height={0} />}
         </button>
       ))}
     </row>
@@ -428,8 +528,8 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
    * are and the properties were right; a browser showed a bar one
    * pixel tall.
    */
-  const middle = combineLatest([inputs.tab, test]).pipe(
-    map(([which, id]) => {
+  const middle = combineLatest([inputs.tab, test, current]).pipe(
+    map(([which, id, kept]) => {
       if (which !== 'format') {
         return [
           choice('Allow', CHECKS, check),
@@ -443,7 +543,7 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
         choice('Condition', TESTS, test),
         ...(count === 0 ? [] : [field('Value', first, applyFormat, 110, inputs.ref.value ?? undefined)]),
         ...(count > 1 ? [field('And', second, applyFormat, 80)] : []),
-        swatches(),
+        swatches(kept, id === 'scale'),
         button('Apply', applyFormat)
       ];
     })

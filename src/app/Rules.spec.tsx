@@ -10,6 +10,7 @@ import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
+import { seed } from './SheetSeed';
 import type { SheetValidation } from './SheetContract';
 
 /**
@@ -340,6 +341,80 @@ describe('rules over a selection', () => {
  * It is the one kind of rule where the acceptable values are few and
  * known — which is also what makes it the kind worth enforcing.
  */
+describe('the rules bar over the seeded workbook', () => {
+  let h: Harness;
+
+  beforeEach(async () => {
+    h = await mount(document => seed(document));
+  });
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  async function settle(): Promise<void> {
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function openFormat(): Promise<void> {
+    const grid = h.ui.getByRole('grid');
+    let stops = 0;
+    while (h.ui.runtime.input.focus.focusedNode !== grid) {
+      if (stops++ > 12) {
+        throw new Error('Tab never reached the grid');
+      }
+      h.ui.fireEvent.tab();
+      await h.ui.settle();
+    }
+    h.ui.fireEvent.press('F10');
+    await settle();
+    h.ui.fireEvent.press('o');
+    await settle();
+    h.ui.fireEvent.click(h.ui.getByRole('menuitem', { name: 'Conditional formatting…' }));
+    await settle();
+  }
+
+  /**
+   * The revenue column's scale is pink to yellow to green, which is
+   * none of the bar's swatches — so it is shown as itself, and not as
+   * the nearest one.
+   */
+  it('shows a scale in colours of its own as its own, down the column', async () => {
+    h.service.setSelection(4, 6, 4, 6);
+    await settle();
+    await openFormat();
+    for (const row of [4, 5, 6]) {
+      h.service.setSelection(row, 6, row, 6);
+      await settle();
+      expect(h.ui.getByRole('radio', { name: 'Colour scale' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('radio', { name: 'Current colours' })).toHaveSemantics({ states: ['checked'] });
+      expect(h.ui.getByRole('radio', { name: 'Red' })).toHaveSemantics({ states: [] });
+    }
+  });
+
+  it('puts the scale back as it was when applied unchanged', async () => {
+    h.service.setSelection(4, 6, 4, 6);
+    await settle();
+    const before = h.document.conditionalAt(4, 6)?.scale;
+    await openFormat();
+    h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Apply' }));
+    await settle();
+    expect(h.document.conditionalAt(4, 6)?.scale).toEqual(before);
+  });
+
+  it('shows bold coloured text as the current colours, not a fill', async () => {
+    h.service.setSelection(4, 8, 4, 8);
+    await settle();
+    await openFormat();
+    expect(h.ui.getByRole('radio', { name: 'Text contains' })).toHaveSemantics({ states: ['checked'] });
+    expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('Below');
+    expect(h.ui.getByRole('radio', { name: 'Current colours' })).toHaveSemantics({ states: ['checked'] });
+  });
+});
+
 describe('the list a cell may choose from', () => {
   let h: Harness;
 
