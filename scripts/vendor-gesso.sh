@@ -85,3 +85,14 @@ console.log(`vendored ${tarballs.length} packages`);
 NODE
 
 cd "$HERE" && pnpm install
+
+# Drop Vite's pre-bundled copies of the old packages.
+#
+# The same failure as the tarball names, one layer up. Vite bundles
+# each dependency once into node_modules/.vite and keys the cache on the
+# lockfile, which an install does update — but a dev server already
+# running goes on serving the copy it bundled, and a restart can reuse
+# it. Phase 16 met this as "shell.saveFile is not a function": the new
+# engine was installed and the page was still running the old one.
+rm -rf "$HERE/node_modules/.vite"
+echo "cleared Vite's dependency cache; restart any running dev server"
