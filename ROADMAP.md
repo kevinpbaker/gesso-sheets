@@ -2122,7 +2122,7 @@ Two are added.
 
 ---
 
-### Phase 23 — Files that keep everything
+### Phase 23 — Files that keep everything — **done**
 
 **Conditional formats, validations and charts, in and out of
 `.xlsx`.**
@@ -2158,6 +2158,65 @@ drawn, checked by converting to `.ods` and reading its content back.
 And the POI corpus's files that use them are read, with the count of
 rules, validations and charts recorded here, as Phase 17 recorded its
 325 of 352.
+
+**Met.** All three kinds go out and come back. `SheetXlsxOut`'s *left
+out* sentence is empty for the seeded sheet, which has all three.
+Opened in LibreOffice, headless:
+- a workbook's four validation kinds come back as LibreOffice's own
+  conditions: the list, the whole number between two bounds, the text
+  length and the date range;
+- four conditional-format kinds come back with their paint, down to
+  the fill colour: greater than, contains text, a colour scale and a
+  formula;
+- all seven chart kinds come back as the right LibreOffice chart
+  classes, with their series on the right cells, their titles and
+  their legends: column, bar, stacked, line, area, pie and scatter.
+
+POI's corpus, read with the same code:
+
+| | kept | left out | files |
+|---|---:|---:|---:|
+| validations | 38 | 54 | 11 |
+| conditional formats | 616 | 60 | 19 |
+| charts | 16 | 16 | 21 |
+
+What is left out is left out for a reason the import's sentence can
+name, and counted there.
+
+- **Validations.** Most of the 54 are in one of POI's test files,
+  which runs every operator against a bound in another cell. A bound
+  that is another cell would be read as that cell's value on the day
+  the file was opened, and would then silently disagree with it, so it
+  is not read at all. The rest are rules this sheet has no word for:
+  not-equal, not-between, a shortest text, a time, a custom formula.
+- **Conditional formats.** The 60 are data bars, icon sets, top-ten,
+  above-average and duplicate rules, which carry no formula and have
+  no counterpart here. Everything else Excel writes is kept.
+  - Rules Excel names itself are kept as the formula it writes beside
+    them: *begins with*, *contains an error*, *not containing*.
+  - A cell-value rule with an operator this sheet has no shorthand for
+    is kept as the equivalent formula, written for the range's first
+    cell.
+- **Charts.** 13 of the 16 chart data on another sheet. A chart here
+  reads the sheet it is on, and charting another would mean following
+  that sheet through a rename or a deletion, which is its own change.
+  The other three are a bar-and-line combination, a chart whose only
+  data is the file's cache, and one naming an external workbook. The
+  one known inexactness is a scatter's x values. Scatter here plots
+  by position, so a file whose x column is real numbers reads back
+  with that column as another series. That is a gap in the scatter,
+  not the file.
+
+**How the charts are written.** Each chart's series are spelled out by
+`layoutOf`, which is the one reading of a range that the chart on screen
+and the file share, so they cannot chart different numbers. The anchor
+is absolute, in EMUs, because a chart here is a rectangle in pixels and
+not a span of cells. Read the other way, a two-cell anchor is turned
+into pixels using the file's own column widths and row heights.
+
+`src/sheet/XlsxRules.ts` holds validations and conditional formats and
+`src/sheet/XlsxCharts.ts` holds charts. Both are plain data in and out,
+so `Xlsx.ts` and `XlsxWrite.ts` only call them.
 
 ### Phase 24 — An active cell — **done**
 

@@ -1,6 +1,7 @@
 import { columnName, quoteSheetName } from './A1';
 import type { Validation } from './Validation';
 import { dxfOf, writeConditionals, writeValidations } from './XlsxRules';
+import { chartPartOf, drawingPartOf, type XlsxOutChart } from './XlsxCharts';
 import type { ConditionalPaint, ConditionalRule } from './Conditional';
 import type { CellEdge, CellFormat, NumberFormat } from './Format';
 import { withIntersections } from './Legacy';
@@ -69,6 +70,8 @@ export interface XlsxOutSheet {
   readonly validations?: readonly Validation[];
   /** The formats that think; see `XlsxRules.writeConditionals`. */
   readonly conditional?: readonly ConditionalRule[];
+  /** The charts over the sheet; see `XlsxCharts`. */
+  readonly charts?: readonly XlsxOutChart[];
 }
 
 export interface XlsxOutName {
@@ -148,13 +151,44 @@ export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
     },
     { name: 'xl/styles.xml', text: stylesOf(book.formats, dxfs) }
   ];
+  let chartNumber = 0;
   sheets.forEach((sheet, at) => {
+    const n = at + 1;
     const noted = (sheet.notes?.length ?? 0) > 0;
-    parts.push({ name: `xl/worksheets/sheet${at + 1}.xml`, text: worksheetOf(sheet, ranged, noted, ruled[at] ?? '') });
+    const charts = sheet.charts ?? [];
+    parts.push({ name: `xl/worksheets/sheet${n}.xml`, text: worksheetOf(sheet, ranged, noted, ruled[at] ?? '', charts.length > 0) });
+    // The worksheet's relationships, with fixed ids so the worksheet can
+    // name them without asking: the comments and their drawing, and the
+    // drawing that holds the charts.
+    const relationships: string[] = [];
     if (noted) {
-      parts.push(...notesOf(sheet.notes ?? [], at + 1));
+      parts.push(...notesOf(sheet.notes ?? [], n));
+      relationships.push(
+        `<Relationship Id="rId1" Type="${RELATIONSHIPS}/comments" Target="../comments${n}.xml"/>`,
+        `<Relationship Id="rId2" Type="${RELATIONSHIPS}/vmlDrawing" Target="../drawings/vmlDrawing${n}.vml"/>`
+      );
+    }
+    if (charts.length > 0) {
+      relationships.push(`<Relationship Id="rId3" Type="${RELATIONSHIPS}/drawing" Target="../drawings/drawing${n}.xml"/>`);
+      parts.push({ name: `xl/drawings/drawing${n}.xml`, text: drawingPartOf(charts) });
+      const chartRelationships = charts.map((chart, index) => {
+        chartNumber++;
+        parts.push({ name: `xl/charts/chart${chartNumber}.xml`, text: chartPartOf(chart) });
+        return `<Relationship Id="rId${index + 1}" Type="${RELATIONSHIPS}/chart" Target="../charts/chart${chartNumber}.xml"/>`;
+      });
+      parts.push({
+        name: `xl/drawings/_rels/drawing${n}.xml.rels`,
+        text: xml(`<Relationships xmlns="${PACKAGE_RELATIONSHIPS}">${chartRelationships.join('')}</Relationships>`)
+      });
+    }
+    if (relationships.length > 0) {
+      parts.push({
+        name: `xl/worksheets/_rels/sheet${n}.xml.rels`,
+        text: xml(`<Relationships xmlns="${PACKAGE_RELATIONSHIPS}">${relationships.join('')}</Relationships>`)
+      });
     }
   });
+  parts[0] = { name: '[Content_Types].xml', text: contentTypes(sheets.length, sheets.map(sheet => (sheet.notes?.length ?? 0) > 0), sheets.map(sheet => sheet.charts?.length ?? 0)) };
   return parts;
 }
 
@@ -176,7 +210,7 @@ function escape(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function contentTypes(sheets: number, noted: readonly boolean[] = []): string {
+function contentTypes(sheets: number, noted: readonly boolean[] = [], charted: readonly number[] = []): string {
   const overrides = [
     `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`,
     `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>`
@@ -191,6 +225,20 @@ function contentTypes(sheets: number, noted: readonly boolean[] = []): string {
       );
     }
   }
+  let chartNumber = 0;
+  charted.forEach((count, at) => {
+    if (count > 0) {
+      overrides.push(
+        `<Override PartName="/xl/drawings/drawing${at + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>`
+      );
+    }
+    for (let one = 0; one < count; one++) {
+      chartNumber++;
+      overrides.push(
+        `<Override PartName="/xl/charts/chart${chartNumber}.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>`
+      );
+    }
+  });
   const vml = noted.some(Boolean)
     ? `<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>`
     : '';
@@ -378,7 +426,7 @@ function borderOf(format: CellFormat | undefined): string {
 
 const address = (row: number, column: number): string => `${columnName(column)}${row + 1}`;
 
-function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = false, conditional = ''): string {
+function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = false, conditional = '', charted = false): string {
   const byRow = new Map<number, XlsxOutCell[]>();
   let lastRow = 0;
   let lastColumn = 0;
@@ -435,8 +483,9 @@ function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = f
       // schema has them in and the order Excel refuses a file without.
       conditional +
       writeValidations(sheet.validations ?? []).xml +
-      // The comments' drawing: Excel shows a comment only through the
-      // shape this names; see `notesOf`.
+      // The charts' drawing, then the comments': Excel shows a comment
+      // only through the shape the second names; see `notesOf`.
+      (charted ? `<drawing r:id="rId3"/>` : '') +
       (noted ? `<legacyDrawing r:id="rId2"/>` : '') +
       `</worksheet>`
   );
@@ -676,15 +725,6 @@ function notesOf(notes: readonly { row: number; column: number; text: string }[]
         `<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="${sheet}"/></o:shapelayout>` +
         `<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>` +
         `${shapes}</xml>`
-    },
-    {
-      name: `xl/worksheets/_rels/sheet${sheet}.xml.rels`,
-      text: xml(
-        `<Relationships xmlns="${PACKAGE_RELATIONSHIPS}">` +
-          `<Relationship Id="rId1" Type="${RELATIONSHIPS}/comments" Target="../comments${sheet}.xml"/>` +
-          `<Relationship Id="rId2" Type="${RELATIONSHIPS}/vmlDrawing" Target="../drawings/vmlDrawing${sheet}.vml"/>` +
-          `</Relationships>`
-      )
     }
   ];
 }

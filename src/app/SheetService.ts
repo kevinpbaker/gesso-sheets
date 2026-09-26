@@ -9,7 +9,7 @@ import {
   type Chart,
   type ChartKind
 } from '../sheet/Chart';
-import { headersIn, orientationOf, seriesFrom } from '../sheet/Series';
+import { layoutOf, seriesFrom } from '../sheet/Series';
 import { STRESS_CELLS } from './SheetCommands';
 import type { CellValue } from '../sheet/Values';
 import { addressOf, explainCell } from '../sheet/Explain';
@@ -2429,12 +2429,7 @@ export class SheetService {
       }
       grid.push(line);
     }
-    const rows = rect.lastRow - rect.firstRow + 1;
-    const columns = rect.lastColumn - rect.firstColumn + 1;
-    const { byColumn } = orientationOf(rows, columns);
-    const lines = byColumn ? grid : transposed(grid, rows, columns);
-    const headers = headersIn(lines[0] ?? [], lines[1]);
-    const labels = (lines[headers ? 1 : 0] ?? []).some(value => typeof value === 'string');
+    const { byColumn, headers, labels } = layoutOf(grid);
     const read = seriesFrom(grid, {
       byColumn,
       headers,
@@ -3054,18 +3049,6 @@ function offsetOfColumn(geometry: SheetGeometry, column: number): number {
   return offset;
 }
 
-/** A grid of values with its rows and columns swapped. */
-function transposed(grid: readonly (readonly CellValue[])[], rows: number, columns: number): CellValue[][] {
-  const out: CellValue[][] = [];
-  for (let column = 0; column < columns; column++) {
-    const line: CellValue[] = [];
-    for (let row = 0; row < rows; row++) {
-      line.push(grid[row]?.[column] ?? null);
-    }
-    out.push(line);
-  }
-  return out;
-}
 
 /** What Undo calls each kind of paste. */
 const PASTE_LABELS: Readonly<Record<SheetPasteMode, string>> = {

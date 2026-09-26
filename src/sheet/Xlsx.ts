@@ -10,6 +10,7 @@ import { literalOf } from './Workbook';
 import type { Validation } from './Validation';
 import { child, children, parseXml, type XmlElement } from './Xml';
 import { readConditionals, readValidations, type PendingList } from './XlsxRules';
+import { readCharts, type XlsxChart } from './XlsxCharts';
 import type { ConditionalPaint, ConditionalRule } from './Conditional';
 import { zipEntries, zipRead, type Inflate } from './Zip';
 
@@ -97,6 +98,8 @@ export interface XlsxSheet {
   readonly validations: readonly Validation[];
   /** The formats that think; see `XlsxRules.readConditionals`. */
   readonly conditional: readonly ConditionalRule[];
+  /** The charts over the sheet; see `XlsxCharts.readCharts`. */
+  readonly charts: readonly XlsxChart[];
 }
 
 export interface XlsxName {
@@ -159,7 +162,7 @@ export async function openXlsx(bytes: Uint8Array, inflate: Inflate, limits: Xlsx
     // file's images and pivot caches can be most of its bytes, and
     // inflating them to throw them away would be most of the time.
     if (
-      /^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|theme\/theme1\.xml|worksheets\/[^/]+\.xml|worksheets\/_rels\/[^/]+\.xml\.rels|comments[^/]*\.xml)$/i.test(
+      /^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|theme\/theme1\.xml|worksheets\/[^/]+\.xml|worksheets\/_rels\/[^/]+\.xml\.rels|comments[^/]*\.xml|drawings\/[^/]+\.xml|drawings\/_rels\/[^/]+\.xml\.rels|charts\/chart[^/]*\.xml)$/i.test(
         name
       )
     ) {
@@ -222,13 +225,18 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const lists: { sheet: number; pending: readonly PendingList[] }[] = [];
   let validationsLeftOut = 0;
   let conditionalLeftOut = 0;
+  let chartsLeftOut = 0;
   for (const entry of children(child(workbook, 'sheets'), 'sheet')) {
     const target = targets.get(entry.attributes.id ?? '');
     const text = target === undefined ? null : read(target);
     if (text === null) {
       continue;
     }
-    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, { known, ranged }, date1904, dxfs);
+    const sheetName = entry.attributes.name ?? `Sheet${sheets.length + 1}`;
+    const root = parseXml(text);
+    const sheet = worksheet(sheetName, root, strings, formats, limits, { known, ranged }, date1904, dxfs);
+    const charted = target === undefined ? { charts: [], skipped: 0 } : readCharts(root, target, sheetName, read);
+    chartsLeftOut += charted.skipped;
     valuesKept += sheet.valuesKept;
     cut.rows = Math.max(cut.rows, sheet.cutRows);
     cut.columns = Math.max(cut.columns, sheet.cutColumns);
@@ -239,7 +247,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     lists.push({ sheet: sheets.length, pending: sheet.pendingLists });
     validationsLeftOut += sheet.validationsSkipped;
     conditionalLeftOut += sheet.conditionalSkipped;
-    sheets.push({ ...sheet.sheet, notes });
+    sheets.push({ ...sheet.sheet, notes, charts: charted.charts });
   }
   // A list whose values are a range of cells, filled from those cells
   // now every sheet is read — a list on one sheet usually names a
@@ -286,7 +294,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const iteration = iterate
     ? { count: Number.isInteger(count) && count > 0 ? count : 100, delta: delta > 0 ? delta : 0.001 }
     : null;
-  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut, 'conditional formats': conditionalLeftOut } };
+  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut, 'conditional formats': conditionalLeftOut, charts: chartsLeftOut } };
 }
 
 // ---------------------------------------------------------------------------
@@ -995,6 +1003,7 @@ function worksheet(
       frozenRows,
       frozenColumns,
       notes: [],
+      charts: [],
       validations: validated.validations,
       conditional: conditioned.rules
     },

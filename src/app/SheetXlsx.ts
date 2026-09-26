@@ -1,5 +1,8 @@
 import { DEFAULT_FORMAT, keyOf, type CellFormat } from '../sheet/Format';
+import { MIN_CHART_HEIGHT, MIN_CHART_WIDTH, type Chart } from '../sheet/Chart';
 import type { XlsxBook, XlsxSheet } from '../sheet/Xlsx';
+import type { XlsxChart } from '../sheet/XlsxCharts';
+import { rangeOfRect } from '../sheet/XlsxRules';
 import type { Inflate } from '../sheet/Zip';
 import { COLUMN_WIDTH, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT, ROW_HEIGHT } from './dimensions';
 import type { SheetSnapshot, StoredFormat, StoredSheet } from './SheetFile';
@@ -19,9 +22,11 @@ import type { SheetSnapshot, StoredFormat, StoredSheet } from './SheetFile';
  */
 
 export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapshot {
+  // A chart's id is the workbook's, not the sheet's.
+  let chartId = 0;
   return {
     version: 3,
-    sheets: book.sheets.map(sheet => storedSheet(sheet, columnCount)),
+    sheets: book.sheets.map(sheet => storedSheet(sheet, columnCount, () => ++chartId)),
     active: 0,
     names: book.names.map(name => ({
       name: name.name,
@@ -35,7 +40,7 @@ export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapsh
   };
 }
 
-function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
+function storedSheet(sheet: XlsxSheet, columnCount: number, nextChartId: () => number = () => 1): StoredSheet {
   // The palette the snapshot wants: the default at 0, then each format
   // a cell here actually uses, once.
   const palette: CellFormat[] = [DEFAULT_FORMAT];
@@ -91,7 +96,7 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
     merges: sheet.merges,
     conditional: [...sheet.conditional],
     validations: [...sheet.validations],
-    charts: [],
+    charts: sheet.charts.map(chart => chartIn(chart, sheet, nextChartId())),
     notes: sheet.notes,
     frozenRows: sheet.frozenRows,
     frozenColumns: sheet.frozenColumns,
@@ -138,3 +143,53 @@ export const platformInflate: Inflate = async bytes => {
   const stream = new Blob([bytes as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
+
+/**
+ * A chart from a file, as a chart here: its range, and its anchor turned
+ * into pixels from the top-left of A1 with the sheet's own widths and
+ * heights — the anchor is in cells, and a chart here is a rectangle.
+ */
+function chartIn(chart: XlsxChart, sheet: XlsxSheet, id: number): Chart {
+  const width = (column: number) => sheet.columnWidths.get(column) ?? COLUMN_WIDTH;
+  const height = (row: number) =>
+    sheet.hiddenRows.includes(row) ? 0 : Math.round((sheet.rowHeights.get(row) ?? 1) * ROW_HEIGHT);
+  const left = (column: number) => {
+    let x = 0;
+    for (let at = 0; at < column; at++) {
+      x += width(at);
+    }
+    return x;
+  };
+  const top = (row: number) => {
+    let y = 0;
+    for (let at = 0; at < row; at++) {
+      y += height(at);
+    }
+    return y;
+  };
+  const anchor = chart.anchor;
+  let place: Chart['place'];
+  if (anchor.kind === 'pixels') {
+    place = { x: anchor.x, y: anchor.y, width: anchor.width, height: anchor.height };
+  } else {
+    const x = left(anchor.fromColumn) + anchor.fromColumnOffset;
+    const y = top(anchor.fromRow) + anchor.fromRowOffset;
+    // A one-cell anchor carries its size rather than a far corner.
+    const right = anchor.toColumn < 0 ? x + anchor.toColumnOffset : left(anchor.toColumn) + anchor.toColumnOffset;
+    const bottom = anchor.toRow < 0 ? y + anchor.toRowOffset : top(anchor.toRow) + anchor.toRowOffset;
+    place = { x, y, width: right - x, height: bottom - y };
+  }
+  return {
+    id,
+    kind: chart.kind,
+    title: chart.title,
+    legend: chart.legend,
+    range: rangeOfRect(chart.firstRow, chart.firstColumn, chart.lastRow, chart.lastColumn),
+    place: {
+      x: Math.max(0, place.x),
+      y: Math.max(0, place.y),
+      width: Math.max(MIN_CHART_WIDTH, place.width),
+      height: Math.max(MIN_CHART_HEIGHT, place.height)
+    }
+  };
+}

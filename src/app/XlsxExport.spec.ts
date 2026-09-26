@@ -306,3 +306,60 @@ describe('conditional formats in an exported workbook', () => {
     expect(styles).toContain('<bgColor rgb="FFFCE8E6"/>');
   });
 });
+
+/**
+ * Charts out and back — Phase 23.
+ */
+describe('charts in an exported workbook', () => {
+  const KINDS = ['column', 'bar', 'stacked', 'line', 'area', 'pie', 'scatter'] as const;
+
+  function charted(): SheetDocument {
+    const document = new SheetDocument();
+    document.setCell(0, 0, 'Month');
+    document.setCell(0, 1, 'North');
+    document.setCell(0, 2, 'South');
+    ['Jan', 'Feb', 'Mar'].forEach((month, at) => {
+      document.setCell(at + 1, 0, month);
+      document.setCell(at + 1, 1, String((at + 1) * 10));
+      document.setCell(at + 1, 2, String((at + 1) * 7));
+    });
+    KINDS.forEach((kind, at) => {
+      document.addChart({
+        kind,
+        title: at === 0 ? 'Sales by month' : '',
+        range: {
+          start: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false },
+          end: { row: 3, column: kind === 'pie' ? 1 : 2, rowAbsolute: false, columnAbsolute: false }
+        },
+        place: { x: 400, y: at * 320, width: 480, height: 300 },
+        legend: at % 2 === 0
+      });
+    });
+    document.sheet.recalculate();
+    return document;
+  }
+
+  it('come back as the charts they were: kind, title, legend, range and place', async () => {
+    const back = await roundTrip(charted());
+    expect(back.charts.map(chart => ({ kind: chart.kind, title: chart.title, legend: chart.legend, place: chart.place }))).toEqual(
+      charted().charts.map(chart => ({ kind: chart.kind, title: chart.title, legend: chart.legend, place: chart.place }))
+    );
+    expect(back.charts[0].range).toMatchObject({ start: { row: 0, column: 0 }, end: { row: 3, column: 2 } });
+    expect(back.charts[5].range).toMatchObject({ start: { row: 0, column: 0 }, end: { row: 3, column: 1 } });
+  });
+
+  it('spell out each series as the chart on screen reads it', () => {
+    const parts = xlsxParts(xlsxOfDocument(charted(), ROWS).book);
+    const first = parts.find(part => part.name === 'xl/charts/chart1.xml')!.text;
+    expect(first).toContain('<c:tx><c:strRef><c:f>Sheet1!$B$1</c:f>');
+    expect(first).toContain('<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$4</c:f>');
+    expect(first).toContain('<c:val><c:numRef><c:f>Sheet1!$C$2:$C$4</c:f>');
+    expect(parts.find(part => part.name === 'xl/worksheets/sheet1.xml')!.text).toContain('<drawing r:id="rId3"/>');
+    expect(parts.filter(part => part.name.startsWith('xl/charts/')).length).toBe(7);
+    expect(parts.find(part => part.name === '[Content_Types].xml')!.text).toContain('/xl/charts/chart7.xml');
+  });
+
+  it('say nothing is left out', () => {
+    expect(xlsxOfDocument(charted(), ROWS).leftOut).toEqual([]);
+  });
+});

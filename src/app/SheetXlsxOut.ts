@@ -1,4 +1,9 @@
 import { DEFAULT_FORMAT, keyOf, type CellFormat } from '../sheet/Format';
+import { columnName, quoteSheetName } from '../sheet/A1';
+import type { Chart } from '../sheet/Chart';
+import { layoutOf } from '../sheet/Series';
+import type { CellValue } from '../sheet/Values';
+import type { XlsxOutChart, XlsxOutSeries } from '../sheet/XlsxCharts';
 import { writeValidations } from '../sheet/XlsxRules';
 import type { XlsxOut, XlsxOutCell, XlsxOutName, XlsxOutRow, XlsxOutSheet } from '../sheet/XlsxWrite';
 import type { Deflate } from '../sheet/Zip';
@@ -46,9 +51,6 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
     // is left out, and then it is said.
     if (writeValidations(page.validations).unwritten > 0) {
       leftOut.add('some validations');
-    }
-    if (page.charts.length > 0) {
-      leftOut.add('charts');
     }
     const cells = new Map<string, XlsxOutCell>();
     const put = (cell: XlsxOutCell): void => {
@@ -132,7 +134,8 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
       frozenColumns: page.frozenColumns,
       notes: page.notes.all().filter(note => note.row < rowCount),
       validations: [...page.validations],
-      conditional: [...page.conditional]
+      conditional: [...page.conditional],
+      charts: page.charts.map(chart => chartOut(chart, names[index] ?? `Sheet${index + 1}`, (row, column) => page.sheet.value(row, column)))
     });
   }
 
@@ -163,3 +166,48 @@ export const platformDeflate: Deflate = async bytes => {
   const stream = new Blob([bytes as Uint8Array<ArrayBuffer>]).stream().pipeThrough(new CompressionStream('deflate-raw'));
   return new Uint8Array(await new Response(stream).arrayBuffer());
 };
+
+/**
+ * A chart as the file writes it: its series spelled out as references,
+ * read the way the chart on screen reads its range — `layoutOf`, which
+ * both share, so the file charts the numbers somebody was looking at.
+ */
+function chartOut(chart: Chart, sheet: string, value: (row: number, column: number) => CellValue): XlsxOutChart {
+  const firstRow = Math.min(chart.range.start.row, chart.range.end.row);
+  const lastRow = Math.max(chart.range.start.row, chart.range.end.row);
+  const firstColumn = Math.min(chart.range.start.column, chart.range.end.column);
+  const lastColumn = Math.max(chart.range.start.column, chart.range.end.column);
+  const grid: CellValue[][] = [];
+  for (let row = firstRow; row <= lastRow; row++) {
+    const line: CellValue[] = [];
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      line.push(value(row, column));
+    }
+    grid.push(line);
+  }
+  const { byColumn, headers, labels } = layoutOf(grid);
+  const prefix = `${quoteSheetName(sheet)}!`;
+  const cell = (row: number, column: number) => `$${columnName(column)}$${row + 1}`;
+  const span = (r1: number, c1: number, r2: number, c2: number) => `${prefix}${cell(r1, c1)}:${cell(r2, c2)}`;
+  const series: XlsxOutSeries[] = [];
+  if (byColumn) {
+    const dataFrom = firstRow + (headers ? 1 : 0);
+    for (let column = firstColumn + (labels ? 1 : 0); column <= lastColumn; column++) {
+      series.push({
+        ...(headers ? { name: `${prefix}${cell(firstRow, column)}` } : {}),
+        ...(labels ? { categories: span(dataFrom, firstColumn, lastRow, firstColumn) } : {}),
+        values: span(dataFrom, column, lastRow, column)
+      });
+    }
+  } else {
+    const dataFrom = firstColumn + (headers ? 1 : 0);
+    for (let row = firstRow + (labels ? 1 : 0); row <= lastRow; row++) {
+      series.push({
+        ...(headers ? { name: `${prefix}${cell(row, firstColumn)}` } : {}),
+        ...(labels ? { categories: span(firstRow, dataFrom, firstRow, lastColumn) } : {}),
+        values: span(row, dataFrom, row, lastColumn)
+      });
+    }
+  }
+  return { kind: chart.kind, title: chart.title, legend: chart.legend, series, place: chart.place };
+}

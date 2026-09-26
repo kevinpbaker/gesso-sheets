@@ -213,6 +213,25 @@ export function orientationOf(rows: number, columns: number): { byColumn: boolea
 }
 
 /**
+ * How a chart reads a range: which way its series run, and whether its
+ * first line names them and its first column labels them.
+ *
+ * One answer, shared by the chart drawn on screen and the chart written
+ * into an `.xlsx`, whose series have to be spelled out cell by cell —
+ * a file that guessed differently from the screen would chart other
+ * numbers than the ones somebody looked at.
+ */
+export function layoutOf(grid: readonly (readonly CellValue[])[]): { byColumn: boolean; headers: boolean; labels: boolean } {
+  const rows = grid.length;
+  const columns = rows === 0 ? 0 : Math.max(...grid.map(row => row.length));
+  const { byColumn } = orientationOf(rows, columns);
+  const lines = byColumn ? grid : transpose(grid, rows, columns);
+  const headers = headersIn(lines[0] ?? [], lines[1]);
+  const labels = (lines[headers ? 1 : 0] ?? []).some(value => typeof value === 'string');
+  return { byColumn, headers, labels };
+}
+
+/**
  * Whether the first line of a range looks like headings.
  *
  * Text over numbers, which is the same test `looksLikeHeader` makes
