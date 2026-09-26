@@ -80,6 +80,7 @@ import {
   looksLikeHeader,
   pasteBlock,
   rectOf,
+  writeRect,
   type CopyOrigin,
   type Rect
 } from './SheetRanges';
@@ -727,6 +728,27 @@ export class SheetService {
     this.fitRowsLater([row]);
     this.persist();
     this.pump();
+  }
+
+  jumpToEdge(
+    row: number,
+    column: number,
+    anchorRow: number,
+    anchorColumn: number,
+    rows: -1 | 0 | 1,
+    columns: -1 | 0 | 1,
+    extend: boolean
+  ): void {
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const to = this.document.sheet.edgeFrom(row, column, rows, columns, { rowCount, columnCount });
+    this.setSelection(to.row, to.column, extend ? anchorRow : to.row, extend ? anchorColumn : to.column);
+  }
+
+  writeSelection(input: string): void {
+    const at = this.document.selection;
+    writeRect(this.document, rectOf(at), input, { row: at.row, column: at.column });
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
   }
 
   setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { isPrintable, keyAction, NAVIGATION, PAGE_ROWS, type SheetAction } from './SheetKeys';
+import { COMMANDS } from './SheetCommands';
+import { isPrintable, keyAction, NAVIGATION, PAGE_ROWS, stampText, type SheetAction } from './SheetKeys';
 
 function onGrid(key: string, modifiers = {}): SheetAction | null {
   return keyAction(key, modifiers, false);
@@ -46,8 +47,8 @@ describe('keys on a selected cell', () => {
     // means on Enter and Tab.
     expect(onGrid('Enter')).toEqual({ kind: 'move', rows: 1, columns: 0, extend: false });
     expect(onGrid('Enter', { shift: true })).toEqual({ kind: 'move', rows: -1, columns: 0, extend: false });
-    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false });
-    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false });
+    expect(onGrid('Tab')).toEqual({ kind: 'move', rows: 0, columns: 1, extend: false, tab: true });
+    expect(onGrid('Tab', { shift: true })).toEqual({ kind: 'move', rows: 0, columns: -1, extend: false, tab: true });
   });
 
   it('pages by less than a screen, so something stays in common', () => {
@@ -104,8 +105,8 @@ describe('keys inside an open cell', () => {
   });
 
   it('commits and moves right on Tab, left with shift', () => {
-    expect(inCell('Tab')).toEqual({ kind: 'commit', rows: 0, columns: 1 });
-    expect(inCell('Tab', { shift: true })).toEqual({ kind: 'commit', rows: 0, columns: -1 });
+    expect(inCell('Tab')).toEqual({ kind: 'commit', rows: 0, columns: 1, tab: true });
+    expect(inCell('Tab', { shift: true })).toEqual({ kind: 'commit', rows: 0, columns: -1, tab: true });
   });
 
   it('puts back what was there on Escape', () => {
@@ -147,8 +148,54 @@ describe('isPrintable', () => {
 describe('the keys the shortcut sheet advertises', () => {
   it('all do something', () => {
     for (const entry of NAVIGATION) {
-      const action = keyAction(entry.probe, {}, entry.whileEditing === true);
+      const action = keyAction(entry.probe, entry.probeModifiers ?? {}, entry.whileEditing === true);
       expect(action, `${entry.keys} (${entry.label})`).not.toBeNull();
+    }
+  });
+
+  /**
+   * The other direction: a key the table answers and the sheet does not
+   * advertise is a key nobody presses. Every kind of thing a key can
+   * do has to be reachable from an advertised key — a navigation entry,
+   * or a command whose accelerator the table answers — so a new key
+   * cannot be added here without somebody saying so in the help.
+   */
+  it('advertises every kind of thing a key can do', () => {
+    const advertised = new Set<string>();
+    // An entry that is not only for an open cell says what the key does
+    // in one as well — "commit and move down" — so it is asked both ways.
+    for (const entry of NAVIGATION) {
+      for (const editing of entry.whileEditing === true ? [true] : [false, true]) {
+        const action = keyAction(entry.probe, entry.probeModifiers ?? {}, editing);
+        if (action !== null) {
+          advertised.add(action.kind);
+        }
+      }
+    }
+    for (const command of Object.values(COMMANDS)) {
+      if (command.viaKeyTable === true && command.accelerator !== undefined) {
+        const { key, ...modifiers } = command.accelerator;
+        const action = keyAction(key, modifiers, false);
+        if (action !== null) {
+          advertised.add(action.kind);
+        }
+      }
+    }
+    // Typing is not a shortcut, and the help does not list the alphabet.
+    advertised.add('replace');
+
+    const keys = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End', 'PageUp', 'PageDown', 'Enter', 'Tab'];
+    keys.push('Escape', 'F2', 'Delete', 'Backspace', ' ', ';', ':', 'a', 'c', 'x', 'y', 'z');
+    const chords = [{}, { shift: true }, { ctrl: true }, { ctrl: true, shift: true }, { alt: true }, { meta: true }];
+    for (const key of keys) {
+      for (const modifiers of chords) {
+        for (const editing of [false, true]) {
+          const action = keyAction(key, modifiers, editing);
+          if (action !== null) {
+            expect(advertised, `${JSON.stringify(modifiers)} ${key}${editing ? ' in a cell' : ''}`).toContain(action.kind);
+          }
+        }
+      }
     }
   });
 
@@ -157,5 +204,42 @@ describe('the keys the shortcut sheet advertises', () => {
       expect(entry.label.length).toBeGreaterThan(0);
       expect(entry.keys.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('the new keys', () => {
+  it('jumps to the edge of the data on Ctrl+Arrow, extending with Shift', () => {
+    expect(onGrid('ArrowDown', { ctrl: true })).toEqual({ kind: 'edge', rows: 1, columns: 0, extend: false });
+    expect(onGrid('ArrowLeft', { meta: true, shift: true })).toEqual({ kind: 'edge', rows: 0, columns: -1, extend: true });
+  });
+
+  it('leaves Ctrl+Arrow to the text in an open cell', () => {
+    expect(inCell('ArrowRight', { ctrl: true })).toBeNull();
+  });
+
+  it('selects a column on Ctrl+Space and a row on Shift+Space', () => {
+    expect(onGrid(' ', { ctrl: true })).toEqual({ kind: 'selectLine', axis: 'columns' });
+    expect(onGrid(' ', { shift: true })).toEqual({ kind: 'selectLine', axis: 'rows' });
+    // A plain space is still the first character of what is typed.
+    expect(onGrid(' ')).toEqual({ kind: 'replace', text: ' ' });
+  });
+
+  it('stamps the date on Ctrl+; and the time on either spelling of Ctrl+Shift+;', () => {
+    for (const editing of [false, true]) {
+      expect(keyAction(';', { ctrl: true }, editing)).toEqual({ kind: 'stamp', what: 'date' });
+      expect(keyAction(':', { ctrl: true, shift: true }, editing)).toEqual({ kind: 'stamp', what: 'time' });
+      expect(keyAction(';', { ctrl: true, shift: true }, editing)).toEqual({ kind: 'stamp', what: 'time' });
+    }
+  });
+
+  it('breaks the line on Alt+Enter and fills the selection on Ctrl+Enter, in a cell', () => {
+    expect(inCell('Enter', { alt: true })).toEqual({ kind: 'insert', text: '\n' });
+    expect(inCell('Enter', { ctrl: true })).toEqual({ kind: 'commitAll' });
+  });
+
+  it('writes the stamp as the sheet reads it, in local time', () => {
+    const at = new Date(2026, 0, 5, 9, 7);
+    expect(stampText('date', at)).toBe('2026-01-05');
+    expect(stampText('time', at)).toBe('09:07');
   });
 });

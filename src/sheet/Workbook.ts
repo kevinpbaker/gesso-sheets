@@ -1192,6 +1192,82 @@ export class Workbook {
     return formatValue(this.value(sheet, row, column));
   }
 
+  /**
+   * Where Ctrl+Arrow lands from a cell: the edge of the data.
+   *
+   * From a filled cell with a filled one beside it, the last filled
+   * cell of that run; otherwise the next filled cell in the direction,
+   * or the edge of the sheet when there is none. A cell an array
+   * spilled into is filled, as it is on screen.
+   *
+   * Inside a run this steps a cell at a time, which costs the run.
+   * Across a gap it steps a little way and then, rather than walking a
+   * million empty cells, reads the cells the sheet actually holds once
+   * and takes the nearest — which costs the sheet's contents and is
+   * never more than the walk it replaces on a sheet that is full.
+   */
+  edgeFrom(
+    sheet: number,
+    row: number,
+    column: number,
+    rows: -1 | 0 | 1,
+    columns: -1 | 0 | 1,
+    extent: { rowCount: number; columnCount: number }
+  ): { row: number; column: number } {
+    const inside = (r: number, c: number) => r >= 0 && c >= 0 && r < extent.rowCount && c < extent.columnCount;
+    const filled = (r: number, c: number) => {
+      const key = keyOn(sheet, r, c);
+      return this.cells.has(key) || this.spilled.has(key);
+    };
+    let r = row + rows;
+    let c = column + columns;
+    if (!inside(r, c)) {
+      return { row, column };
+    }
+    if (filled(row, column) && filled(r, c)) {
+      while (inside(r + rows, c + columns) && filled(r + rows, c + columns)) {
+        r += rows;
+        c += columns;
+      }
+      return { row: r, column: c };
+    }
+    for (let step = 0; step < NEAR_GAP && inside(r, c); step++) {
+      if (filled(r, c)) {
+        return { row: r, column: c };
+      }
+      r += rows;
+      c += columns;
+    }
+    // Along one line: the other coordinate is fixed, and distance is
+    // how far along it a filled cell is.
+    const along = rows !== 0 ? row : column;
+    const direction = rows !== 0 ? rows : columns;
+    let nearest = direction > 0 ? (rows !== 0 ? extent.rowCount : extent.columnCount) : -1;
+    const consider = (key: number): void => {
+      if (sheetOf(key) !== sheet) {
+        return;
+      }
+      const keyRow = rowOf(key);
+      const keyColumn = columnOf(key);
+      const [at, across, fixed] = rows !== 0 ? [keyRow, keyColumn, column] : [keyColumn, keyRow, row];
+      if (across !== fixed || (at - along) * direction <= 0) {
+        return;
+      }
+      if (direction > 0 ? at < nearest : at > nearest) {
+        nearest = at;
+      }
+    };
+    for (const key of this.cells.keys()) {
+      consider(key);
+    }
+    for (const key of this.spilled.keys()) {
+      consider(key);
+    }
+    const edge = rows !== 0 ? extent.rowCount - 1 : extent.columnCount - 1;
+    const landed = Math.min(Math.max(nearest, 0), edge);
+    return rows !== 0 ? { row: landed, column } : { row, column: landed };
+  }
+
   /** Cells that hold something on a sheet. */
   sizeOf(sheet: number): number {
     let count = 0;
@@ -1358,3 +1434,10 @@ function anyDirty(keys: ReadonlySet<number>, dirty: ReadonlySet<number>): boolea
   }
   return false;
 }
+
+/**
+ * How far Ctrl+Arrow steps across empty cells before it reads the whole
+ * sheet instead. A gap in a table is usually a row or two, and a step
+ * is a lookup; the sheet's contents may be a hundred thousand cells.
+ */
+const NEAR_GAP = 64;

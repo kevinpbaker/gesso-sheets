@@ -146,6 +146,21 @@ export function fillRect(document: SheetDocument, source: Rect, target: Rect): v
   });
 }
 
+/**
+ * One input written across a rectangle, each copy's references moved
+ * by how far it is from `from` — what Ctrl+Enter does with what was
+ * typed. One transaction, so one step of undo.
+ */
+export function writeRect(document: SheetDocument, rect: Rect, input: string, from: { row: number; column: number }): void {
+  document.transact(() => {
+    for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+      for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+        document.setCell(row, column, rewriteFormula(input, row - from.row, column - from.column));
+      }
+    }
+  });
+}
+
 /** A remainder that is never negative, for tiling upwards or leftwards. */
 function mod(value: number, by: number): number {
   return ((value % by) + by) % by;

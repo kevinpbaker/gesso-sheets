@@ -1684,7 +1684,7 @@ the other the implementation, and they met in the middle — the specs
 ran against an implementation their author had not seen, and passed
 once the two agreed which end of a Shift+click moves.
 
-### Phase 19 — The keyboard Excel users already have
+### Phase 19 — The keyboard Excel users already have — **done**
 
 `SheetKeys` answers arrows, Home, End, PageUp and PageDown, and
 nothing with Ctrl on it but Home and End. The missing half:
@@ -1717,6 +1717,61 @@ that fails when a key is answered but not advertised. And a budget
 spec in `src/sheet`, in the style of `Sheet.budget.spec.ts`: the next
 occupied cell down a column of a million, found without visiting
 them.
+
+**Met, all but one.** Every key above is in `NAVIGATION`, and
+`SheetKeys.spec.ts` now asks both directions: every advertised key
+does something, and — the new half — every *kind* of thing the table
+can do, over every key and chord it answers, open or not, is reachable
+from an advertised key or a command's accelerator. It failed on its
+first run, on Enter in an open cell, whose entry said "commit" and was
+only ever pressed with nothing open. `Keyboard.spec.tsx` drives each
+key through the grid, and `Edge.budget.spec.ts` puts one cell at the
+foot of a column of 1,048,576 rows, beside a thousand-row table, and
+jumps to it: 0.6 ms against 45 ms for the walk it replaces, on the same
+sheet in the same run, and the spec holds the ratio rather than the
+milliseconds. Checked in Chrome, which takes none of these keys for
+itself: Ctrl+Down from E4 of the seeded sheet stops at the total in
+E14 and then at E10000, Ctrl+Space selects E1:E10000, Ctrl+; writes
+`2026-09-26` and shows it as a date, and Alt+Enter wraps its cell and
+grows the row.
+
+**Ctrl+Arrow is asked of the other thread.** Where the data ends is
+the sheet's to know, and the render thread holds a window of it. The
+command carries the selection it starts from, because this side's
+selection leads the worker's by a frame and a second Ctrl+Down pressed
+inside it would otherwise jump from where the cursor used to be. The
+search steps along a run of filled cells, which costs the run, and
+across a gap steps sixty-four cells and then reads what the sheet
+holds, once — so its cost is the sheet's contents, never the distance.
+A cell an array spilled into is filled, because it looks filled.
+
+**Ctrl+Enter writes from the cursor.** The cell being typed into is the
+corner Shift moved, not the anchor as in Excel, because that is where
+this sheet opens the editor — so a formula typed there is in that
+cell's frame, and the copies are moved from it. One transaction, one
+undo, and the selection stays put.
+
+**A typed line break turns wrap on**, in the same step as the text, as
+a typed date brings its format: a cell that does not wrap draws one
+line, and the break somebody typed would be there and not be seen.
+
+**Tab then Enter** remembers the column the run of Tabs began in, and
+typing into the cells between them does not end the run; an arrow, a
+click, a jump or a selection does.
+
+**Not done: Enter walking the selection.** It needs an active cell that
+is not a corner of the selection, and this sheet's selection is an
+anchor and a cursor — the cursor *is* the active cell, and it is always
+a corner. Excel's model is a range plus an active cell anywhere inside
+it; that is a change to `SheetSelection` and to everything that reads
+one, which is a phase's worth of its own and not a key.
+
+**Found on the way, not fixed:** text typed faster than a frame into a
+selected cell keeps only its first character. The first key opens the
+cell and the rest arrive before the editor has the keyboard. A person
+typing does not outrun a frame, and a browser automation's `type`
+does; it predates this phase, and a spec that types through the real
+input path in one burst is where it should be pinned down.
 
 ### Phase 20 — Paste that asks
 

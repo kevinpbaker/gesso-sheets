@@ -449,8 +449,25 @@ export class SheetDocument {
       this.writeCell(row, column, input);
       this.record({ kind: 'text', sheet: this.activeSheet, row, column, before, after: input });
       this.formatTypedDate(row, column, input);
+      this.wrapTypedBreak(row, column, input);
     });
     return null;
+  }
+
+  /**
+   * A line break typed into a cell turns wrap on, as Alt+Enter does in
+   * Excel: a cell that does not wrap draws its text on one line, and
+   * the break somebody typed would be there and not be seen. In the
+   * same step as the text, so one undo takes both back.
+   */
+  private wrapTypedBreak(row: number, column: number, input: string): void {
+    if (!input.includes('\n')) {
+      return;
+    }
+    const format = this.formatAt(row, column);
+    if (!format.paint.wrap) {
+      this.setFormat(row, column, { ...format, paint: { ...format.paint, wrap: true } });
+    }
   }
 
   /**

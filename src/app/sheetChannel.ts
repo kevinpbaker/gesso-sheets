@@ -76,6 +76,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       clearRange: () => service.clearRange(),
       fill: (toRow, toColumn) => service.fill(toRow, toColumn),
       fillToData: () => service.fillToData(),
+      jumpToEdge: (row, column, anchorRow, anchorColumn, rows, columns, extend) =>
+        service.jumpToEdge(row, column, anchorRow, anchorColumn, rows, columns, extend),
+      writeSelection: input => service.writeSelection(input),
       setColumnWidth: (column, width) => service.setColumnWidth(column, width),
       setRowHeight: (row, height) => service.setRowHeight(row, height),
       fitRowsToContents: (first, last) => service.fitRowsToContents(first, last),

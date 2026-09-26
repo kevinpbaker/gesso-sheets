@@ -618,6 +618,30 @@ export interface SheetCommands {
   /** Commits what was typed into a cell. */
   setCell(row: number, column: number, input: string): void;
   setSelection(row: number, column: number, anchorRow: number, anchorColumn: number): void;
+  /**
+   * Ctrl+Arrow: moves the cursor to the edge of the data in a
+   * direction, keeping the anchor with `extend`.
+   *
+   * The selection it starts from travels with it, because the render
+   * thread's selection leads this side's by a frame and a key pressed
+   * inside that frame would otherwise jump from where the cursor was
+   * rather than where it is. The answer comes back on `selection`.
+   */
+  jumpToEdge(
+    row: number,
+    column: number,
+    anchorRow: number,
+    anchorColumn: number,
+    rows: -1 | 0 | 1,
+    columns: -1 | 0 | 1,
+    extend: boolean
+  ): void;
+  /**
+   * Ctrl+Enter: what was typed, into every cell of the selection, its
+   * references moved as a fill would move them from the cursor's cell.
+   * One step of undo, and the selection stays where it is.
+   */
+  writeSelection(input: string): void;
   undo(): void;
   redo(): void;
   /**

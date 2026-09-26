@@ -163,6 +163,17 @@ export class Sheet {
     return this.book.usedRowsOf(this.index);
   }
 
+  /** Where Ctrl+Arrow lands from a cell; see `Workbook.edgeFrom`. */
+  edgeFrom(
+    row: number,
+    column: number,
+    rows: -1 | 0 | 1,
+    columns: -1 | 0 | 1,
+    extent: { rowCount: number; columnCount: number }
+  ): { row: number; column: number } {
+    return this.book.edgeFrom(this.index, row, column, rows, columns, extent);
+  }
+
   /** Cells that hold something on this sheet. */
   get size(): number {
     return this.book.sizeOf(this.index);

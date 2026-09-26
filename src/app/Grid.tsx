@@ -74,7 +74,7 @@ import {
 import { colouredReferences, formulaSpans } from './FormulaColours';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { COMMANDS, commandFor, type CommandId } from './SheetCommands';
-import { keyAction } from './SheetKeys';
+import { keyAction, stampText } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -1623,6 +1623,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       return;
     }
     const action = keyAction(event.key, event.modifiers, edit.openNow());
+    // Alt+Enter's line break, and a date typed into a cell that is
+    // already open, go in at the caret — which is this side's.
+    if (action !== null && (action.kind === 'insert' || action.kind === 'stamp') && edit.openNow()) {
+      if (insertAtCaret(action.kind === 'insert' ? action.text : stampText(action.what))) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+      return;
+    }
     if (edit.apply(action)) {
       event.preventDefault();
       event.stopPropagation();
@@ -1712,6 +1721,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     edit.write(cycled.text);
     model.replaceText(cycled.text);
     model.select(cycled.caret);
+    refreshSpans();
+    return true;
+  };
+
+  /** Text typed in at the caret of the open cell, over whatever is selected in it. */
+  const insertAtCaret = (text: string): boolean => {
+    const draft = edit.draftNow();
+    if (editorNode === null || draft === null) {
+      return false;
+    }
+    const model = editorFor(editorNode);
+    const next = draft.slice(0, model.start) + text + draft.slice(model.end);
+    const caret = model.start + text.length;
+    edit.write(next);
+    model.replaceText(next);
+    model.select(caret);
     refreshSpans();
     return true;
   };

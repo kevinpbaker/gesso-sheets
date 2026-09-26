@@ -4,7 +4,7 @@ import { internalState, type ChannelReplica, type ComponentContext } from 'gesso
 
 import type { CommandId } from './SheetCommands';
 import type { SheetCommands, SheetNames, SheetSelection, SheetView } from './SheetContract';
-import type { SheetAction } from './SheetKeys';
+import { stampText, type SheetAction } from './SheetKeys';
 
 export interface SheetEditing {
   /** Where the selection is, answered without a round trip. */
@@ -179,8 +179,8 @@ export function editing(
     sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
   };
 
-  const moveTo = (row: number, column: number): void => place(row, column, false);
   const selectRect = (row: number, column: number, anchorRow: number, anchorColumn: number): void => {
+    tabFrom = null;
     const { rowCount, columnCount } = extent();
     const lastRow = Math.max(0, rowCount - 1);
     const lastColumn = Math.max(0, columnCount - 1);
@@ -196,9 +196,39 @@ export function editing(
     selection.value = next;
     sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
   };
-  const extendTo = (row: number, column: number): void => place(row, column, true);
 
-  const commit = (rows: number, columns: number): void => {
+  /**
+   * The column a run of Tabs started in, or null outside one.
+   *
+   * Typing a table row is Tab, Tab, Tab, Enter — and the Enter goes to
+   * the start of the *next* row, not to the cell below the last Tab.
+   * Anything but a Tab or that Enter ends the run: an arrow, a click,
+   * a jump.
+   */
+  let tabFrom: number | null = null;
+
+  const moveTo = (row: number, column: number): void => {
+    tabFrom = null;
+    place(row, column, false);
+  };
+  const extendTo = (row: number, column: number): void => {
+    tabFrom = null;
+    place(row, column, true);
+  };
+
+  /**
+   * Where Enter (or Tab) goes from the cursor, and what that leaves the
+   * run of Tabs as. Down one row after a run of Tabs goes back to the
+   * column the run began in.
+   */
+  const step = (rows: number, columns: number, tab: boolean): void => {
+    const at = selection.value;
+    const back = !tab && rows === 1 && columns === 0 && tabFrom !== null ? tabFrom : null;
+    tabFrom = tab ? (tabFrom ?? at.column) : null;
+    place(at.row + rows, back ?? at.column + columns, false);
+  };
+
+  const commit = (rows: number, columns: number, tab = false): void => {
     const text = draft.value;
     const at = selection.value;
     startedIn = null;
@@ -207,7 +237,7 @@ export function editing(
       sheet.send.setCell(at.row, at.column, text);
     }
     if (rows !== 0 || columns !== 0) {
-      moveTo(at.row + rows, at.column + columns);
+      step(rows, columns, tab);
     }
   };
 
@@ -233,10 +263,53 @@ export function editing(
       return false;
     }
     const at = selection.value;
+    // Anything else that moves the cursor ends a run of Tabs. Typing
+    // into the cell between them is the point of the run, so it does not.
+    if (action.kind === 'edge' || action.kind === 'jump' || action.kind === 'selectLine' || action.kind === 'selectAll') {
+      tabFrom = null;
+    }
     switch (action.kind) {
       case 'move':
-        place(at.row + action.rows, at.column + action.columns, action.extend);
+        if (action.extend) {
+          tabFrom = null;
+          place(at.row + action.rows, at.column + action.columns, true);
+        } else {
+          step(action.rows, action.columns, action.tab === true);
+        }
         return true;
+      case 'edge':
+        sheet.send.jumpToEdge(at.row, at.column, at.anchorRow, at.anchorColumn, action.rows, action.columns, action.extend);
+        return true;
+      case 'selectLine': {
+        const { rowCount, columnCount } = extent();
+        if (action.axis === 'columns') {
+          selectRect(0, at.column, rowCount - 1, at.column);
+        } else {
+          selectRect(at.row, 0, at.row, columnCount - 1);
+        }
+        return true;
+      }
+      case 'stamp':
+        // With a cell open the stamp goes in at the caret, which is the
+        // grid's to place; see `Grid`'s key handler.
+        if (draft.value !== null) {
+          return false;
+        }
+        startedIn = 'grid';
+        draft.value = stampText(action.what);
+        return true;
+      case 'insert':
+        // The caret is the grid's, as above.
+        return false;
+      case 'commitAll': {
+        const text = draft.value;
+        startedIn = null;
+        draft.value = null;
+        if (text !== null) {
+          sheet.send.writeSelection(text);
+        }
+        return true;
+      }
       case 'jump':
         switch (action.to) {
           case 'rowStart':
@@ -260,7 +333,7 @@ export function editing(
         draft.value = action.text;
         return true;
       case 'commit':
-        commit(action.rows, action.columns);
+        commit(action.rows, action.columns, action.tab === true);
         return true;
       case 'cancel':
         startedIn = null;
@@ -275,8 +348,7 @@ export function editing(
         return true;
       case 'selectAll': {
         const { rowCount, columnCount } = extent();
-        selection.value = { row: 0, column: 0, anchorRow: rowCount - 1, anchorColumn: columnCount - 1 };
-        sheet.send.setSelection(0, 0, rowCount - 1, columnCount - 1);
+        selectRect(0, 0, rowCount - 1, columnCount - 1);
         return true;
       }
       case 'undo':

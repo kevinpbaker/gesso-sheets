@@ -35,15 +35,26 @@ export type SheetAction =
    * `extend` keeps the anchor where it is and moves the other corner,
    * which is what shift does to every selection everywhere.
    */
-  | { readonly kind: 'move'; readonly rows: number; readonly columns: number; readonly extend: boolean }
+  /** `tab` marks Tab and Shift+Tab, which Enter comes back from; see `SheetEditing`. */
+  | { readonly kind: 'move'; readonly rows: number; readonly columns: number; readonly extend: boolean; readonly tab?: true }
   /** Move to an edge of the sheet. */
   | { readonly kind: 'jump'; readonly to: 'rowStart' | 'sheetStart' | 'rowEnd' | 'sheetEnd'; readonly extend: boolean }
+  /** Ctrl+Arrow: to the edge of the data, which only the other thread can see. */
+  | { readonly kind: 'edge'; readonly rows: -1 | 0 | 1; readonly columns: -1 | 0 | 1; readonly extend: boolean }
+  /** Ctrl+Space and Shift+Space: the whole column, or the whole row, the cursor is in. */
+  | { readonly kind: 'selectLine'; readonly axis: 'rows' | 'columns' }
+  /** Ctrl+; and Ctrl+Shift+;: today's date or the time now, as a value rather than a formula. */
+  | { readonly kind: 'stamp'; readonly what: 'date' | 'time' }
+  /** Alt+Enter in an open cell: a line break at the caret instead of a commit. */
+  | { readonly kind: 'insert'; readonly text: string }
+  /** Ctrl+Enter in an open cell: what was typed, into every selected cell. */
+  | { readonly kind: 'commitAll' }
   /** Open the cell with what is already in it. */
   | { readonly kind: 'edit' }
   /** Open the cell, replacing its contents with this text. */
   | { readonly kind: 'replace'; readonly text: string }
   /** Commit what is being typed, then move. */
-  | { readonly kind: 'commit'; readonly rows: number; readonly columns: number }
+  | { readonly kind: 'commit'; readonly rows: number; readonly columns: number; readonly tab?: true }
   /** Close the cell and put back what was there. */
   | { readonly kind: 'cancel' }
   /** Empty the selected cell without opening it. */
@@ -74,12 +85,23 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
   const shift = modifiers.shift === true;
   const accel = modifiers.ctrl === true || modifiers.meta === true;
 
+  const stamp = stampOf(key, modifiers);
+  if (stamp !== null) {
+    return stamp;
+  }
+
   if (editing) {
     switch (key) {
       case 'Enter':
+        if (modifiers.alt === true) {
+          return { kind: 'insert', text: '\n' };
+        }
+        if (accel) {
+          return { kind: 'commitAll' };
+        }
         return { kind: 'commit', rows: shift ? -1 : 1, columns: 0 };
       case 'Tab':
-        return { kind: 'commit', rows: 0, columns: shift ? -1 : 1 };
+        return { kind: 'commit', rows: 0, columns: shift ? -1 : 1, tab: true };
       case 'Escape':
         return { kind: 'cancel' };
       default:
@@ -106,6 +128,16 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
       // paste at the moment the key goes down.
       case 'v':
         return null;
+      case 'arrowup':
+        return { kind: 'edge', rows: -1, columns: 0, extend: shift };
+      case 'arrowdown':
+        return { kind: 'edge', rows: 1, columns: 0, extend: shift };
+      case 'arrowleft':
+        return { kind: 'edge', rows: 0, columns: -1, extend: shift };
+      case 'arrowright':
+        return { kind: 'edge', rows: 0, columns: 1, extend: shift };
+      case ' ':
+        return { kind: 'selectLine', axis: 'columns' };
       case 'home':
         return { kind: 'jump', to: 'sheetStart', extend: shift };
       case 'end':
@@ -138,7 +170,7 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
     case 'Enter':
       return { kind: 'move', rows: shift ? -1 : 1, columns: 0, extend: false };
     case 'Tab':
-      return { kind: 'move', rows: 0, columns: shift ? -1 : 1, extend: false };
+      return { kind: 'move', rows: 0, columns: shift ? -1 : 1, extend: false, tab: true };
     case 'F2':
       return { kind: 'edit' };
     case 'Delete':
@@ -146,6 +178,11 @@ export function keyAction(key: string, modifiers: KeyModifiers, editing: boolean
       return { kind: 'clear' };
     case 'Escape':
       return null;
+    // Shift+Space is the row, as it is in Excel — at the cost of a
+    // cell that starts with a space typed with Shift held, which F2
+    // still reaches.
+    case ' ':
+      return shift ? { kind: 'selectLine', axis: 'rows' } : { kind: 'replace', text: key };
     default:
       // Typing over a selected cell replaces it, and the character
       // typed is the first one of the new value rather than being
@@ -172,6 +209,8 @@ export interface NavigationKey {
   readonly label: string;
   /** One key from `keys`, for the spec that presses them all. */
   readonly probe: string;
+  /** The modifiers `probe` is pressed with, when it needs any. */
+  readonly probeModifiers?: KeyModifiers;
   /** True when the key only means something with a cell open. */
   readonly whileEditing?: true;
 }
@@ -182,11 +221,61 @@ export const NAVIGATION: readonly NavigationKey[] = [
   { keys: 'Enter', label: 'Move down; commit and move down', probe: 'Enter' },
   { keys: 'Tab', label: 'Move right; commit and move right', probe: 'Tab' },
   { keys: 'Home / End', label: 'Start or end of the row', probe: 'Home' },
-  { keys: 'Ctrl+Home / Ctrl+End', label: 'Start or end of the sheet', probe: 'Home' },
+  { keys: 'Ctrl+Arrows', label: 'To the edge of the data', probe: 'ArrowDown', probeModifiers: { ctrl: true } },
+  {
+    keys: 'Ctrl+Shift+Arrows',
+    label: 'Extend to the edge of the data',
+    probe: 'ArrowDown',
+    probeModifiers: { ctrl: true, shift: true }
+  },
+  { keys: 'Ctrl+Home / Ctrl+End', label: 'Start or end of the sheet', probe: 'Home', probeModifiers: { ctrl: true } },
+  { keys: 'Ctrl+Space', label: 'Select the column', probe: ' ', probeModifiers: { ctrl: true } },
+  { keys: 'Shift+Space', label: 'Select the row', probe: ' ', probeModifiers: { shift: true } },
   { keys: 'PageUp / PageDown', label: 'Move a screen at a time', probe: 'PageDown' },
   { keys: 'F2', label: 'Edit the cell you are on', probe: 'F2' },
-  { keys: 'Escape', label: 'Put back what was there', probe: 'Escape', whileEditing: true }
+  { keys: 'Ctrl+;', label: "Today's date", probe: ';', probeModifiers: { ctrl: true } },
+  { keys: 'Ctrl+Shift+;', label: 'The time now', probe: ';', probeModifiers: { ctrl: true, shift: true } },
+  { keys: 'Escape', label: 'Put back what was there', probe: 'Escape', whileEditing: true },
+  { keys: 'Alt+Enter', label: 'A new line in the cell', probe: 'Enter', probeModifiers: { alt: true }, whileEditing: true },
+  {
+    keys: 'Ctrl+Enter',
+    label: 'Put what was typed in every selected cell',
+    probe: 'Enter',
+    probeModifiers: { ctrl: true },
+    whileEditing: true
+  }
 ];
+
+/**
+ * Ctrl+; and Ctrl+Shift+;, open or not.
+ *
+ * Both spellings of the second: a US keyboard reports Shift+; as `:`,
+ * and a layout that puts `;` elsewhere may report it as `;` with Shift
+ * held. The key is found by what it says rather than where it is, as
+ * every other key in this table is.
+ */
+function stampOf(key: string, modifiers: KeyModifiers): SheetAction | null {
+  const accel = modifiers.ctrl === true || modifiers.meta === true;
+  if (!accel || modifiers.alt === true) {
+    return null;
+  }
+  if (key === ':' || (key === ';' && modifiers.shift === true)) {
+    return { kind: 'stamp', what: 'time' };
+  }
+  return key === ';' ? { kind: 'stamp', what: 'date' } : null;
+}
+
+/**
+ * What Ctrl+; and Ctrl+Shift+; type: `2026-09-26` and `15:24`, the two
+ * spellings `parseTypedDate` reads without asking what the locale is.
+ * Local time, because "today" is the person's today and not UTC's.
+ */
+export function stampText(what: 'date' | 'time', now: Date = new Date()): string {
+  const two = (n: number) => String(n).padStart(2, '0');
+  return what === 'date'
+    ? `${now.getFullYear()}-${two(now.getMonth() + 1)}-${two(now.getDate())}`
+    : `${two(now.getHours())}:${two(now.getMinutes())}`;
+}
 
 /**
  * Whether a key event carries a character rather than a command.

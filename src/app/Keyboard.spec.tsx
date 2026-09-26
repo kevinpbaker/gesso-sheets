@@ -345,4 +345,199 @@ describe('the sheet from the keyboard', () => {
       expect(h.document.sheet.value(0, 0)).toBe(42);
     });
   });
+
+  /**
+   * The keys Excel users already have — Phase 19.
+   *
+   * Each of these is a key a hand presses before it has decided to,
+   * and before this phase each one did nothing or did something else.
+   */
+  describe('the keys a hand that knows Excel reaches for', () => {
+    const selection = () => h.document.selection;
+
+    describe('Ctrl+Arrow', () => {
+      beforeEach(async () => {
+        h = await mount(d => {
+          // A1:A5 filled, a gap, then A10:A12; C1 alone across a gap.
+          for (const r of [0, 1, 2, 3, 4, 9, 10, 11]) {
+            d.setCell(r, 0, String(r + 1));
+          }
+          d.setCell(0, 2, 'far');
+        });
+      });
+
+      it('goes to the end of the run it is in', async () => {
+        await press('ArrowDown', { ctrl: true });
+        expect(address()).toBe('A5');
+      });
+
+      it('then across the gap to the start of the next run', async () => {
+        await press('ArrowDown', { ctrl: true });
+        await press('ArrowDown', { ctrl: true });
+        expect(address()).toBe('A10');
+        await press('ArrowDown', { ctrl: true });
+        expect(address()).toBe('A12');
+      });
+
+      it('goes to the edge of the sheet past the last of the data', async () => {
+        for (let i = 0; i < 4; i++) {
+          await press('ArrowDown', { ctrl: true });
+        }
+        expect(address()).toBe('A200');
+        await press('ArrowUp', { ctrl: true });
+        expect(address()).toBe('A12');
+      });
+
+      it('goes sideways over empty cells to the next filled one', async () => {
+        await press('ArrowRight', { ctrl: true });
+        expect(address()).toBe('C1');
+        await press('ArrowRight', { ctrl: true });
+        expect(address()).toBe('T1');
+        await press('ArrowLeft', { ctrl: true });
+        expect(address()).toBe('C1');
+      });
+
+      it('selects as far as it goes with Shift', async () => {
+        await press('ArrowDown', { ctrl: true, shift: true });
+        expect(selection()).toEqual({ row: 4, column: 0, anchorRow: 0, anchorColumn: 0 });
+      });
+
+      it('counts a cell an array spilled into as filled', async () => {
+        h.ui.unmount();
+        h.served.dispose();
+        h = await mount(d => d.setCell(0, 1, '=SEQUENCE(4)'));
+        await press('ArrowRight');
+        await press('ArrowDown', { ctrl: true });
+        expect(address()).toBe('B4');
+      });
+    });
+
+    describe('selecting a line', () => {
+      beforeEach(async () => {
+        h = await mount();
+        await press('ArrowRight');
+        await press('ArrowDown');
+      });
+
+      it('takes the column on Ctrl+Space', async () => {
+        await press(' ', { ctrl: true });
+        expect(selection()).toEqual({ row: 0, column: 1, anchorRow: 199, anchorColumn: 1 });
+      });
+
+      it('takes the row on Shift+Space', async () => {
+        await press(' ', { shift: true });
+        expect(selection()).toEqual({ row: 1, column: 0, anchorRow: 1, anchorColumn: 19 });
+      });
+    });
+
+    describe('Tab, Tab, Enter', () => {
+      beforeEach(async () => {
+        h = await mount();
+      });
+
+      it('comes back to the column the Tabs started from', async () => {
+        await press('ArrowRight');
+        await press('a');
+        await press('Tab');
+        await press('b');
+        await press('Tab');
+        await press('c');
+        await press('Enter');
+
+        expect(address()).toBe('B2');
+        expect([0, 1, 2].map(c => h.document.sheet.input(0, c + 1))).toEqual(['a', 'b', 'c']);
+      });
+
+      it('goes straight down when something other than Tab moved it', async () => {
+        await press('Tab');
+        await press('ArrowRight');
+        await press('Enter');
+        expect(address()).toBe('C2');
+      });
+    });
+
+    describe('Ctrl+Enter', () => {
+      it('puts what was typed in every selected cell, its references moved', async () => {
+        h = await mount(d => {
+          for (let r = 0; r < 3; r++) {
+            d.setCell(r, 0, String((r + 1) * 10));
+          }
+        });
+        await press('ArrowRight');
+        await press('ArrowDown', { shift: true });
+        await press('ArrowDown', { shift: true });
+        // Typed in the cell the cursor is on, which is B3: the corner
+        // Shift moved, and the one the editor opens in.
+        await press('=');
+        await type('A3*2');
+        await press('Enter', { ctrl: true });
+
+        expect([0, 1, 2].map(r => h.document.sheet.input(r, 1))).toEqual(['=A1*2', '=A2*2', '=A3*2']);
+        expect(h.document.sheet.value(2, 1)).toBe(60);
+        // The selection is still the three cells, and it is one undo.
+        expect(selection()).toEqual({ row: 2, column: 1, anchorRow: 0, anchorColumn: 1 });
+        await press('z', { ctrl: true });
+        expect([0, 1, 2].map(r => h.document.sheet.input(r, 1))).toEqual(['', '', '']);
+      });
+    });
+
+    describe('Alt+Enter', () => {
+      it('puts a line break in the cell instead of committing it', async () => {
+        h = await mount();
+        await press('a');
+        await press('Enter', { alt: true });
+        await type('b');
+        expect(h.ui.getByRole('textbox', { name: 'Cell' })).toBeDefined();
+        await press('Enter');
+
+        expect(h.document.sheet.input(0, 0)).toBe('a\nb');
+        expect(address()).toBe('A2');
+      });
+
+      it('turns wrap on, so the second line is seen, and takes both back on one undo', async () => {
+        h = await mount();
+        await press('a');
+        await press('Enter', { alt: true });
+        await type('b');
+        await press('Enter');
+        expect(h.document.formatAt(0, 0).paint.wrap).toBe(true);
+
+        await press('z', { ctrl: true });
+        expect(h.document.sheet.input(0, 0)).toBe('');
+        expect(h.document.formatAt(0, 0).paint.wrap).toBe(false);
+      });
+    });
+
+    describe('Ctrl+;', () => {
+      beforeEach(async () => {
+        h = await mount();
+      });
+
+      it("types today's date, which the sheet reads as a date", async () => {
+        await press(';', { ctrl: true });
+        await press('Enter');
+
+        const now = new Date();
+        const typed = h.document.sheet.input(0, 0);
+        expect(typed).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+        expect(typed.startsWith(String(now.getFullYear()))).toBe(true);
+        expect(typeof h.document.sheet.value(0, 0)).toBe('number');
+      });
+
+      it('types the time with Shift, however the keyboard spells it', async () => {
+        await press(':', { ctrl: true, shift: true });
+        await press('Enter');
+        expect(h.document.sheet.input(0, 0)).toMatch(/^\d{2}:\d{2}$/);
+        expect(typeof h.document.sheet.value(0, 0)).toBe('number');
+      });
+
+      it('goes in at the caret of a cell already open', async () => {
+        await press('D');
+        await type('ue ');
+        await press(';', { ctrl: true });
+        await press('Enter');
+        expect(h.document.sheet.input(0, 0)).toMatch(/^Due \d{4}-\d{2}-\d{2}$/);
+      });
+    });
+  });
 });
