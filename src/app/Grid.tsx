@@ -1068,6 +1068,21 @@ export function Grid(
 
   /** The cell the fill handle hangs off: the selection's far corner. */
   let cornerAt: { row: number; column: number } | null = null;
+  /** The selection's first corner, where a finger's other handle sits. */
+  let startAt: { row: number; column: number } | null = null;
+
+  /**
+   * Whether the last press was a finger's.
+   *
+   * A finger cannot hover to see what a sweep would select, and a
+   * sweep is also a scroll, so a touch pointer gets what a mouse does
+   * not need: grips wide enough to find, and two round handles on the
+   * selection's corners in place of the fill handle. Read off every
+   * press, so a laptop with a touchscreen changes as the hand does.
+   */
+  const touching = internalState(false);
+  const GRIP = (finger: boolean): number => (finger ? 24 : 8);
+  const HANDLE = 22;
 
   /**
    * A click on a cell.
@@ -1805,10 +1820,10 @@ export function Grid(
       Box({
         key: 'grip',
         width: GUTTER_WIDTH,
-        height: 8,
+        height: touching.pipe(map(GRIP)),
         position: 'absolute',
         left: 0,
-        bottom: -4,
+        bottom: touching.pipe(map(finger => -GRIP(finger) / 2)),
         zIndex: 4,
         cursor: 'row-resize',
         onPanStart: event => {
@@ -2092,6 +2107,65 @@ export function Grid(
    * ancestor, and without one it would walk up to the layout root and
    * be drawn in the corner of the screen.
    */
+  /**
+   * A round handle on a corner of the selection, for a finger.
+   *
+   * Dragged, it moves its corner and leaves the other where it was,
+   * and the active cell with it when it is still inside — Shift's rule,
+   * for a hand with no Shift. It stops its own press, as the fill
+   * handle does, so the drag is its own and not a scroll or a sweep.
+   */
+  const selectionHandle = (row: number, column: number, which: 'start' | 'end'): UiElement =>
+    Box({
+      key: `handle-${which}`,
+      width: HANDLE,
+      height: HANDLE,
+      position: 'absolute',
+      left:
+        GUTTER_WIDTH + sheetWindow.offsetOf(column) + (which === 'end' ? sheetWindow.widthOf(column) : 0) - HANDLE / 2,
+      top: (which === 'end' ? heightNow(row) : 0) - HANDLE / 2,
+      zIndex: 3,
+      borderRadius: HANDLE / 2,
+      backgroundColor: 'background',
+      borderColor: 'primary',
+      borderWidth: 3,
+      role: 'button',
+      label: which === 'start' ? 'Selection start' : 'Selection end',
+      onPanStart: (event: UiPointerEvent) => {
+        const held = edit.selectionNow();
+        const corner = cornerOf(held);
+        const first = { row: Math.min(corner.row, held.anchorRow), column: Math.min(corner.column, held.anchorColumn) };
+        const last = { row: Math.max(corner.row, held.anchorRow), column: Math.max(corner.column, held.anchorColumn) };
+        handleDrag = { fixed: which === 'end' ? first : last };
+        event.stopPropagation();
+      },
+      onPanMove: (event: UiPointerEvent) => {
+        if (handleDrag === null) {
+          return;
+        }
+        event.stopPropagation();
+        const at = cellUnder(event);
+        if (at === null) {
+          return;
+        }
+        const held = edit.selectionNow();
+        const fixed = handleDrag.fixed;
+        const inside =
+          held.row >= Math.min(at.row, fixed.row) &&
+          held.row <= Math.max(at.row, fixed.row) &&
+          held.column >= Math.min(at.column, fixed.column) &&
+          held.column <= Math.max(at.column, fixed.column);
+        edit.selectRect(at.row, at.column, fixed.row, fixed.column, inside ? held : fixed);
+      },
+      onPanEnd: (event: UiPointerEvent) => {
+        event.stopPropagation();
+        handleDrag = null;
+        handlesSettled.value = handlesSettled.value + 1;
+      }
+    });
+  let handleDrag: { fixed: { row: number; column: number } } | null = null;
+  const handlesSettled = internalState(0);
+
   const fillHandle = (row: number, column: number): UiElement =>
     Box({
       key: 'fill',
@@ -2525,8 +2599,13 @@ export function Grid(
       line.push(cell(row, column));
     }
     const corner = cornerAt !== null && cornerAt.row === row;
+    const finger = touching.value;
     if (corner && cornerAt !== null) {
-      line.push(fillHandle(row, cornerAt.column));
+      line.push(finger ? selectionHandle(row, cornerAt.column, 'end') : fillHandle(row, cornerAt.column));
+    }
+    const start = finger && startAt !== null && startAt.row === row;
+    if (start && startAt !== null) {
+      line.push(selectionHandle(row, startAt.column, 'start'));
     }
     // The hint hangs off the row holding the open cell, as the fill
     // handle hangs off the row holding the corner: a child of the row
@@ -2611,9 +2690,11 @@ export function Grid(
         // formula being typed names something on this row, and an
         // empty array the rest of the time.
         modifiers: outlineFor(row).modifiers,
-        position: stuck ? 'sticky' : corner || spans || hinting || explaining ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner || start || spans || hinting || explaining ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + rowTop(row) : undefined,
-        zIndex: stuck || spans || hinting || explaining ? 1 : undefined,
+        // A finger's handles reach over the rows around theirs, so their
+        // rows are lifted over them.
+        zIndex: stuck || spans || hinting || explaining || (finger && (corner || start)) ? 1 : undefined,
         backgroundColor: stuck ? 'background' : undefined,
         overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
       },
@@ -2701,10 +2782,10 @@ export function Grid(
       }),
       Box({
         key: 'grip',
-        width: 8,
+        width: touching.pipe(map(GRIP)),
         height: HEADER_HEIGHT,
         position: 'absolute',
-        right: -4,
+        right: touching.pipe(map(finger => -GRIP(finger) / 2)),
         top: 0,
         zIndex: 4,
         cursor: 'col-resize',
@@ -2869,7 +2950,20 @@ export function Grid(
       // mounted as well as the ones that are. A cell would have to be
       // under the pointer to hear about it, and past the edge of the
       // viewport none is.
+      // Which hand the last press was made with; see `touching`.
+      onPointerDown: (event: UiPointerEvent) => {
+        const finger = event.pointer.kind === 'touch';
+        if (finger !== touching.value) {
+          touching.value = finger;
+        }
+      },
       onPanStart: (event: UiPointerEvent) => {
+        // A finger's drag across the cells is a scroll, which the
+        // engine's touch scroller takes; the selection is extended by
+        // its handles instead.
+        if (event.pointer.kind === 'touch') {
+          return;
+        }
         // A press that reached the grid is a press that missed every
         // chart, which is how a chart stops being selected.
         if (charts.value.selected !== 0) {
@@ -3336,11 +3430,23 @@ export function Grid(
    * pace a person moves a selection rather than per frame.
    */
   let cornerBefore: { row: number; column: number } | null = null;
-  ctx.effect(edit.selection, at => {
-    const next = { row: Math.max(cornerOf(at).row, at.anchorRow), column: Math.max(cornerOf(at).column, at.anchorColumn) };
-    if (sameCell(next, cornerBefore)) {
+  let touchedBefore = false;
+  // While a handle is being dragged the handles stay put: moving one
+  // rebuilds it on another row, and the node the drag belongs to would
+  // go with it. The selection's wash follows the finger meanwhile, and
+  // the handles catch up when it lifts.
+  ctx.effect(combineLatest([edit.selection, touching, handlesSettled]), ([at]) => {
+    if (handleDrag !== null) {
       return;
     }
+    const next = { row: Math.max(cornerOf(at).row, at.anchorRow), column: Math.max(cornerOf(at).column, at.anchorColumn) };
+    const first = { row: Math.min(cornerOf(at).row, at.anchorRow), column: Math.min(cornerOf(at).column, at.anchorColumn) };
+    const startMoved = !sameCell(first, startAt);
+    startAt = first;
+    if (sameCell(next, cornerBefore) && !startMoved && touchedBefore === touching.value) {
+      return;
+    }
+    touchedBefore = touching.value;
     for (const which of [cornerBefore, next]) {
       if (which !== null) {
         cells.delete(`${which.row}:${which.column}`);

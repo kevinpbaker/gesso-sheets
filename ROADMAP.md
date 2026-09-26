@@ -2329,7 +2329,7 @@ block is snapshotted for the gesture and the clipboard's own copy is
 left as it was, as in Excel. Checked by specs and by `pnpm proof`, not
 yet by eye in a browser.
 
-### Phase 26 — A finger
+### Phase 26 — A finger — **done**
 
 `UiTouchScroller` scrolls both axes since Part Two. What a tablet
 still lacks is all this application's:
@@ -2349,6 +2349,54 @@ still lacks is all this application's:
 scrolls rather than sweeps, a long press opens the menu at the finger,
 a handle drag extends the selection — and Gesso's `check:touch` run
 against this application rather than the playground.
+
+**Met.** `Touch.spec.tsx`, six specs through the hit tester with
+`pointer: 'touch'`: a tap selects; a drag scrolls and leaves the
+selection where it was; a long press opens the menu over the cell under
+the finger; the selection's two handles are shown to a finger in place
+of the fill handle, and dragging the end one extends the selection with
+the active cell kept, the start one pulls the first corner out; the
+grips widen from eight pixels to twenty-four for a finger and go back
+for a mouse. And `pnpm touch`, the `check:touch` run against this
+application: the built sheet in Chrome, driven with
+`Input.dispatchTouchEvent`, taps, scrolls, holds for the menu and pulls
+a handle, every answer read off the accessibility tree. `pnpm proof`
+holds all its runs.
+
+**The engine question was the test harness's.** Everything a finger
+needs from the engine was there — the scroller, a long press that asks
+for a menu, the finger's slop — but `fireEvent`'s coordinate path could
+not say a press was made with one, so none of it could be specified
+from an application. It takes `pointer: 'touch'` now (Gesso `bf14b15`).
+
+Three things worth carrying forward.
+
+**A finger's drag is let go of, not handled.** The grid sweeps on a
+pan, and for a finger it now returns before doing anything, so the
+pan reaches the engine's scroller — a two-line change that is the
+whole of "a drag scrolls rather than sweeps". The grips, the fill
+handle and the selection handles stop their own presses, so a finger
+on one of them resizes or selects and does not scroll.
+
+**A handle that moves as it is dragged deletes the node the drag
+belongs to.** The handles live in the rows of the selection's corners,
+as the fill handle does, so extending the selection rebuilt the handle
+on another row — and the rest of the drag went nowhere, landing one
+quarter of the way. They are held still while one is dragged; the
+selection's wash follows the finger, and the handles catch up when it
+lifts.
+
+**The real-browser run found two things, and both were the check's.**
+The seeded sheet freezes its heading rows, so "the first row on
+screen" was row 1 however far a finger had scrolled; and a tap on B2
+of the seeded sheet selects A2, because row 2 is a merged title. The
+check reads the rows shown and starts below the merges. The sheet was
+right both times.
+
+Not done: the header strips keep their size for a finger. They are
+twenty-four pixels tall and fifty-two wide, which a tap finds; making
+them larger under touch would move every cell on the screen, and
+nothing a finger does on them needs more than a tap.
 
 ### Phase 27 — What it remembers of you — **done**
 

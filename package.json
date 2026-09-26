@@ -11,7 +11,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "proof": "node --experimental-strip-types scripts/frame-budget.ts",
-    "icons": "node --experimental-strip-types scripts/icons.ts"
+    "icons": "node --experimental-strip-types scripts/icons.ts",
+    "touch": "node --experimental-strip-types scripts/touch-check.ts"
   },
   "dependencies": {
     "gesso-components": "file:vendor/gesso-components-0.3.0-e653fdbd.tgz",
