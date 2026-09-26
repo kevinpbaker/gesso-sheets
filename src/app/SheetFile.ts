@@ -1,4 +1,5 @@
 import { relativeRef, type RangeRef } from '../sheet/A1';
+import type { Note } from '../sheet/Notes';
 import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } from '../sheet/Conditional';
 import type { Validation, ValidationRule } from '../sheet/Validation';
 import { nameProblem } from '../sheet/Names';
@@ -124,6 +125,12 @@ export interface StoredSheet {
    * *wrongly* rather than not at all.
    */
   readonly charts: readonly Chart[];
+  /**
+   * The notes left on cells. Absent in a file written before they
+   * existed, which reads as none — no version bump, on the rule the
+   * charts were added under.
+   */
+  readonly notes?: readonly Note[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
@@ -211,6 +218,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       conditional: [...page.conditional],
       validations: [...page.validations],
       charts: [...page.charts],
+      notes: page.notes.all().filter(note => note.row < rowCount),
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
@@ -273,6 +281,7 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     page.validations.push(...stored.validations);
     page.charts.length = 0;
     page.charts.push(...stored.charts);
+    page.notes.restore(stored.notes ?? []);
     page.frozenRows = stored.frozenRows;
     page.frozenColumns = stored.frozenColumns;
     page.hiddenRows.clear();
@@ -442,6 +451,7 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     conditional: rulesFrom(source.conditional),
     validations: validationsFrom(source.validations),
     charts: chartsFrom(source.charts),
+    notes: notesFrom(source.notes),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     hiddenRows: Array.isArray(source.hiddenRows)
@@ -580,6 +590,26 @@ function edgeFrom(stored: unknown): CellEdge {
     width: typeof width === 'number' && Number.isFinite(width) && width > 0 ? Math.min(width, 8) : 0,
     color: typeof edge.color === 'string' ? edge.color : ''
   };
+}
+
+/** Notes, with anything that is not one dropped rather than trusted. */
+function notesFrom(stored: unknown): Note[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  return stored.filter((note): note is Note => {
+    const candidate = note as Partial<Note>;
+    return (
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      Number.isInteger(candidate.row) &&
+      Number.isInteger(candidate.column) &&
+      (candidate.row as number) >= 0 &&
+      (candidate.column as number) >= 0 &&
+      typeof candidate.text === 'string' &&
+      candidate.text !== ''
+    );
+  });
 }
 
 /** Merged rectangles, with anything malformed dropped rather than trusted. */

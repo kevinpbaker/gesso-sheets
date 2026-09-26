@@ -711,4 +711,42 @@ describe('the sheet from the keyboard', () => {
       expect(cell()).toHaveText('T');
     });
   });
+
+  /** Show formulas — Phase 22. */
+  describe('Ctrl+`', () => {
+    beforeEach(async () => {
+      h = await mount(d => {
+        d.setCell(0, 0, '4');
+        d.setCell(0, 1, '=A1*2');
+      });
+    });
+
+    it('draws every formula instead of its answer, and goes back', async () => {
+      expect(h.ui.getByRole('cell', { name: '8' })).toBeDefined();
+
+      await press('`', { ctrl: true });
+      expect(h.ui.getByRole('cell', { name: '=A1*2' })).toBeDefined();
+      // A number is still itself; only formulas change.
+      expect(h.ui.getByRole('cell', { name: '4' })).toBeDefined();
+
+      await press('`', { ctrl: true });
+      expect(h.ui.getByRole('cell', { name: '8' })).toBeDefined();
+    });
+
+    it('is a way of looking, not an edit', async () => {
+      const before = h.document.undoLabel;
+      await press('`', { ctrl: true });
+      expect(h.document.undoLabel).toBe(before);
+      expect(h.document.sheet.value(0, 1)).toBe(8);
+    });
+
+    it('keeps drawing formulas as they are typed while it is on', async () => {
+      await press('`', { ctrl: true });
+      await press('ArrowDown');
+      await press('=');
+      await type('A1+1');
+      await press('Enter');
+      expect(h.ui.getByRole('cell', { name: '=A1+1' })).toBeDefined();
+    });
+  });
 });

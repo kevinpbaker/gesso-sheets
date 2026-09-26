@@ -92,6 +92,7 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
     conditional: [],
     validations: [],
     charts: [],
+    notes: sheet.notes,
     frozenRows: sheet.frozenRows,
     frozenColumns: sheet.frozenColumns,
     hiddenRows: [...sheet.hiddenRows],

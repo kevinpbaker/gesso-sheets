@@ -40,6 +40,7 @@ import {
   type SheetDownload,
   type SheetAutofit,
   type SheetCompletion,
+  type SheetNotes,
   type SheetRowFit,
   type SheetRowFitRow,
   type SheetEdge,
@@ -176,6 +177,7 @@ export class SheetService {
   readonly activeRules: Observable<SheetActiveRules>;
   readonly autofit: Observable<SheetAutofit>;
   readonly completion: Observable<SheetCompletion>;
+  readonly notes: Observable<SheetNotes>;
   readonly rowFit: Observable<SheetRowFit>;
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
@@ -248,6 +250,7 @@ export class SheetService {
   });
   private readonly activeRulesSubject = new BehaviorSubject<SheetActiveRules>({ conditional: null, validation: null });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
+  private readonly notesSubject = new BehaviorSubject<SheetNotes>({ cells: {} });
   private readonly completionSubject = new BehaviorSubject<SheetCompletion>({
     serial: 0,
     row: 0,
@@ -358,7 +361,8 @@ export class SheetService {
       column: document.selection.column,
       input: document.activeInput,
       explain: null,
-      spilledFrom: null
+      spilledFrom: null,
+      note: document.noteAt(document.selection.row, document.selection.column)
     });
     this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
     this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], refused: '' });
@@ -387,6 +391,7 @@ export class SheetService {
     this.activeRules = this.activeRulesSubject;
     this.autofit = this.autofitSubject;
     this.completion = this.completionSubject;
+    this.notes = this.notesSubject;
     this.rowFit = this.rowFitSubject;
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
@@ -987,6 +992,18 @@ export class SheetService {
     }
     this.publishGeometry();
     this.persist();
+  }
+
+  /** See `SheetCommands.showFormulas`. */
+  private showingFormulas = false;
+
+  showFormulas(on: boolean): void {
+    if (on === this.showingFormulas) {
+      return;
+    }
+    this.showingFormulas = on;
+    this.publishWindow();
+    this.publishStatus();
   }
 
   setIteration(on: boolean): void {
@@ -2632,6 +2649,12 @@ export class SheetService {
     return columns;
   }
 
+  /** What a cell draws while formulas are shown: its formula, or its answer if it has none. */
+  private formulaOrDisplay(row: number, column: number): string {
+    const input = this.document.sheet.input(row, column);
+    return input.startsWith('=') ? input : this.document.display(row, column);
+  }
+
   private publishWindow(): void {
     const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
     if (lastRow < firstRow || lastColumn < firstColumn) {
@@ -2643,12 +2666,39 @@ export class SheetService {
     for (const row of this.rowsInView()) {
       const line: Record<string, string> = {};
       for (const column of columns) {
-        line[column] = this.document.display(row, column);
+        line[column] = this.showingFormulas ? this.formulaOrDisplay(row, column) : this.document.display(row, column);
       }
       cells[row] = line;
     }
     this.stats.publishes++;
     this.windowSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
+    this.publishNotes();
+  }
+
+  /** The notes in view, beside the window they are drawn over. */
+  private publishNotes(): void {
+    const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
+    const cells: Record<string, Record<string, string>> = {};
+    if (lastRow >= firstRow && lastColumn >= firstColumn && this.document.notes.size > 0) {
+      // By the rows and columns the window draws, which include the
+      // frozen ones outside the viewport's rectangle.
+      const rows = new Set(this.rowsInView());
+      const columns = new Set(this.columnsInView());
+      for (const note of this.document.notes.all()) {
+        if (rows.has(note.row) && columns.has(note.column)) {
+          (cells[note.row] ??= {})[note.column] = note.text;
+        }
+      }
+    }
+    this.notesSubject.next({ cells });
+  }
+
+  setNote(row: number, column: number, text: string): void {
+    this.document.transact(() => this.document.setNote(row, column, text.trim()), text.trim() === '' ? 'delete note' : 'note');
+    this.publishNotes();
+    this.publishEditor();
+    this.publishStatus();
+    this.persist();
   }
 
   /**
@@ -2837,7 +2887,8 @@ export class SheetService {
       column,
       input,
       explain: this.explainAt(row, column),
-      spilledFrom: anchor === null ? null : { ...anchor, input: this.document.sheet.input(anchor.row, anchor.column) }
+      spilledFrom: anchor === null ? null : { ...anchor, input: this.document.sheet.input(anchor.row, anchor.column) },
+      note: this.document.noteAt(row, column)
     });
   }
 
@@ -2886,7 +2937,8 @@ export class SheetService {
       canRedo: this.document.canRedo,
       undoLabel: this.document.undoLabel,
       redoLabel: this.document.redoLabel,
-      iterating: this.document.book.iteration !== null
+      iterating: this.document.book.iteration !== null,
+      showingFormulas: this.showingFormulas
     };
   }
 }

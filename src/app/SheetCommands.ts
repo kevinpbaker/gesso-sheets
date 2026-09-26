@@ -96,6 +96,8 @@ export type CommandId =
   | 'fitRows'
   | 'iterate'
   | 'stopIterating'
+  | 'showFormulas'
+  | 'editNote'
   | 'filterToSelection'
   | 'clearFilter'
   | 'freezeHere'
@@ -372,7 +374,9 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * using this can set.
    */
   insertSheet: { id: 'insertSheet', label: 'Insert sheet' },
-  renameSheet: { id: 'renameSheet', label: 'Rename sheet…', accelerator: { key: 'F2', shift: true } },
+  // No key of its own since Phase 22, when Shift+F2 went to notes as it
+  // is in Excel. F2 on a tab still renames it, and Alt+F10 reaches the tabs.
+  renameSheet: { id: 'renameSheet', label: 'Rename sheet…' },
   duplicateSheet: { id: 'duplicateSheet', label: 'Duplicate sheet' },
   deleteSheet: { id: 'deleteSheet', label: 'Delete sheet…' },
   moveSheetLeft: { id: 'moveSheetLeft', label: 'Move sheet left' },
@@ -428,6 +432,13 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
   fitRows: { id: 'fitRows', label: 'Fit rows to contents' },
   iterate: { id: 'iterate', label: 'Work out circular formulas by iteration' },
+  /**
+   * Every formula instead of its answer, for checking a sheet somebody
+   * else wrote. Ctrl+` is Excel's key and Chrome's is nothing, so it is
+   * the one key here that needs no Alt.
+   */
+  editNote: { id: 'editNote', label: 'Note…', accelerator: { key: 'F2', shift: true } },
+  showFormulas: { id: 'showFormulas', label: 'Show formulas', accelerator: { key: '`', ctrl: true } },
   stopIterating: { id: 'stopIterating', label: 'Refuse circular formulas' },
   filterToSelection: {
     id: 'filterToSelection',
@@ -592,6 +603,7 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'insertChart',
       SEPARATOR,
+      'editNote',
       'defineName'
     ]
   },
@@ -666,7 +678,7 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'view',
     label: 'View',
     mnemonic: 'v',
-    entries: ['freezeHere', 'freezeTopRow', 'freezeFirstColumn', SEPARATOR, 'unfreeze']
+    entries: ['freezeHere', 'freezeTopRow', 'freezeFirstColumn', SEPARATOR, 'unfreeze', SEPARATOR, 'showFormulas']
   },
   {
     id: 'data',

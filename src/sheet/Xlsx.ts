@@ -83,6 +83,13 @@ export interface XlsxSheet {
   readonly merges: readonly MergeRect[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
+  /**
+   * The sheet's comments, as notes: where each one is and what it
+   * says. Excel's threaded comments also write a plain comment for
+   * every thread, which is the part read here — the replies are
+   * joined into it by Excel already.
+   */
+  readonly notes: readonly { readonly row: number; readonly column: number; readonly text: string }[];
 }
 
 export interface XlsxName {
@@ -138,7 +145,11 @@ export async function openXlsx(bytes: Uint8Array, inflate: Inflate, limits: Xlsx
     // relationships, the strings, the styles and the worksheets. A
     // file's images and pivot caches can be most of its bytes, and
     // inflating them to throw them away would be most of the time.
-    if (/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|theme\/theme1\.xml|worksheets\/[^/]+\.xml)$/i.test(name)) {
+    if (
+      /^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|theme\/theme1\.xml|worksheets\/[^/]+\.xml|worksheets\/_rels\/[^/]+\.xml\.rels|comments[^/]*\.xml)$/i.test(
+        name
+      )
+    ) {
       parts.set(name.toLowerCase(), decoder.decode(await zipRead(bytes, entry, inflate)));
     }
   }
@@ -203,7 +214,11 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     valuesKept += sheet.valuesKept;
     cut.rows = Math.max(cut.rows, sheet.cutRows);
     cut.columns = Math.max(cut.columns, sheet.cutColumns);
-    sheets.push(sheet.sheet);
+    const commentsAt = target === undefined ? null : commentsTarget(read(relsPathOf(target)), target);
+    const notes = comments(commentsAt === null ? null : read(commentsAt)).filter(
+      note => note.row < limits.rows && note.column < limits.columns
+    );
+    sheets.push({ ...sheet.sheet, notes });
   }
   if (sheets.length === 0) {
     throw new XlsxError('It has no worksheets this can read.');
@@ -234,6 +249,100 @@ function relationships(text: string | null): Map<string, string> {
     map.set(relationship.attributes.Id ?? '', normalise(path));
   }
   return map;
+}
+
+/** Where a part's own relationships are: `xl/worksheets/_rels/sheet1.xml.rels`. */
+function relsPathOf(part: string): string {
+  const slash = part.lastIndexOf('/');
+  return `${part.slice(0, slash + 1)}_rels/${part.slice(slash + 1)}.rels`;
+}
+
+/**
+ * The comments part a worksheet points at, or null.
+ *
+ * Resolved against the worksheet's own folder, which is what a
+ * relationship's target is relative to — `../comments1.xml` from
+ * `xl/worksheets/` is `xl/comments1.xml`.
+ */
+function commentsTarget(text: string | null, part: string): string | null {
+  if (text === null) {
+    return null;
+  }
+  const folder = part.slice(0, part.lastIndexOf('/') + 1);
+  for (const relationship of children(parseXml(text), 'Relationship')) {
+    if (!(relationship.attributes.Type ?? '').endsWith('/comments')) {
+      continue;
+    }
+    const target = relationship.attributes.Target ?? '';
+    return normalise(target.startsWith('/') ? target.slice(1) : `${folder}${target}`);
+  }
+  return null;
+}
+
+/**
+ * A comment's text as a note says it.
+ *
+ * Two things come off. The name Excel writes in front, in bold, as
+ * `Balaji:` and a line break — the one who wrote it, which a note here
+ * does not record; recognised by being a bold first run that ends in a
+ * colon, or the comment's own author, because the bold name is the
+ * writer's and is not always the name in the file's list of authors.
+ * And the wrapping Excel puts round a threaded comment for readers that
+ * do not have threads — `[Threaded comment]`, a paragraph about
+ * versions of Excel, `Comment:` — leaving the comment and its replies.
+ */
+function noteText(body: XmlElement, author: string): string {
+  const runs = children(body, 'r');
+  let said = stringOf(body).replace(/\r\n?/g, '\n');
+  const first = runs[0];
+  const firstText = child(first, 't')?.text ?? '';
+  const bold = child(child(first, 'rPr'), 'b') !== null;
+  if (runs.length > 1 && bold && firstText.trimEnd().endsWith(':')) {
+    said = said.slice(firstText.length);
+  } else if (author !== '' && said.startsWith(`${author}:`)) {
+    said = said.slice(author.length + 1);
+  }
+  if (said.startsWith('[Threaded comment]')) {
+    const lines = said.split('\n');
+    const from = lines.findIndex(line => line.trim() === 'Comment:');
+    if (from !== -1) {
+      said = lines
+        .slice(from + 1)
+        .map(line => line.trim())
+        .join('\n');
+    }
+  }
+  return said.trim();
+}
+
+/**
+ * A comments part as notes.
+ *
+ * Excel puts the author's name in front of a note's text, in bold, as
+ * `Kevin Baker:` and a line break, because a note in Excel shows who
+ * wrote it. A note here does not have an author, so the name comes off
+ * — and only when it is exactly the comment's own author, so a note
+ * that happens to start with a word and a colon keeps it.
+ */
+function comments(text: string | null): { row: number; column: number; text: string }[] {
+  if (text === null) {
+    return [];
+  }
+  const root = parseXml(text);
+  const authors = children(child(root, 'authors'), 'author').map(author => author.text);
+  const notes: { row: number; column: number; text: string }[] = [];
+  for (const comment of children(child(root, 'commentList'), 'comment')) {
+    const at = addressOf(comment.attributes.ref ?? '');
+    const body = child(comment, 'text');
+    if (at === null || body === null) {
+      continue;
+    }
+    const said = noteText(body, authors[Number(comment.attributes.authorId ?? -1)] ?? '');
+    if (said !== '') {
+      notes.push({ row: at.row, column: at.column, text: said });
+    }
+  }
+  return notes;
 }
 
 function normalise(path: string): string {
@@ -783,7 +892,8 @@ function worksheet(
   }
 
   return {
-    sheet: { name, cells, styled, formats, columnWidths, hiddenRows, rowHeights, merges, frozenRows, frozenColumns },
+    // The notes are in a part of their own, read beside this one.
+    sheet: { name, cells, styled, formats, columnWidths, hiddenRows, rowHeights, merges, frozenRows, frozenColumns, notes: [] },
     valuesKept,
     cutRows,
     cutColumns

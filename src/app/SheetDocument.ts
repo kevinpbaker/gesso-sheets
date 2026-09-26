@@ -4,6 +4,7 @@ import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import type { Chart } from '../sheet/Chart';
 import { columnName, type RangeRef } from '../sheet/A1';
+import { Notes, type Note } from '../sheet/Notes';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
 import type { NamedRange, NameProblem } from '../sheet/Names';
@@ -20,7 +21,7 @@ import { shiftIndex, type Shift } from '../sheet/Shift';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit | ChartsEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit | ChartsEdit | NoteEdit;
 
 /**
  * Where an edit was made, which every kind of edit has to say.
@@ -88,6 +89,15 @@ interface ChartsEdit extends OnASheet {
   readonly after: readonly Chart[];
 }
 
+/** A cell's note, before and after; empty is no note. */
+interface NoteEdit extends OnASheet {
+  readonly kind: 'note';
+  readonly row: number;
+  readonly column: number;
+  readonly before: string;
+  readonly after: string;
+}
+
 interface TextEdit extends OnASheet {
   readonly kind: 'text';
   readonly row: number;
@@ -137,6 +147,8 @@ interface StructureEdit extends OnASheet {
   readonly widths: readonly number[];
   /** And the rows' heights and which rows were hidden, for the same reason. */
   readonly rows: RowsHeld;
+  /** The sheet's notes as they were, all of them: a deleted row takes its notes with it. */
+  readonly notes: readonly Note[];
 }
 
 /** What a row shift moves besides the cells, held so undo can put it back. */
@@ -209,6 +221,8 @@ interface Page {
   readonly sheet: Sheet;
   readonly formats: Formats;
   readonly merges: Merges;
+  /** The notes somebody left on cells; see `Notes`. */
+  readonly notes: Notes;
   /**
    * How wide each column is drawn.
    *
@@ -281,6 +295,7 @@ function newPage(sheet: Sheet): Page {
     sheet,
     formats: new Formats(),
     merges: new Merges(),
+    notes: new Notes(),
     columnWidths: [],
     hiddenRows: new Set<number>(),
     rowHeights: new Map<number, number>(),
@@ -358,6 +373,24 @@ export class SheetDocument {
 
   get merges(): Merges {
     return this.page.merges;
+  }
+
+  get notes(): Notes {
+    return this.page.notes;
+  }
+
+  noteAt(row: number, column: number): string {
+    return this.page.notes.at(row, column);
+  }
+
+  /** Writes a cell's note, or takes it away with an empty one. One step of undo. */
+  setNote(row: number, column: number, text: string): void {
+    const before = this.page.notes.at(row, column);
+    if (before === text) {
+      return;
+    }
+    this.page.notes.set(row, column, text);
+    this.record({ kind: 'note', sheet: this.activeSheet, row, column, before, after: text });
   }
 
   get conditional(): readonly ConditionalRule[] {
@@ -737,6 +770,8 @@ export class SheetDocument {
         );
       } else if (edit.kind === 'structure') {
         this.undoShift(edit);
+      } else if (edit.kind === 'note') {
+        this.page.notes.set(edit.row, edit.column, edit.before);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.before);
       } else if (edit.kind === 'rules') {
@@ -773,6 +808,10 @@ export class SheetDocument {
         this.formats.shift(edit.shift);
         this.columnWidths = shiftWidths(edit.widths, edit.shift);
         this.restoreRows(edit.rows, edit.shift);
+        this.page.notes.restore(edit.notes);
+        this.page.notes.shift(edit.shift);
+      } else if (edit.kind === 'note') {
+        this.page.notes.set(edit.row, edit.column, edit.after);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.after);
       } else if (edit.kind === 'rules') {
@@ -802,6 +841,7 @@ export class SheetDocument {
     this.formats.shift({ ...edit.shift, by: -edit.shift.by });
     this.columnWidths = [...edit.widths];
     this.restoreRows(edit.rows, null);
+    this.page.notes.restore(edit.notes);
     for (const cell of edit.removed) {
       this.writeCell(cell.row, cell.column, cell.input);
     }
@@ -1137,9 +1177,11 @@ export class SheetDocument {
       hidden,
       filtered
     };
+    const notes = this.page.notes.all();
     this.sheet.shift(shift);
     this.formats.shift(shift);
     this.merges.shift(shift);
+    this.page.notes.shift(shift);
     this.columnWidths = shiftWidths(this.columnWidths, shift);
     // A hidden row is hidden by index, so it moves with the rows it
     // was among — an insert above a hidden row must not reveal it and
@@ -1157,7 +1199,8 @@ export class SheetDocument {
       removed,
       rewritten,
       widths,
-      rows
+      rows,
+      notes
     });
   }
 
@@ -1260,6 +1303,7 @@ export class SheetDocument {
       ...newPage(this.book.sheet(at)),
       formats: from.formats.copy(),
       merges: from.merges.copy(),
+      notes: from.notes.copy(),
       columnWidths: [...from.columnWidths],
       hiddenRows: new Set(from.hiddenRows),
       rowHeights: new Map(from.rowHeights),
@@ -1467,6 +1511,8 @@ function describeStep(step: Step): string {
         return 'rules';
       case 'charts':
         return 'chart';
+      case 'note':
+        return 'note';
     }
   }
   if ([...kinds].every(kind => kind === 'format' || kind === 'region')) {

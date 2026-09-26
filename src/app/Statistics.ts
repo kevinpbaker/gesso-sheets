@@ -41,6 +41,52 @@ export function describeStats(stats: SheetStats): string {
   ].join('  ·  ');
 }
 
+/** The figures the status bar can show, in the order it shows them. */
+export type StatFigure = 'sum' | 'average' | 'count' | 'numeric' | 'min' | 'max';
+
+export const FIGURES: readonly { readonly id: StatFigure; readonly label: string }[] = [
+  { id: 'average', label: 'Average' },
+  { id: 'count', label: 'Count' },
+  { id: 'numeric', label: 'Numerical count' },
+  { id: 'min', label: 'Min' },
+  { id: 'max', label: 'Max' },
+  { id: 'sum', label: 'Sum' }
+];
+
+/** What the status bar shows until somebody chooses otherwise: Excel's three. */
+export const DEFAULT_FIGURES: readonly StatFigure[] = ['sum', 'average', 'count'];
+
+/**
+ * The chosen figures for a selection, each as the status bar prints it
+ * and as a click copies it.
+ *
+ * `describeStats`'s rule holds: a selection with no numbers shows its
+ * count and nothing that would be a fact about the empty set, and one
+ * with nothing in it shows nothing at all. Sum first, as in the default
+ * readout, then the rest in `FIGURES` order.
+ */
+export function figuresOf(
+  stats: SheetStats,
+  chosen: readonly StatFigure[]
+): readonly { readonly id: StatFigure; readonly label: string; readonly value: string; readonly copy: string }[] {
+  if (stats.count === 0) {
+    return [];
+  }
+  const order: StatFigure[] = ['sum', 'average', 'count', 'numeric', 'min', 'max'];
+  const wanted = order.filter(id => chosen.includes(id) && (stats.numeric > 0 || id === 'count'));
+  if (wanted.length === 0 && stats.numeric === 0) {
+    wanted.push('count');
+  }
+  return wanted.map(id => {
+    const label = FIGURES.find(figure => figure.id === id)?.label ?? id;
+    const raw = id === 'numeric' ? stats.numeric : stats[id];
+    const value = id === 'count' || id === 'numeric' ? raw.toLocaleString('en-US') : number(raw);
+    // Copied whole: the status bar rounds for reading, and a figure
+    // pasted into a cell should be the number and not its summary.
+    return { id, label, value, copy: String(raw) };
+  });
+}
+
 /**
  * A number short enough for a status bar.
  *

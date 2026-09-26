@@ -166,6 +166,8 @@ export interface SheetEditor {
    * will not be typed into as if it were this cell's.
    */
   readonly spilledFrom: { readonly row: number; readonly column: number; readonly input: string } | null;
+  /** The note on this cell, or empty; what Shift+F2 opens with. */
+  readonly note: string;
 }
 
 /**
@@ -408,6 +410,17 @@ export interface SheetPalette {
  * arrives after the typing has moved on is recognised and dropped.
  * `text` is the whole word, spelled as it was first typed, or empty.
  */
+/**
+ * The notes on the cells in view, by row and then column.
+ *
+ * Proportional to the window like `formats`: a sheet with no notes on
+ * screen publishes an empty object, and the differ says nothing about
+ * it after the first time.
+ */
+export interface SheetNotes {
+  readonly cells: Readonly<Record<string, Readonly<Record<string, string>>>>;
+}
+
 export interface SheetCompletion {
   readonly serial: number;
   readonly row: number;
@@ -478,6 +491,8 @@ export interface SheetStatus {
   readonly redoLabel: string;
   /** Whether circular formulas are gone round rather than refused. */
   readonly iterating: boolean;
+  /** Whether the sheet is showing its formulas instead of their answers. */
+  readonly showingFormulas: boolean;
 }
 
 /**
@@ -695,6 +710,8 @@ export interface SheetCommands {
    * comes back on `completion` with the same serial.
    */
   complete(row: number, column: number, prefix: string, serial: number): void;
+  /** Writes a cell's note, or takes it away with empty text. One step of undo. */
+  setNote(row: number, column: number, text: string): void;
   undo(): void;
   redo(): void;
   /**
@@ -758,6 +775,12 @@ export interface SheetCommands {
    * moves by a thousandth, rather than refused as `#CIRC!`.
    */
   setIteration(on: boolean): void;
+  /**
+   * Draws every formula instead of its answer, or goes back. A way of
+   * looking and not an edit: it is not on the undo stack and is not
+   * saved, as it is not in Excel's own undo.
+   */
+  showFormulas(on: boolean): void;
   /**
    * The heights the rows in a `rowFit` request need, measured.
    *
@@ -1034,6 +1057,8 @@ export interface SheetView {
   readonly autofit: SheetAutofit;
   /** What the cell being typed into could be finished as; see `SheetCompletion`. */
   readonly completion: SheetCompletion;
+  /** The notes on the cells in view; see `SheetNotes`. */
+  readonly notes: SheetNotes;
   /** The rows whose height the render worker should work out; see `SheetRowFit`. */
   readonly rowFit: SheetRowFit;
   /** The charts floating over this sheet; see `SheetCharts`. */
@@ -1112,9 +1137,9 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
-  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null },
+  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '' },
   names: { entries: [], refused: '' },
-  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false },
+  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
   clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },
   document: { id: '', name: '', file: null, edited: false, elsewhere: false },
@@ -1127,6 +1152,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   activeRules: { conditional: null, validation: null },
   autofit: { serial: 0, columns: [] },
   completion: { serial: 0, row: 0, column: 0, prefix: '', text: '' },
+  notes: { cells: {} },
   rowFit: { serial: 0, rows: [] },
   charts: { entries: [], selected: 0 },
   series: { charts: {} }

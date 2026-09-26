@@ -1914,7 +1914,7 @@ and write it into the spilled cell, which blocks the array. Typing
 over the cell from the sheet still replaces it, as in Excel, and the
 array reports `#SPILL!`.
 
-### Phase 22 — Knowing where you are
+### Phase 22 — Knowing where you are — **three of four; zoom designed, not built**
 
 - **Zoom** from View, Ctrl+Alt+= and Ctrl+Alt+-, per sheet, saved with
   the document. It scales the grid, not the chrome. This one is not
@@ -1936,6 +1936,98 @@ array reports `#SPILL!`.
 the cell under the pointer at 50%, 100% and 200%, and `pnpm proof`
 run at 200%, which is four times the cells' area in paint and the
 same number of cells mounted.
+
+**Met for three: the status bar, show formulas and notes.** Zoom has
+its design note below, which is what this phase said it needed first,
+and no code. Checked in Chrome: Shift+F2 on B4 of the seeded sheet
+opens the note with the caret in it, Ctrl+Enter saves it, and it shows
+beside the cell and survives a reload with its corner mark; a column
+of four numbers reads *Sum 1,207 · Average 301.75 · Count 4*; Ctrl+`
+turns the 77 formulas on screen into their text and back.
+
+**The status bar's figures** are one button each. A click copies the
+figure unrounded, because the status bar rounds for reading and a
+number pasted into a cell should be the number. A right-click on the
+readout, or the ▾ beside it, which a keyboard can reach, picks which
+figures show: Sum, Average, Count, Numerical count, Min, Max. The
+choice lasts for the session and not across a reload, because a
+render worker has nowhere of its own to keep a preference yet. That
+is said here rather than pretended otherwise.
+`StatusFigures.spec.tsx`.
+
+**Show formulas** is a way of looking, not an edit: the window the
+other thread publishes carries a formula cell's text instead of its
+answer, nothing goes on the undo stack, and nothing is saved, as in
+Excel. The columns are **not** widened, which is the half of the plan
+left undone. The widths are one shared source for the header, the
+cells and every pointer calculation, and scaling them for a view is a
+change to that source, not a flag. It belongs with zoom, which needs
+the same change.
+
+**Notes** are `src/sheet/Notes.ts`: sparse by cell, moved by an insert
+or a delete as the formats are, and held whole in a structural step
+so that undoing a deleted row brings its note back. That is more than
+the formats get: a deleted row's formats are not restored on undo
+today, which this phase found and did not fix. A note is one step of
+undo (*Undo note*), is saved in `.gsheet` (absent reads as none, so
+no version bump), and is read from an `.xlsx`'s comments through each
+worksheet's own relationships. Two things are taken off what Excel
+writes. One is the bold `Name:` in front, recognised by being a bold
+first run ending in a colon, because across POI's files the name was
+not the file's own author as often as it was. The other is the
+wrapper round a threaded comment (*"[Threaded comment] Your version of
+Excel…"*), cut down to the comment and its replies. All 61 comments
+in the 24 POI files that have them read clean. Notes are **not**
+written back into an exported `.xlsx` yet: Excel will not show a
+comment without a VML drawing beside it, which is its own part to
+write.
+
+The note shows to the right of its cell, for the cell under the
+pointer, or else for the selected cell, so the keyboard reaches it.
+It never shows over an open cell or over an error being explained.
+**Shift+F2 is the note's now**, as it is in Excel, and so no longer
+renames the sheet: F2 on a tab still does, Alt+F10 reaches the tabs,
+and Sheet ▸ Rename is where it was. The corner mark is a square in the
+cell's top-right corner, drawn in the cell's own paint pass as the
+validation dot is, so a window full of notes costs no nodes.
+`Notes.spec.tsx`, and `src/sheet/Notes.spec.ts` for the model and
+the `.xlsx` reading.
+
+**Zoom, designed.** Two ways to build it, and the obvious one is wrong.
+
+*Scale the paint* — a transform on the grid's content. The engine's
+hit tester already inverts transforms, so a click on a node would land
+right. But the grid does most of its pointer work without the hit
+tester, by arithmetic on the window's offsets: `cellAt(event.x −
+box.x, …)` for a sweep, a fill, a header drag, a right-click, a note's
+hover. Every one of those would need dividing by the zoom. And the
+virtual window decides which rows to mount from the viewport's height
+in content pixels, so at 50% it would mount half the rows the screen
+shows and leave the rest blank. That is the failure the exit criterion
+above exists to catch.
+
+*Scale the geometry* — the recommendation. Zoom is one number on the
+render thread, per sheet, and every size the grid hands the engine is
+multiplied by it: the column widths and row heights given to the
+virtual window, `HEADER_HEIGHT` and `GUTTER_WIDTH`, the cells' font
+sizes and padding, the mark and fill-handle sizes, the charts' boxes.
+Everything the engine computes from those — offsets, `cellAt`, what is
+mounted, hit-testing — is then right by construction, because it is
+all real pixels. The work is at the boundary: a width or a height
+going back to the other thread (a resize, an autofit, a fitted row)
+is divided by the zoom before it is sent, so the document stays at
+100% and a file saved at 200% opens at 100% with the same widths.
+The places that cross are few and already named:
+`sheet.send.setColumnWidth`, `setRowHeight`, the `autofit` and
+`rowFit` answers, and chart moves. The cost is a re-measure of the
+visible cells when the zoom changes, which is one frame of layout. It
+is also what Show formulas' wider columns should ride on: a
+per-column multiplier on the same path.
+
+The zoom is saved per sheet in `.gsheet` as a number, absent meaning
+1. It comes from View, and from Ctrl+Alt+= and Ctrl+Alt+−, not Ctrl+=,
+which is Chrome's page zoom and cannot be taken from it. The exit
+stands as written.
 
 ---
 

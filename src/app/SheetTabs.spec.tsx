@@ -249,12 +249,17 @@ describe('the tab strip', () => {
     });
 
     /** From the sheet, without going near the strip or the menu. */
-    it('opens on Shift+F2 from the grid', async () => {
+    /**
+     * Shift+F2 renamed the sheet until Phase 22, and is a note now, as
+     * it is in Excel. The sheet is renamed from its tab, with F2, or
+     * from the Sheet menu.
+     */
+    it('leaves Shift+F2 to the cell’s note', async () => {
       await reachTheGrid();
       await press('F2', { shift: true });
 
-      const box = h.ui.getByRole('textbox', { name: 'Sheet name' });
-      expect(h.ui.runtime.input.focus.focusedNode).toBe(box);
+      expect(h.ui.queryByRole('textbox', { name: 'Sheet name' })).toBeNull();
+      expect(h.ui.getByRole('textbox', { name: 'Note' })).toBeDefined();
       // Plain F2 is the cell editor and has to stay that way.
       await press('Escape');
       await reachTheGrid();

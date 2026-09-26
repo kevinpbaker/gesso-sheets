@@ -31,12 +31,13 @@ import {
   type CommandId
 } from './SheetCommands';
 import type { SheetFormatChange } from './SheetContract';
-import { formatRange, relativeRef } from '../sheet/A1';
+import { columnName, formatRange, relativeRef } from '../sheet/A1';
 import type { CellPaint } from '../sheet/Format';
 import { ICONS } from './icons';
 import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
+import { NoteDialog } from './NoteDialog';
 import { PasteHint, Shortcuts } from './Shortcuts';
 
 /**
@@ -114,6 +115,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * so it costs a property read and no subscription.
    */
   const labelNow = (id: CommandId): string | undefined => {
+    if (id === 'showFormulas') {
+      return status.value.showingFormulas ? 'Show values' : undefined;
+    }
     if (id !== 'undo' && id !== 'redo') {
       return undefined;
     }
@@ -218,6 +222,19 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const notice = internalState('');
   /** Where the paste hint is, when somebody asks for Paste from a menu. */
   const pasteHint = internalState(false);
+  /**
+   * The note being written, and the cell it is for — held from the
+   * moment the dialog opens, so a note is saved on the cell it was
+   * begun on even if the selection moves underneath it.
+   */
+  const noteOpen = internalState(false);
+  const noteCell = internalState('');
+  const noteText = internalState('');
+  let noteAt = { row: 0, column: 0 };
+  const closeNote = (): void => {
+    noteOpen.value = false;
+    edit.focusSheet();
+  };
 
   let nameBoxNode: UiNode | null = null;
   let findFieldNode: UiNode | null = null;
@@ -570,6 +587,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'shortcuts':
         shortcutsOpen.value = true;
         return;
+      case 'editNote': {
+        const at = sheet.view.editor.value;
+        noteAt = { row: at.row, column: at.column };
+        noteCell.value = `${columnName(at.column)}${at.row + 1}`;
+        noteText.value = at.note;
+        noteOpen.value = true;
+        return;
+      }
       case 'menuBar':
         if (menuBarNode !== null) {
           focus.focus(menuBarNode);
@@ -713,6 +738,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'fitRows':
         sheet.send.fitRowsToContents(rows().first, rows().last);
         break;
+      case 'showFormulas':
+        sheet.send.showFormulas(!status.value.showingFormulas);
+        break;
       case 'iterate':
         sheet.send.setIteration(true);
         break;
@@ -758,6 +786,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * with the thing the person cannot see.
    */
   edit.provideDismiss(() => {
+    if (noteOpen.value) {
+      closeNote();
+      return true;
+    }
     if (shortcutsOpen.value) {
       shortcutsOpen.value = false;
       return true;
@@ -1026,6 +1058,16 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
       <PasteHint open={pasteHint} onClose={() => (pasteHint.value = false)} />
+      <NoteDialog
+        open={noteOpen}
+        cell={noteCell}
+        text={noteText}
+        onSave={(text: string) => {
+          sheet.send.setNote(noteAt.row, noteAt.column, text);
+          closeNote();
+        }}
+        onClose={closeNote}
+      />
     </column>
   );
 }

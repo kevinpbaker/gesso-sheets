@@ -1,10 +1,11 @@
-import { map, type Observable } from 'rxjs';
+import { BehaviorSubject, combineLatest, map, type Observable } from 'rxjs';
 
-import { percent } from 'gesso-core';
-import { type ComponentContext, type Inputs } from 'gesso-framework';
+import { percent, type UiPointerEvent } from 'gesso-core';
+import { Menu, type MenuItem } from 'gesso-components';
+import { createComponent, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { Sheet, type SheetStatus } from './SheetContract';
-import { describeStats } from './Statistics';
+import { DEFAULT_FIGURES, FIGURES, figuresOf, type StatFigure } from './Statistics';
 
 /**
  * The line along the bottom: what the selection adds up to, and what
@@ -19,8 +20,87 @@ import { describeStats } from './Statistics';
  */
 export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
+  const shell = ctx.inject(ShellService);
 
-  const totals: Observable<string> = sheet.view.stats.pipe(map(describeStats));
+  /**
+   * Which figures the readout shows, and what it last copied.
+   *
+   * Held here for the session. Excel keeps the choice for the whole
+   * application; this one has nowhere a render worker can keep a
+   * preference yet, and a choice that silently reset on reload would
+   * be worse if it pretended otherwise — so it does not pretend.
+   */
+  const chosen = internalState<readonly StatFigure[]>(DEFAULT_FIGURES);
+  const copiedNote = internalState('');
+  let noteTimer: ReturnType<typeof setTimeout> | null = null;
+  const copy = (label: string, text: string): void => {
+    shell.copyText(text);
+    copiedNote.value = `${label} copied`;
+    if (noteTimer !== null) {
+      clearTimeout(noteTimer);
+    }
+    noteTimer = setTimeout(() => (copiedNote.value = ''), 2000);
+  };
+
+  /**
+   * The figures, one button each: a click copies the figure, whole,
+   * because the number somebody checked is usually the number they
+   * wanted to put somewhere.
+   */
+  const totals = combineLatest([sheet.view.stats, chosen]).pipe(
+    map(([stats, which]) =>
+      figuresOf(stats, which).map(figure => (
+        <text
+          key={figure.id}
+          text={`${figure.label} ${figure.value}`}
+          fontSize={11}
+          color="text"
+          verticalAlign="middle"
+          selectable={false}
+          role="button"
+          label={`${figure.label} ${figure.value}`}
+          cursor="pointer"
+          onClick={() => copy(figure.label, figure.copy)}
+        />
+      ))
+    )
+  );
+
+  /**
+   * The menu of figures, from a right-click on the readout or the
+   * button beside it — the button is there so a keyboard can reach
+   * the choice, and a pointer that does not think to right-click can.
+   */
+  const menuOpen = new BehaviorSubject(false);
+  const menuAt = new BehaviorSubject({ x: 0, y: 0 });
+  const menuItems = chosen.pipe(
+    map((which): readonly MenuItem[] =>
+      FIGURES.map(figure => ({ value: figure.id, label: `${which.includes(figure.id) ? '✓' : '  '} ${figure.label}` }))
+    )
+  );
+  const openMenu = (at: { x: number; y: number }): void => {
+    menuAt.next(at);
+    menuOpen.next(true);
+  };
+  /** Where the chooser is, so the menu opens beside it and not wherever a key was pressed. */
+  const chooser = ctx.bounds('chooser');
+  const openAtChooser = (): void => {
+    const box = chooser.value;
+    openMenu({ x: box.x, y: box.y });
+  };
+  const menu = createComponent(Menu, {
+    open: menuOpen,
+    onOpenChange: (open: boolean) => menuOpen.next(open),
+    items: menuItems,
+    at: menuAt,
+    label: 'Status bar figures',
+    onSelect: (value: string) => {
+      menuOpen.next(false);
+      const id = value as StatFigure;
+      const now = chosen.value;
+      chosen.value = now.includes(id) ? now.filter(figure => figure !== id) : [...now, id];
+    }
+  });
 
   /**
    * What the application thread is doing.
@@ -88,7 +168,35 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
         role="status"
         label="Sheet status">
         <text text={document} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
-        <text text={totals} fontSize={11} color="text" verticalAlign="middle" selectable={false} />
+        <row
+          gap={12}
+          y="center"
+          role="group"
+          label="Selection figures"
+          onContextMenu={(event: UiPointerEvent) => openMenu({ x: event.x, y: event.y })}>
+          {totals}
+        </row>
+        <text
+          text="▾"
+          fontSize={11}
+          color="textMuted"
+          verticalAlign="middle"
+          selectable={false}
+          role="button"
+          label="Choose what the status bar shows"
+          cursor="pointer"
+          focusable={true}
+          modifiers={[chooser.modifier]}
+          onClick={openAtChooser}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              openAtChooser();
+            }
+          }}
+        />
+        <text text={copiedNote} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} live="polite" />
+        {menu}
         <box flex={1} minWidth={0} />
         <text
           text={report}

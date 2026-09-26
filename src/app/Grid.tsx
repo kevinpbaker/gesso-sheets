@@ -281,7 +281,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   const refreshShapes = (mounted: MountedCell): void => {
     const width = columnWidths.get(mounted.column)?.value ?? COLUMN_WIDTH;
-    const next = bordersOf(mounted.paint.value, width, heightNow(mounted.row), isFlagged(mounted.row, mounted.column));
+    const next = bordersOf(
+      mounted.paint.value,
+      width,
+      heightNow(mounted.row),
+      isFlagged(mounted.row, mounted.column),
+      noteOf(mounted.row, mounted.column) !== ''
+    );
     if (next === NO_SHAPES && mounted.shapes.value === NO_SHAPES) {
       return;
     }
@@ -319,6 +325,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   ctx.effect(sheet.view.validation, current => {
     latestValidation = current.cells;
     allowedValues = current.list;
+    repaint();
+  });
+
+  /**
+   * The notes on the cells in view, held the way the validation marks
+   * are: one reader and a lookup that misses for almost every cell.
+   */
+  let latestNotes: Readonly<Record<string, Readonly<Record<string, string>>>> = {};
+  const noteOf = (row: number, column: number): string => latestNotes[row]?.[column] ?? '';
+  ctx.effect(sheet.view.notes, current => {
+    latestNotes = current.cells;
     repaint();
   });
 
@@ -591,10 +608,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * is and as CSS draws one, so a border never encroaches on the
    * neighbour and two adjacent cells can each have their own.
    */
-  const bordersOf = (paint: CellPaint, width: number, height: number, flagged: boolean): readonly DecorationShape[] => {
+  const bordersOf = (
+    paint: CellPaint,
+    width: number,
+    height: number,
+    flagged: boolean,
+    noted = false
+  ): readonly DecorationShape[] => {
     const edges = paint.borders;
     if (
       !flagged &&
+      !noted &&
       edges.top.width === 0 &&
       edges.right.width === 0 &&
       edges.bottom.width === 0 &&
@@ -604,6 +628,20 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       return NO_SHAPES;
     }
     const shapes: DecorationShape[] = [];
+    if (noted) {
+      // A note's mark, square in the very corner where Excel puts its
+      // triangle; the rule's dot sits beside it when a cell has both.
+      shapes.push({
+        kind: 'fill',
+        x: width - NOTE_MARK,
+        y: 0,
+        width: NOTE_MARK,
+        height: NOTE_MARK,
+        radius: 0,
+        color: 'primary',
+        after: 'children'
+      });
+    }
     if (flagged) {
       /**
        * A corner mark for a cell that breaks its rule.
@@ -615,7 +653,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
        */
       shapes.push({
         kind: 'fill',
-        x: width - MARK_SIZE - 1,
+        x: width - MARK_SIZE - 1 - (noted ? NOTE_MARK + 1 : 0),
         y: 1,
         width: MARK_SIZE,
         height: MARK_SIZE,
@@ -1295,7 +1333,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   const menuAt = new BehaviorSubject({ x: 0, y: 0 });
   const menuItems = new BehaviorSubject<readonly MenuItem[]>([]);
   const MENU_FOR: Readonly<Record<'cell' | 'column' | 'row', readonly CommandId[]>> = {
-    cell: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertColumnLeft', 'deleteRows', 'deleteColumns', 'sortAscending', 'sortDescending', 'clear'],
+    cell: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertColumnLeft', 'deleteRows', 'deleteColumns', 'sortAscending', 'sortDescending', 'clear', 'editNote'],
     column: ['cut', 'copy', 'paste', 'insertColumnLeft', 'insertColumnRight', 'deleteColumns', 'hideColumns', 'showColumns', 'autofitColumns', 'sortAscending', 'sortDescending', 'clear'],
     row: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertRowBelow', 'deleteRows', 'hideRows', 'showRows', 'fitRows', 'clear']
   };
@@ -1403,7 +1441,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         paint.value,
         columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH,
         heightNow(row),
-        isFlagged(row, column)
+        isFlagged(row, column),
+        noteOf(row, column) !== ''
       )
     );
     const element = buildCell(row, column, value, standing, paint, shapes);
@@ -2081,6 +2120,48 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     );
   };
 
+  /**
+   * A cell's note, beside it.
+   *
+   * To the right of the cell rather than under it, as Excel's are, so
+   * it does not cover the row below — which is usually the row being
+   * read. For the cell under the pointer, or else for the selected cell,
+   * so the keyboard reaches a note as well as the mouse does.
+   */
+  const notePopup = (row: number, column: number): UiElement =>
+    Box(
+      {
+        key: 'note',
+        position: 'absolute',
+        left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + sheetWindow.widthOf(column) + 4,
+        top: 0,
+        zIndex: 4,
+        maxWidth: 260,
+        backgroundColor: 'surface',
+        borderColor: 'primary',
+        borderWidth: 1,
+        paddingLeft: 6,
+        paddingRight: 6,
+        paddingTop: 4,
+        paddingBottom: 4,
+        pointerEvents: 'none',
+        role: 'status',
+        label: `Note on ${columnName(column)}${row + 1}`
+      },
+      Text({ key: 'said', text: noteOf(row, column), fontSize: 11, color: 'text', textWrap: 'word', maxLines: 8 })
+    );
+
+  /** The cell the pointer is resting on, when it has a note. */
+  let hoveredNote: { row: number; column: number } | null = null;
+  const hoverAt = (at: { row: number; column: number } | null): void => {
+    const next = at !== null && noteOf(at.row, at.column) !== '' ? at : null;
+    if (sameCell(next, hoveredNote)) {
+      return;
+    }
+    hoveredNote = next;
+    sheetWindow.invalidate();
+  };
+
   const hintPopup = (row: number, column: number): UiElement => {
     const current = hint.value;
     const caret = editing.caretRectOf(editorNode);
@@ -2341,6 +2422,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       openAt === null && explain.value !== null && latestSelection !== null && latestSelection.row === row;
     if (explaining && latestSelection !== null) {
       line.push(explainPopup(row, latestSelection.column));
+    }
+    // A note, for the cell the pointer rests on or else the selected
+    // one — and never over an open cell or an error being explained.
+    const noteAt =
+      hoveredNote ??
+      (latestSelection !== null && noteOf(latestSelection.row, latestSelection.column) !== ''
+        ? { row: latestSelection.row, column: latestSelection.column }
+        : null);
+    const explainingThat = explaining && hoveredNote === null;
+    if (openAt === null && noteAt !== null && noteAt.row === row && !explainingThat) {
+      line.push(notePopup(row, noteAt.column));
     }
     /**
      * The row clips its own cells, which is what makes a hidden row
@@ -2739,6 +2831,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // Text from the clipboard with no caret anywhere. Before the
       // engine offered this the paste was dropped: `paste` had nothing
       // editable to insert into and returned false.
+      // A note shows while the pointer rests on its cell. A move with a
+      // button down is a sweep and not a rest.
+      onPointerMove: (event: UiPointerEvent) => {
+        if (event.buttons === 0) {
+          hoverAt(cellUnder(event));
+        }
+      },
+      onPointerLeave: () => hoverAt(null),
       onPaste: (event: UiPasteEvent) => {
         edit.pasteText(event.text, pasteMode);
         pasteMode = 'all';
@@ -2755,6 +2855,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     throw new Error('LazySheet did not hand back its window.');
   }
   const sheetWindow = window;
+  // A note that appears or goes under the selection changes what the
+  // row draws beside it; see `notePopup`.
+  ctx.effect(sheet.view.notes, () => sheetWindow.invalidate());
 
   // The window owns the offsets, so a new set of widths has to reach
   // it: everything past the column that moved sits somewhere else, and
@@ -3227,6 +3330,8 @@ export type { SheetWindow };
 /** Shared, because the overwhelming majority of cells have no border. */
 /** The dot in a cell's corner when it breaks its validation rule. */
 const MARK_SIZE = 6;
+/** How big a note's corner mark is. */
+const NOTE_MARK = 5;
 
 const NO_SHAPES: DecorationShape[] = [];
 
