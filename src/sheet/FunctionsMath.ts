@@ -1,5 +1,5 @@
-import { arity, checked, numberAt, numbersOf, rangeAt, type SheetFunction } from './FunctionKit';
-import { DIV0, isError, NUM, VALUE } from './Values';
+import { arity, checked, checkedScalars, numberAt, numbersOf, rangeAt, type SheetFunction } from './FunctionKit';
+import { DIV0, isError, NUM, VALUE, type CellError } from './Values';
 
 /**
  * Arithmetic.
@@ -21,7 +21,11 @@ import { DIV0, isError, NUM, VALUE } from './Values';
 /** Away from zero on a tie, as a spreadsheet rounds. */
 export function roundHalfAway(value: number, places: number): number {
   const factor = 10 ** Math.trunc(places);
-  const scaled = value * factor;
+  // To fifteen significant digits first, which is as far as Excel
+  // believes a number: 0.05 is stored as 0.04999…, and scaled by ten it
+  // is 0.4999…, which rounds to nothing — where every spreadsheet says
+  // ROUND(0.05, 1) is 0.1, because nobody typed 0.04999….
+  const scaled = Number((value * factor).toPrecision(15));
   const rounded = scaled < 0 ? -Math.round(-scaled) : Math.round(scaled);
   return rounded / factor;
 }
@@ -33,7 +37,7 @@ function real(value: number) {
 
 export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   SQRT(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -42,7 +46,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   POWER(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -63,7 +67,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * answer breaks at zero.
    */
   MOD(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -80,7 +84,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Towards negative infinity, which is what makes `INT(-2.5)` -3. */
   INT(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -90,7 +94,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Towards zero, which is the other one, and why both exist. */
   TRUNC(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -108,24 +112,24 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Up to the next multiple, away from zero. */
   CEILING(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
-    return toMultiple(args, Math.ceil);
+    return toMultiple(args, Math.ceil, 0);
   },
 
   /** Down to the multiple below, towards zero. */
   FLOOR(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
-    return toMultiple(args, Math.floor);
+    return toMultiple(args, Math.floor, DIV0);
   },
 
   SIGN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -134,7 +138,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   EXP(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -143,7 +147,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   LN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -153,7 +157,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Base ten unless a base is given, as every spreadsheet has it. */
   LOG(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -172,7 +176,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   LOG10(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -193,7 +197,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** A whole number in a closed range, both ends included. */
   RANDBETWEEN(args, ctx) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -225,14 +229,11 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (wrong !== null) {
       return wrong;
     }
-    const ranges = [];
-    for (let at = 0; at < args.length; at++) {
-      const range = rangeAt(args, at);
-      if (isError(range)) {
-        return range;
-      }
-      ranges.push(range);
-    }
+    // A single value is an array of one, which is how Excel reads
+    // `SUMPRODUCT(3, B10, C9)`: three times B10 times C9.
+    const ranges = args.map(arg =>
+      arg.kind === 'range' ? arg : { kind: 'range' as const, values: [arg.value], rows: 1, columns: 1 }
+    );
     const shape = ranges[0];
     if (ranges.some(range => range.rows !== shape.rows || range.columns !== shape.columns)) {
       return VALUE;
@@ -242,6 +243,11 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       let product = 1;
       for (const range of ranges) {
         const value = range.values[at];
+        // An error anywhere in the arrays is the answer, as it is in
+        // Excel; text and blanks count as nothing.
+        if (isError(value)) {
+          return value;
+        }
         product *= typeof value === 'number' ? value : 0;
       }
       total += product;
@@ -251,7 +257,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** The whole numbers up to one, multiplied together. */
   FACT(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -293,7 +299,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   ROUNDUP(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -301,7 +307,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   ROUNDDOWN(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -310,7 +316,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Whether a number, truncated, is even; and odd. Text is `#VALUE!`. */
   ISEVEN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -319,7 +325,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   ISODD(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -333,7 +339,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * and a pair that does not is `#NUM!`.
    */
   MROUND(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -360,7 +366,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** The whole part of a division, as `INT` would give it for positives and `TRUNC` for all. */
   QUOTIENT(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -377,7 +383,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Rounded away from zero to the next even integer; and odd. */
   EVEN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -389,7 +395,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   ODD(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -403,7 +409,11 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 };
 
 /** `CEILING` and `FLOOR`, which differ only in which way they go. */
-function toMultiple(args: Parameters<SheetFunction>[0], round: (value: number) => number) {
+/**
+ * `onZero` is what a step of zero gives, which is where the two differ
+ * in Excel: `CEILING(x, 0)` is 0 and `FLOOR(x, 0)` divides by it.
+ */
+function toMultiple(args: Parameters<SheetFunction>[0], round: (value: number) => number, onZero: number | CellError) {
   const value = numberAt(args, 0);
   if (isError(value)) {
     return value;
@@ -413,7 +423,7 @@ function toMultiple(args: Parameters<SheetFunction>[0], round: (value: number) =
     return step;
   }
   if (step === 0) {
-    return value === 0 ? 0 : VALUE;
+    return value === 0 ? 0 : onZero;
   }
   // Worked on the magnitude and signed back, so both functions mean
   // the same thing either side of zero.

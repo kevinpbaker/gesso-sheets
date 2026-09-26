@@ -58,10 +58,21 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
   };
   for (const cell of sheet.cells) {
     const format = sheet.formats[cell.style] ?? DEFAULT_FORMAT;
-    // Text that would not read back as text is formatted Text, which is
-    // the one format that changes what an input *means* — the same
-    // path a person takes to keep `007`.
-    place(cell.row, cell.column, cell.asText ? { ...format, number: { kind: 'text' } } : format);
+    if (cell.asText) {
+      // Text that would not read back as text is formatted Text, which
+      // is the one format that changes what an input *means* — the
+      // same path a person takes to keep `007`.
+      place(cell.row, cell.column, { ...format, number: { kind: 'text' } });
+    } else if (cell.input.startsWith('=') && format.number.kind === 'text') {
+      // A formula under a Text format. In Excel it is still a formula —
+      // the format only changes how the *next* thing typed is read — and
+      // here a Text format turns an input into text, so the formula
+      // would come across as its own source. It keeps its paint and
+      // loses the one part of the format that would break it.
+      place(cell.row, cell.column, { ...format, number: { kind: 'general' } });
+    } else {
+      place(cell.row, cell.column, format);
+    }
   }
   for (const cell of sheet.styled) {
     place(cell.row, cell.column, sheet.formats[cell.style] ?? DEFAULT_FORMAT);

@@ -6,6 +6,7 @@ import {
   DIV0,
   isError,
   NAME,
+  NUM,
   REF,
   toBoolean,
   toNumber,
@@ -131,14 +132,19 @@ export function evaluate(node: Ast, context: EvaluationContext): CellValue {
       return { kind: 'error', code: node.code };
     case 'ref':
       return readRef(node.ref, context);
-    case 'range':
-      // A range where a single value is wanted. Functions take ranges
-      // through `argumentOf`; anything else — `=A1:B2+1` — has no
-      // meaning without the spilling a modern sheet does, so it is the
-      // range's first cell, which is what a sheet did before it spilled.
-      return readRange(node.range, context).values[0] ?? null;
+    case 'range': {
+      // A range where one value is wanted — `=A1:A9*2` — gives the one
+      // implicit intersection picks; see `readRange`.
+      const read = readRange(node.range, context);
+      return read.single !== undefined ? read.single : (read.values[0] ?? null);
+    }
     case 'unary': {
       const operand = evaluate(node.operand, context);
+      // A leading `+` changes nothing, text included: `=+A1` is A1 in
+      // Excel, whatever A1 holds. Only `-` needs a number.
+      if (node.op === '+') {
+        return operand;
+      }
       const number = toNumber(operand);
       if (isError(number)) {
         return number;
@@ -176,6 +182,7 @@ function readRange(range: RangeRef, context: EvaluationContext, skip?: Skip): Ex
     return { kind: 'range', values: [], rows: 0, columns };
   }
   const values: CellValue[] = [];
+  const single = intersection(read, sheet, context);
   if (skip !== undefined) {
     // A read with holes in it has no shape to report, and the one
     // caller that skips — `SUBTOTAL` — hands the values to aggregates
@@ -194,8 +201,42 @@ function readRange(range: RangeRef, context: EvaluationContext, skip?: Skip): Ex
     kind: 'range',
     values,
     rows: Math.abs(read.end.row - read.start.row) + 1,
-    columns: Math.abs(read.end.column - read.start.column) + 1
+    columns: Math.abs(read.end.column - read.start.column) + 1,
+    ...(single === undefined ? {} : { single })
   };
+}
+
+/**
+ * The one value a range gives where one value is wanted: implicit
+ * intersection, which is Excel's rule for `=A1:A9*2` and for a range
+ * handed to `ABS` or `LEN`.
+ *
+ * A single cell is itself. A column gives the cell in the formula's own
+ * row, and a row the cell in its own column — which is why `=B1:B9*2`
+ * typed down column C doubles the B beside each row — and a range that
+ * does not pass through the formula, or is two-dimensional, is
+ * `#VALUE!`. Without a formula to stand in (an expression evaluated in
+ * no cell), the first cell stands in, as it always did.
+ */
+function intersection(range: RangeRef, sheet: number, context: EvaluationContext): CellValue | undefined {
+  const firstRow = Math.min(range.start.row, range.end.row);
+  const lastRow = Math.max(range.start.row, range.end.row);
+  const firstColumn = Math.min(range.start.column, range.end.column);
+  const lastColumn = Math.max(range.start.column, range.end.column);
+  if (firstRow === lastRow && firstColumn === lastColumn) {
+    return context.valueAt(keyOn(sheet, firstRow, firstColumn));
+  }
+  const at = context.at;
+  if (at === undefined) {
+    return undefined;
+  }
+  if (firstColumn === lastColumn && at.row >= firstRow && at.row <= lastRow) {
+    return context.valueAt(keyOn(sheet, at.row, firstColumn));
+  }
+  if (firstRow === lastRow && at.column >= firstColumn && at.column <= lastColumn) {
+    return context.valueAt(keyOn(sheet, firstRow, at.column));
+  }
+  return VALUE;
 }
 
 /** A whole-column reference cut down to the rows that can hold anything. */
@@ -477,10 +518,20 @@ function offsetRange(args: readonly Ast[], context: EvaluationContext): RangeRef
     return VALUE;
   }
   const anchor = args[0];
-  const start = anchor.kind === 'ref' ? anchor.ref : anchor.kind === 'range' ? anchor.range.start : null;
-  if (start === null) {
+  const base: RangeRef | null =
+    anchor.kind === 'ref' ? { start: anchor.ref, end: anchor.ref } : anchor.kind === 'range' ? anchor.range : null;
+  if (base === null) {
     return VALUE;
   }
+  // The base's top-left corner, and its size as the default size: in
+  // Excel `OFFSET(K7:L8, 0, 0)` is K7:L8, not K7.
+  const start = {
+    ...base.start,
+    row: Math.min(base.start.row, base.end.row),
+    column: Math.min(base.start.column, base.end.column)
+  };
+  const baseHeight = Math.abs(base.end.row - base.start.row) + 1;
+  const baseWidth = Math.abs(base.end.column - base.start.column) + 1;
   const numbers: number[] = [];
   for (let at = 1; at < args.length; at++) {
     const value = toNumber(evaluate(args[at], context));
@@ -489,7 +540,7 @@ function offsetRange(args: readonly Ast[], context: EvaluationContext): RangeRef
     }
     numbers.push(Math.trunc(value));
   }
-  const [downBy, acrossBy, height = 1, width = 1] = numbers;
+  const [downBy, acrossBy, height = baseHeight, width = baseWidth] = numbers;
   if (height < 1 || width < 1) {
     return VALUE;
   }
@@ -499,8 +550,8 @@ function offsetRange(args: readonly Ast[], context: EvaluationContext): RangeRef
     return null;
   }
   return {
-    start: { row, column, rowAbsolute: true, columnAbsolute: true },
-    end: { row: row + height - 1, column: column + width - 1, rowAbsolute: true, columnAbsolute: true }
+    start: { ...start, row, column, rowAbsolute: true, columnAbsolute: true },
+    end: { ...start, row: row + height - 1, column: column + width - 1, rowAbsolute: true, columnAbsolute: true }
   };
 }
 
@@ -547,6 +598,20 @@ function wholeColumns(halves: readonly string[]): RangeRef | null {
 function argumentOf(node: Ast, context: EvaluationContext, skip?: Skip): Argument {
   if (node.kind === 'range') {
     return readRange(node.range, context, skip);
+  }
+  /**
+   * A reference is a range of one, as Excel has it: `SUM(A1, B1)`
+   * leaves out text in A1 exactly as `SUM(A1:B1)` does, where a literal
+   * `SUM("x")` is a claim that "x" is a number. Handed over as a value,
+   * a text cell next to the figures made the whole total `#VALUE!`.
+   */
+  if (node.kind === 'ref') {
+    if (!inBounds(node.ref.row, node.ref.column)) {
+      return { kind: 'value', value: REF };
+    }
+    return keyFor(node.ref, context) === null
+      ? { kind: 'value', value: REF }
+      : readRange({ start: node.ref, end: node.ref }, context, skip);
   }
   /**
    * A named range is a range argument, which is the whole point of
@@ -627,11 +692,18 @@ function binary(op: BinaryOperator, leftNode: Ast, rightNode: Ast, context: Eval
     case '/':
       return b === 0 ? DIV0 : a / b;
     default: {
+      // Excel's answers for the powers that have none: 0^0 and a
+      // negative base to a fractional power are out of range, 0 to a
+      // negative power divides by zero, and an overflow is out of range.
+      // A NaN must never reach a cell; it compares false with itself.
+      if (a === 0 && b === 0) {
+        return NUM;
+      }
+      if (a === 0 && b < 0) {
+        return DIV0;
+      }
       const power = a ** b;
-      // `(-8) ** (1/3)` is NaN rather than -2, and a NaN in a cell is
-      // a value that compares false with itself and poisons everything
-      // downstream silently. An error says so.
-      return Number.isNaN(power) ? VALUE : power;
+      return Number.isFinite(power) ? power : NUM;
     }
   }
 }

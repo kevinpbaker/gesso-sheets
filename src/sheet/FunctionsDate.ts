@@ -1,5 +1,5 @@
 import { dateOfSerial, parseTypedDate, serialOfDate, serialOfTime, timeOfSerial, weekdayOf } from './Dates';
-import { arity, checked, integerAt, numberAt, numbersOf, textAt, type SheetFunction } from './FunctionKit';
+import { arity, checked, checkedScalars, integerAt, numberAt, numbersOf, textAt, type SheetFunction } from './FunctionKit';
 import { isError, NUM, VALUE } from './Values';
 
 /**
@@ -37,7 +37,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * still refused; see `Dates.parseTypedDate`.
    */
   DATE(args) {
-    const wrong = checked(args, 3, 3);
+    const wrong = checkedScalars(args, 3, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -58,7 +58,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   TIME(args) {
-    const wrong = checked(args, 3, 3);
+    const wrong = checkedScalars(args, 3, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -89,7 +89,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Sunday is 1 unless a second argument says otherwise. */
   WEEKDAY(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -121,7 +121,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** The same day a number of months away, clamped to the month's end. */
   EDATE(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -152,7 +152,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * file's calendar arithmetic rests on.
    */
   EOMONTH(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -224,7 +224,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * to write "3 years and 2 months" and are why it survives at all.
    */
   DATEDIF(args) {
-    const wrong = checked(args, 3, 3);
+    const wrong = checkedScalars(args, 3, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -287,7 +287,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * The time of day, if the text has one, is dropped, as Excel drops it.
    */
   DATEVALUE(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -301,7 +301,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** A time typed as text, as a fraction of a day; the date, if any, is dropped. */
   TIMEVALUE(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -315,7 +315,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Whole days from the second date to the first. */
   DAYS(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -376,7 +376,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * than answered with this one's answer.
    */
   WEEKNUM(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -407,7 +407,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
  */
 function part(field: (serial: number) => number): SheetFunction {
   return args => {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }

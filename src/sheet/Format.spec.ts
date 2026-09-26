@@ -72,8 +72,9 @@ describe('showing a number under a format', () => {
    * on agrees; the phantom day itself is one this application
    * declines to invent.
    */
-  it('does not invent the day that never existed', () => {
-    expect(formatWith(60, { kind: 'date', pattern: 'ymd' })).toBe('1900-02-28');
+  /** Shown as Excel shows it; see `Dates.ts` for why this sheet keeps Excel's calendar. */
+  it('shows the day that never existed as Excel does', () => {
+    expect(formatWith(60, { kind: 'date', pattern: 'ymd' })).toBe('1900-02-29');
   });
 
   it('shows the fraction of a day as a time', () => {

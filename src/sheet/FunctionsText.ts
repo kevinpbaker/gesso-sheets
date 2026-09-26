@@ -1,6 +1,7 @@
-import { formatWith, type NumberFormat } from './Format';
-import { checked, integerAt, scalar, textAt, valuesOf, type SheetFunction } from './FunctionKit';
-import { isError, toBoolean, toText, VALUE } from './Values';
+import { formatCode } from './FormatCode';
+import { checked, checkedScalars, integerAt, scalar, textAt, valuesOf, type SheetFunction } from './FunctionKit';
+import { parseTypedDate } from './Dates';
+import { isError, numberOfText, toBoolean, toText, VALUE } from './Values';
 
 /**
  * Text.
@@ -19,44 +20,9 @@ import { isError, toBoolean, toText, VALUE } from './Values';
  * the answer is a position and there isn't one.
  */
 
-/**
- * The patterns `TEXT` understands.
- *
- * Excel takes a format *language* here, and this application
- * deliberately does not have one — see `NumberFormat` in `Format.ts`,
- * where the reasoning is set out. What it has instead is the named
- * formats, so `TEXT` accepts the pattern strings that name them and
- * says `#VALUE!` to anything else.
- *
- * That is a real limit and it is the honest version of one: a
- * half-implemented pattern language that silently ignored the parts
- * it could not do would produce text that is wrong rather than
- * absent, which is worse in a cell nobody is checking.
- */
-const PATTERNS: Readonly<Record<string, NumberFormat>> = {
-  '0': { kind: 'number', places: 0, thousands: false },
-  '0.0': { kind: 'number', places: 1, thousands: false },
-  '0.00': { kind: 'number', places: 2, thousands: false },
-  '#,##0': { kind: 'number', places: 0, thousands: true },
-  '#,##0.00': { kind: 'number', places: 2, thousands: true },
-  '0%': { kind: 'percent', places: 0 },
-  '0.0%': { kind: 'percent', places: 1 },
-  '0.00%': { kind: 'percent', places: 2 },
-  '0.00E+00': { kind: 'scientific', places: 2 },
-  '$#,##0': { kind: 'currency', places: 0, symbol: '$' },
-  '$#,##0.00': { kind: 'currency', places: 2, symbol: '$' },
-  'YYYY-MM-DD': { kind: 'date', pattern: 'ymd' },
-  'D MMM YYYY': { kind: 'date', pattern: 'dmy' },
-  'MMM D, YYYY': { kind: 'date', pattern: 'mdy' },
-  'HH:MM': { kind: 'time', pattern: 'hm' },
-  'HH:MM:SS': { kind: 'time', pattern: 'hms' },
-  'YYYY-MM-DD HH:MM': { kind: 'datetime', date: 'ymd', time: 'hm' },
-  GENERAL: { kind: 'general' }
-};
-
 export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   LEFT(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -72,7 +38,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   RIGHT(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -90,7 +56,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   MID(args) {
-    const wrong = checked(args, 3, 3);
+    const wrong = checkedScalars(args, 3, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -113,7 +79,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   LEN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -123,7 +89,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Case-sensitive, and `#VALUE!` when it is not there. */
   FIND(args) {
-    const wrong = checked(args, 2, 3);
+    const wrong = checkedScalars(args, 2, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -132,7 +98,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** The same question asked case-insensitively. */
   SEARCH(args) {
-    const wrong = checked(args, 2, 3);
+    const wrong = checkedScalars(args, 2, 3);
     if (wrong !== null) {
       return wrong;
     }
@@ -147,7 +113,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * than merely tidy.
    */
   TRIM(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -156,7 +122,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   UPPER(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -165,7 +131,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   LOWER(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -175,7 +141,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Each word's first letter up and the rest down. */
   PROPER(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -190,7 +156,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Every occurrence, or just the n'th when one is named. */
   SUBSTITUTE(args) {
-    const wrong = checked(args, 3, 4);
+    const wrong = checkedScalars(args, 3, 4);
     if (wrong !== null) {
       return wrong;
     }
@@ -231,7 +197,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** By position, which is what makes it different from SUBSTITUTE. */
   REPLACE(args) {
-    const wrong = checked(args, 4, 4);
+    const wrong = checkedScalars(args, 4, 4);
     if (wrong !== null) {
       return wrong;
     }
@@ -258,7 +224,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   REPT(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -317,7 +283,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Text back to a number, and `#VALUE!` when it is not one. */
   VALUE(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -329,37 +295,36 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (isError(text)) {
       return text;
     }
-    const trimmed = text.trim();
-    if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(trimmed)) {
-      return VALUE;
+    // A number however it is written — "$1,000", "50%", "(20)" — and
+    // then a date or a time, which VALUE reads the way typing does.
+    const number = numberOfText(text);
+    if (!isError(number)) {
+      return number;
     }
-    return Number(trimmed);
+    return parseTypedDate(text)?.serial ?? VALUE;
   },
 
   /**
-   * Phase 9's formatter, called from inside a formula.
+   * A value as text in an Excel format code: `TEXT(A1, "#,##0.00")`.
    *
-   * The seam runs the other way from the one dates made: there a
-   * typed value chose a format, and here a formula asks the formatter
-   * for text. Both are the same rule — the format axis is where
-   * values become readable — approached from opposite sides.
+   * The code is the language itself, read by `FormatCode.ts`, so a
+   * formula written in Excel means here what it meant there.
    */
   TEXT(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
-    const pattern = textAt(args, 1);
-    if (isError(pattern)) {
-      return pattern;
+    const code = textAt(args, 1);
+    if (isError(code)) {
+      return code;
     }
-    const format = PATTERNS[pattern.toUpperCase()];
-    return format === undefined ? VALUE : formatWith(scalar(args, 0), format);
+    return formatCode(scalar(args, 0), code);
   },
 
   /** One character from its code, and the code from one character. */
   CHAR(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -371,7 +336,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   CODE(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -385,7 +350,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** True when two strings are the same, case and all. */
   EXACT(args) {
-    const wrong = checked(args, 2, 2);
+    const wrong = checkedScalars(args, 2, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -399,13 +364,16 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Joins its arguments, which `&` also does one pair at a time. */
   CONCATENATE(args) {
-    const wrong = checked(args, 1, Number.POSITIVE_INFINITY);
+    const wrong = checkedScalars(args, 1, Number.POSITIVE_INFINITY);
     if (wrong !== null) {
       return wrong;
     }
+    // One value per argument, a range giving the one implicit
+    // intersection picks — CONCATENATE is the old function, and it does
+    // not join ranges; CONCAT and TEXTJOIN are the ones that do.
     let joined = '';
-    for (const value of valuesOf(args)) {
-      const piece = toText(value);
+    for (let at = 0; at < args.length; at++) {
+      const piece = toText(scalar(args, at));
       if (isError(piece)) {
         return piece;
       }
@@ -416,7 +384,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /** Text with the control characters taken out, which is what a pasted report is full of. */
   CLEAN(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }
@@ -432,7 +400,7 @@ export const TEXT_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * full of them legible rather than a column of `#NAME?`.
    */
   HYPERLINK(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }

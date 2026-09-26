@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { cellKey } from './A1';
 import { evaluate } from './Evaluator';
 import { parseFormula } from './Parser';
-import { CIRC, DIV0, formatValue, NAME, REF, VALUE, type CellValue } from './Values';
+import { CIRC, DIV0, formatValue, NAME, NUM, REF, VALUE, type CellValue } from './Values';
 
 /** A sheet as a literal, so a spec reads as the grid it describes. */
 function context(grid: Record<string, CellValue>) {
@@ -39,7 +39,10 @@ describe('arithmetic', () => {
   it('reports a power with no real answer rather than returning NaN', () => {
     // A NaN compares false with itself and poisons everything
     // downstream silently.
-    expect(run('(0-8)^0.5')).toBe(VALUE);
+    // As an error, and the one Excel gives: out of range.
+    expect(run('(0-8)^0.5')).toEqual(NUM);
+    expect(run('0^0')).toEqual(NUM);
+    expect(run('0^-1')).toEqual(DIV0);
   });
 
   it('treats an empty cell as zero', () => {

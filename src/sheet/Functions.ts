@@ -1,5 +1,5 @@
 import {
-  checked,
+  checked, checkedScalars,
   firstError,
   numberAt,
   numbersOf,
@@ -129,7 +129,7 @@ const AGGREGATES: Readonly<Record<string, SheetFunction>> = {
   },
 
   ROUND(args) {
-    const wrong = checked(args, 1, 2);
+    const wrong = checkedScalars(args, 1, 2);
     if (wrong !== null) {
       return wrong;
     }
@@ -142,7 +142,7 @@ const AGGREGATES: Readonly<Record<string, SheetFunction>> = {
   },
 
   ABS(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }

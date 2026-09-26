@@ -24,10 +24,20 @@ import type { DatePattern, TimePattern } from './Format';
  * here and in Excel, which is the only property worth having.
  *
  * The bug is one phantom day: Excel's serial 60 is 1900-02-29, which
- * did not happen. So serials 1..59 are a day ahead of what the epoch
- * alone would give, and serial 60 is a day this application declines
- * to invent — it reads back as 1900-02-28, the same as 59. One wrong
- * day in 1900, against reproducing a calendar error on purpose.
+ * did not happen, and serials 1..59 are a day ahead of what the epoch
+ * alone would give.
+ *
+ * **This follows Excel's calendar all the way now, phantom day
+ * included.** It used to decline to invent 29 February — reading 60 back
+ * as the 28th — on the argument that one wrong day in 1900 beat
+ * reproducing an error on purpose. That argument ended with `.xlsx`
+ * import, for the reason `#NUM!` arrived: a workbook written in Excel
+ * computes `DATE(1900, 2, 29)` as 60 and `DAY(0)` as 0, and answering
+ * differently after it is opened is the one way to be wrong that
+ * matters. So serial 0 is "January 0, 1900", as Excel shows it; 60 is
+ * the 29th; `DATE` counts days onward from the first of its month in
+ * that calendar, which is why `DATE(1900, 1, 22222)` is 22222; and a
+ * weekday is one formula from serial 1, a Sunday, everywhere.
  */
 
 export const DAY_MS = 86_400_000;
@@ -68,7 +78,16 @@ export interface TimeParts {
 
 /** The calendar date a serial's whole-day part names. */
 export function dateOfSerial(serial: number): DateParts {
-  const at = new Date(EPOCH_UTC + utcDaysOf(Math.floor(serial)) * DAY_MS);
+  const whole = Math.floor(serial);
+  // Excel's January and February of 1900, counted straight from serial
+  // 1 with the phantom 29th at 60, and serial 0 as the 0th of January.
+  if (whole <= 31) {
+    return { year: 1900, month: 1, day: Math.max(0, whole) };
+  }
+  if (whole <= SHIFT_BEFORE) {
+    return { year: 1900, month: 2, day: whole - 31 };
+  }
+  const at = new Date(EPOCH_UTC + utcDaysOf(whole) * DAY_MS);
   return { year: at.getUTCFullYear(), month: at.getUTCMonth() + 1, day: at.getUTCDate() };
 }
 
@@ -88,8 +107,12 @@ export function serialOfDate(year: number, month: number, day: number): number {
   // `DATE` documents and the only one that can be right here: the
   // epoch is 1899-12-30, so there are no serials for the first
   // century AD to give back. `DATE(26, 1, 1)` is 1926.
-  at.setUTCFullYear(year < 1900 ? year + 1900 : year, month - 1, day);
-  return serialOfUtcDays(Math.round((at.getTime() - EPOCH_UTC) / DAY_MS));
+  // The first of the month, normalised, and then the days counted on
+  // from it in Excel's calendar — which is what makes a day past the end
+  // of January 1900 land where Excel puts it, phantom 29th and all.
+  at.setUTCFullYear(year < 1900 ? year + 1900 : year, month - 1, 1);
+  const first = at.getUTCFullYear() === 1900 && at.getUTCMonth() < 2 ? (at.getUTCMonth() === 0 ? 1 : 32) : serialOfUtcDays(Math.round((at.getTime() - EPOCH_UTC) / DAY_MS));
+  return first + day - 1;
 }
 
 /** The clock time a serial's fractional part names. */
@@ -112,8 +135,10 @@ export function serialOfTime(hours: number, minutes: number, seconds: number): n
 
 /** Sunday is 1, as `WEEKDAY`'s default numbering has it. */
 export function weekdayOf(serial: number): number {
-  const at = new Date(EPOCH_UTC + utcDaysOf(Math.floor(serial)) * DAY_MS);
-  return at.getUTCDay() + 1;
+  // Serial 1 is a Sunday in Excel's calendar and every serial after it
+  // follows, the phantom day included — so this is arithmetic, and the
+  // days before March 1900 agree with Excel rather than with history.
+  return ((((Math.floor(serial) + 6) % 7) + 7) % 7) + 1;
 }
 
 const MONTH_NAMES = [

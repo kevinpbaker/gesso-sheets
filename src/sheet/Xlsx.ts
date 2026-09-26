@@ -42,6 +42,12 @@ export interface XlsxCell {
   /** Index into the sheet's `formats`. */
   readonly style: number;
   /**
+   * For a formula, the value the file says it last calculated to, as
+   * text — which is how a producer's arithmetic can be checked against
+   * this sheet's. Undefined for a cell that is not a formula.
+   */
+  readonly cached?: string;
+  /**
    * Text that would not read back as text if it were typed — `007`,
    * `TRUE`, `=1+2` — and has to be formatted Text to stay what Excel
    * said it was.
@@ -100,6 +106,11 @@ export interface XlsxLimits {
 
 /** Reads a workbook from the bytes of an `.xlsx`. */
 export async function openXlsx(bytes: Uint8Array, inflate: Inflate, limits: XlsxLimits): Promise<XlsxBook> {
+  // An OLE compound file: what Excel writes for a workbook with a
+  // password to open it, and for the old binary .xls.
+  if (bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11 && bytes[3] === 0xe0) {
+    throw new XlsxError('It is password-protected, or an old .xls; save it from Excel as an .xlsx without a password.');
+  }
   let entries;
   try {
     entries = zipEntries(bytes);
@@ -107,7 +118,8 @@ export async function openXlsx(bytes: Uint8Array, inflate: Inflate, limits: Xlsx
     throw new XlsxError('It is not an Excel workbook; an .xlsx is a zip file, and this is not one.');
   }
   const decoder = new TextDecoder();
-  const byName = new Map(entries.map(entry => [entry.name.replace(/^\//, ''), entry]));
+  // Some producers write Windows paths into the zip: `xl\\workbook.xml`.
+  const byName = new Map(entries.map(entry => [entry.name.replace(/\\/g, '/').replace(/^\//, ''), entry]));
   const parts = new Map<string, string>();
   for (const [name, entry] of byName) {
     // Only the parts a reader of cells needs: the workbook, its
@@ -157,6 +169,8 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   // A bare name parses as a call with no arguments, so a formula that
   // reads one is runnable when the name is one of these.
   const known = new Set(names.map(each => each.name.toUpperCase()));
+  const pr = child(workbook, 'workbookPr')?.attributes.date1904;
+  const date1904 = pr === '1' || pr === 'true';
 
   const cut = { rows: 0, columns: 0 };
   let valuesKept = 0;
@@ -167,7 +181,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     if (text === null) {
       continue;
     }
-    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, known);
+    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, known, date1904);
     valuesKept += sheet.valuesKept;
     cut.rows = Math.max(cut.rows, sheet.cutRows);
     cut.columns = Math.max(cut.columns, sheet.cutColumns);
@@ -622,7 +636,8 @@ function worksheet(
   strings: readonly string[],
   formats: readonly CellFormat[],
   limits: XlsxLimits,
-  known: ReadonlySet<string>
+  known: ReadonlySet<string>,
+  date1904: boolean
 ): ReadSheet {
   const cells: XlsxCell[] = [];
   const styled: { row: number; column: number; style: number }[] = [];
@@ -683,7 +698,15 @@ function worksheet(
       if (read.kept) {
         valuesKept++;
       }
-      cells.push({ row: at.row, column: at.column, input: read.input, style: Math.max(0, style), asText: read.asText });
+      const dated = date1904 && isDated(formats[Math.max(0, style)]);
+      cells.push({
+        row: at.row,
+        column: at.column,
+        input: dated ? shifted(read.input) : read.input,
+        style: Math.max(0, style),
+        asText: read.asText,
+        ...(read.cached === undefined ? {} : { cached: dated ? shifted(read.cached) : read.cached })
+      });
     }
   }
 
@@ -719,6 +742,31 @@ function worksheet(
 }
 
 /**
+ * The 1904 date system, which Excel for the Mac used: serial 0 is
+ * 1 January 1904, 1,462 days after this sheet's. A date in such a file
+ * is moved to this sheet's count as it comes in, so `YEAR` and `DATE`
+ * and every date format agree with it. Only a date is moved — a
+ * duration or a time of day is the same in both systems — and only a
+ * number: a formula that works out a date from a written-in serial is
+ * the one thing that comes out 4 years early, which is rare enough to
+ * accept for a sheet with only one date system.
+ */
+const SHIFT_1904 = 1462;
+
+function isDated(format: CellFormat | undefined): boolean {
+  const kind = format?.number.kind;
+  return kind === 'date' || kind === 'datetime';
+}
+
+function shifted(input: string): string {
+  if (input === '' || input.startsWith('=')) {
+    return input;
+  }
+  const number = Number(input);
+  return Number.isFinite(number) ? String(number + SHIFT_1904) : input;
+}
+
+/**
  * What one `<c>` becomes: its input, whether it has to be kept as
  * text, and whether a formula had to be traded for its value.
  */
@@ -729,7 +777,7 @@ function cellInput(
   strings: readonly string[],
   shared: Map<string, { input: string; row: number; column: number }>,
   known: ReadonlySet<string>
-): { input: string; asText: boolean; kept: boolean } | null {
+): { input: string; asText: boolean; kept: boolean; cached?: string } | null {
   const type = cell.attributes.t ?? 'n';
   const raw = child(cell, 'v')?.text ?? null;
   const value = valueOf(type, raw, cell, strings);
@@ -738,7 +786,7 @@ function cellInput(
   if (formula !== null) {
     const written = formulaOf(formula, row, column, shared);
     if (written !== null && canRun(written, known)) {
-      return { input: written, asText: false, kept: false };
+      return { input: written, asText: false, kept: false, ...(value === null ? {} : { cached: value.text }) };
     }
     if (value === null) {
       return null;
@@ -748,7 +796,7 @@ function cellInput(
   return value === null ? null : { ...literal(value), kept: false };
 }
 
-type Value = { kind: 'text'; text: string } | { kind: 'other'; text: string };
+type Value = { kind: 'text'; text: string } | { kind: 'other'; text: string } | { kind: 'error'; text: string };
 
 function valueOf(type: string, raw: string | null, cell: XmlElement, strings: readonly string[]): Value | null {
   switch (type) {
@@ -765,9 +813,7 @@ function valueOf(type: string, raw: string | null, cell: XmlElement, strings: re
     case 'b':
       return raw === null ? null : { kind: 'other', text: raw === '1' ? 'TRUE' : 'FALSE' };
     case 'e':
-      // An error is kept as its code, as text: this sheet has no way to
-      // type an error value, and `#N/A` in a cell reads the same.
-      return raw === null ? null : { kind: 'text', text: raw };
+      return raw === null ? null : { kind: 'error', text: raw };
     default:
       return raw === null || raw === '' ? null : { kind: 'other', text: raw };
   }
@@ -778,9 +824,24 @@ function literal(value: Value): { input: string; asText: boolean } {
   if (value.kind === 'other') {
     return { input: value.text, asText: false };
   }
+  if (value.kind === 'error') {
+    // An error cell is the error, not its name as text: `ISNA` has to
+    // see a `#N/A` there, and `LEN` must not count five characters.
+    // Written as a formula, since a typed `#N/A` is text here; a code
+    // this sheet does not know (`#SPILL!`, `#GETTING_DATA`) stays text.
+    return KNOWN_ERRORS.has(value.text) ? { input: `=${value.text}`, asText: false } : { input: value.text, asText: true };
+  }
   const text = value.text;
+  if (text === '') {
+    // An empty string is not a blank — `COUNTA` counts it and `""=A1`
+    // is about it — and an empty input here *clears* a cell, so it is
+    // written as the formula that gives it.
+    return { input: '=""', asText: false };
+  }
   return { input: text, asText: text.startsWith('=') || typeof literalOf(text) !== 'string' };
 }
+
+const KNOWN_ERRORS: ReadonlySet<string> = new Set(['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!']);
 
 /**
  * A formula as this sheet would write it, or null.

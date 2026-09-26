@@ -77,14 +77,28 @@ function positionOf(values: readonly CellValue[], wanted: CellValue, exact: bool
   let best = -1;
   while (low <= high) {
     const middle = (low + high) >> 1;
-    const order = compareValues(values[middle], wanted);
+    const value = values[middle];
+    // A blank is stepped past, like a mismatched kind: a blank compares
+    // equal to "" and below every word, so taken as a value it looked
+    // like the largest thing not above any text wanted.
+    const order = value === null ? VALUE : compareValues(value, wanted);
     if (isError(order)) {
       // A blank or a mismatched kind in a sorted column: step past it
       // rather than give up on the whole search.
       low = middle + 1;
       continue;
     }
-    if (order <= 0) {
+    if (order === 0) {
+      // Found, and Excel stops here — at the last of a run of equal
+      // values — rather than searching on to the right, which in a list
+      // that is not quite sorted walks past the answer to a worse one.
+      let last = middle;
+      while (last + 1 < values.length && compareValues(values[last + 1], wanted) === 0) {
+        last++;
+      }
+      return last;
+    }
+    if (order < 0) {
       best = middle;
       low = middle + 1;
     } else {
@@ -92,6 +106,16 @@ function positionOf(values: readonly CellValue[], wanted: CellValue, exact: bool
     }
   }
   return best;
+}
+
+/** The last exact match, for a search from the end. */
+function lastPositionOf(values: readonly CellValue[], wanted: CellValue): number {
+  for (let at = values.length - 1; at >= 0; at--) {
+    if (positionOf([values[at]], wanted, true) === 0) {
+      return at;
+    }
+  }
+  return -1;
 }
 
 export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
@@ -253,7 +277,7 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * or larger value.
    */
   XLOOKUP(args) {
-    const wrong = arity(args, 3, 5);
+    const wrong = arity(args, 3, 6);
     if (wrong !== null) {
       return wrong;
     }
@@ -269,21 +293,43 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (isError(returned)) {
       return returned;
     }
-    if (searched.values.length !== returned.values.length) {
+    // The result may be wider than the searched column (or taller than
+    // the searched row), and Excel spills the whole row it finds. There
+    // is no spilling here, so the answer is that row's first cell — the
+    // one a formula written in a single cell shows.
+    const down = searched.columns === 1;
+    const matches = down ? returned.rows === searched.values.length : returned.columns === searched.values.length;
+    if (!matches) {
       return VALUE;
     }
     const mode = args.length > 4 ? integerAt(args, 4) : 0;
     if (isError(mode)) {
       return mode;
     }
-    let at = positionOf(searched.values, wanted, true);
+    // 1 searches first to last and -1 last to first; 2 and -2 are a
+    // binary search over data sorted up or down.
+    const search = args.length > 5 ? integerAt(args, 5) : 1;
+    if (isError(search)) {
+      return search;
+    }
+    if (![1, -1, 2, -2].includes(search)) {
+      return VALUE;
+    }
+    if (search === 2 || search === -2) {
+      const at = bisected(searched.values, wanted, search === -2, mode);
+      if (at === -1) {
+        return args.length > 3 ? scalar(args, 3) : NA;
+      }
+      return (down ? returned.values[at * returned.columns] : returned.values[at]) ?? null;
+    }
+    let at = search === -1 ? lastPositionOf(searched.values, wanted) : positionOf(searched.values, wanted, true);
     if (at === -1 && mode !== 0) {
       at = nearest(searched.values, wanted, mode < 0);
     }
     if (at === -1) {
       return args.length > 3 ? scalar(args, 3) : NA;
     }
-    return returned.values[at] ?? null;
+    return (down ? returned.values[at * returned.columns] : returned.values[at]) ?? null;
   },
 
   /** The n'th of its arguments, counting from one. */
@@ -319,20 +365,56 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   }
 };
 
+/**
+ * `XLOOKUP`'s binary search, as Excel runs it: a true bisection that
+ * trusts the order it was promised, so on data that is not sorted it
+ * lands where Excel lands rather than on what a scan would find. With
+ * no exact match, `mode` 1 takes the next larger value and -1 the next
+ * smaller — the two sides of where the search stopped.
+ */
+function bisected(values: readonly CellValue[], wanted: CellValue, descending: boolean, mode: number): number {
+  let low = 0;
+  let high = values.length - 1;
+  while (low <= high) {
+    const middle = (low + high) >> 1;
+    const compared = compareValues(values[middle], wanted);
+    const order = isError(compared) ? 1 : descending ? -compared : compared;
+    if (order === 0) {
+      return middle;
+    }
+    if (order < 0) {
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  // `low` is the first entry past the wanted value in the search's
+  // order and `high` the last before it; which is larger depends on
+  // which way the data runs.
+  const larger = descending ? high : low;
+  const smaller = descending ? low : high;
+  const at = mode === 1 ? larger : mode === -1 ? smaller : -1;
+  return at >= 0 && at < values.length ? at : -1;
+}
+
 /** The closest value below or above, for `XLOOKUP`'s fallback modes. */
 function nearest(values: readonly CellValue[], wanted: CellValue, below: boolean): number {
+  // The candidates are compared with each other, not with what is
+  // wanted: `compareValues` answers -1, 0 or 1, so ranking by it made
+  // every candidate on the right side a tie, and the first one won —
+  // which is the nearest only when the data happens to be sorted.
   let best = -1;
-  let bestOrder: number | null = null;
   for (let at = 0; at < values.length; at++) {
     const order = compareValues(values[at], wanted);
-    if (isError(order)) {
+    if (isError(order) || (below ? order > 0 : order < 0)) {
       continue;
     }
-    if (below ? order > 0 : order < 0) {
+    if (best === -1) {
+      best = at;
       continue;
     }
-    if (bestOrder === null || (below ? order > bestOrder : order < bestOrder)) {
-      bestOrder = order;
+    const against = compareValues(values[at], values[best]);
+    if (!isError(against) && (below ? against > 0 : against < 0)) {
       best = at;
     }
   }

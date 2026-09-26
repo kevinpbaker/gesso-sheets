@@ -1,4 +1,4 @@
-import { arity, checked, scalar, type Argument, type SheetFunction } from './FunctionKit';
+import { arity, checked, checkedScalars, scalar, type Argument, type SheetFunction } from './FunctionKit';
 import { isError, NA, toBoolean, VALUE, type CellError } from './Values';
 
 /**
@@ -93,7 +93,7 @@ export const LOGIC_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
   },
 
   NOT(args) {
-    const wrong = checked(args, 1, 1);
+    const wrong = checkedScalars(args, 1, 1);
     if (wrong !== null) {
       return wrong;
     }

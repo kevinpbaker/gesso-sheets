@@ -69,6 +69,16 @@ export const STATS_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
    * which is also Excel.
    */
   MODE(args) {
+    // Text given directly is refused, even text that reads as a number,
+    // and before any error later in the list — the order Excel checks in.
+    for (const arg of args) {
+      if (arg.kind === 'value' && typeof arg.value === 'string') {
+        return VALUE;
+      }
+      if (arg.kind === 'value' && isError(arg.value)) {
+        return arg.value;
+      }
+    }
     const wrong = checked(args, 1, Number.POSITIVE_INFINITY);
     if (wrong !== null) {
       return wrong;
@@ -269,8 +279,10 @@ function nth(args: Parameters<SheetFunction>[0], fromTheSmall: boolean) {
   if (isError(k)) {
     return k;
   }
+  // Out of range is `#NUM!`, as Excel has it: `k` is a number of the
+  // right kind, and there is no kth value to give.
   if (k < 1 || k > sorted.length) {
-    return NA;
+    return NUM;
   }
   return fromTheSmall ? sorted[k - 1] : sorted[sorted.length - k];
 }

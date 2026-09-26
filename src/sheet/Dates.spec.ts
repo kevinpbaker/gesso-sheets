@@ -39,8 +39,14 @@ describe('the serial a date has', () => {
    * The one day this application refuses to invent. Excel's 60 is
    * 1900-02-29; here it reads back as the 28th, the same as 59.
    */
-  it('declines to invent the day that never happened', () => {
-    expect(dateOfSerial(60)).toEqual({ year: 1900, month: 2, day: 28 });
+  /** Excel's calendar, phantom day and all, since a workbook from Excel counts in it; see `Dates.ts`. */
+  it('keeps the day that never happened, where Excel keeps it', () => {
+    expect(dateOfSerial(60)).toEqual({ year: 1900, month: 2, day: 29 });
+    expect(dateOfSerial(0)).toEqual({ year: 1900, month: 1, day: 0 });
+    expect(dateOfSerial(61)).toEqual({ year: 1900, month: 3, day: 1 });
+    expect(serialOfDate(1900, 2, 29)).toBe(60);
+    expect(serialOfDate(1900, 1, 22222)).toBe(22222);
+    expect(serialOfDate(1900, 3, 1)).toBe(61);
   });
 
   /** What makes `=B2-B1` a number of days. */

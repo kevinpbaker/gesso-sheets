@@ -816,7 +816,7 @@ export class Workbook {
     }
     const context = this.contextOn(sheetOf(key), key);
     if (!this.dynamic.has(key)) {
-      cell.value = evaluate(cell.formula, context);
+      cell.value = resultOf(evaluate(cell.formula, context));
       return;
     }
 
@@ -830,7 +830,7 @@ export class Workbook {
     const reads = new Set<number>();
     this.recording = reads;
     try {
-      cell.value = evaluate(cell.formula, context);
+      cell.value = resultOf(evaluate(cell.formula, context));
     } finally {
       this.recording = null;
     }
@@ -1009,6 +1009,20 @@ function renameInFormula(input: string, from: string, to: string): string {
  */
 export function literalOf(input: string): CellValue {
   return literalValue(input);
+}
+
+/**
+ * What a formula's cell holds once it is worked out: its answer, except
+ * that an empty answer is zero.
+ *
+ * `=D7` with D7 empty shows 0 in Excel, and it matters beyond the
+ * display — `COUNT` counts it, `AVERAGE` divides by it, `LEN` of it is
+ * one. Inside a formula a blank stays a blank, so `ISBLANK(D7)` is still
+ * true; it is only a *cell's* value that cannot be nothing once a
+ * formula has put something there.
+ */
+function resultOf(value: CellValue): CellValue {
+  return value === null ? 0 : value;
 }
 
 function literalValue(input: string): CellValue {

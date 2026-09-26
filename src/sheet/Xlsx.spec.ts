@@ -163,10 +163,12 @@ describe('the shapes Excel writes', () => {
       <c r="A1" t="inlineStr"><is><t>typed here</t></is></c>
       <c r="B1" t="b"><v>0</v></c>
       <c r="C1" t="e"><v>#N/A</v></c></row></sheetData>`);
+    // The error is the error, written as the formula that gives it,
+    // so ISNA can see it; see `literal`.
     expect(inputs(read)).toEqual([
       [0, 0, 'typed here'],
       [0, 1, 'FALSE'],
-      [0, 2, '#N/A']
+      [0, 2, '=#N/A']
     ]);
   });
 
@@ -231,6 +233,35 @@ describe('the shapes Excel writes', () => {
   it('refuses a file that is not a workbook, with a sentence', async () => {
     await expect(openXlsx(new TextEncoder().encode('Region,Units\n'), inflate, LIMITS)).rejects.toThrow(XlsxError);
     expect(() => readXlsx(() => null, LIMITS)).toThrow('there is no xl/workbook.xml in it');
+  });
+
+  it('says a password-protected file is one, rather than not a workbook', async () => {
+    const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');
+  });
+
+  it('moves a Mac workbook’s dates onto this sheet’s calendar', () => {
+    const styles = `<styleSheet><numFmts count="1"><numFmt numFmtId="164" formatCode="yyyy-mm-dd"/></numFmts>
+      <cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="164" applyNumberFormat="1"/></cellXfs></styleSheet>`;
+    const read = book(
+      `<sheetData><row r="1">
+        <c r="A1" s="1"><v>44827</v></c>
+        <c r="B1"><v>44827</v></c>
+        <c r="C1" s="1"><f>A1+1</f><v>44828</v></c>
+      </row></sheetData>`,
+      {
+        'xl/workbook.xml': '<workbook><workbookPr date1904="1"/><sheets><sheet name="One" r:id="rId1"/></sheets></workbook>',
+        'xl/styles.xml': styles
+      }
+    );
+    // 44827 days from 1904 is 24 September 2026; a number that is not
+    // a date is left as it was.
+    expect(inputs(read)).toEqual([
+      [0, 0, '46289'],
+      [0, 1, '44827'],
+      [0, 2, '=A1+1']
+    ]);
+    expect(read.sheets[0].cells[2].cached).toBe('46290');
   });
 });
 

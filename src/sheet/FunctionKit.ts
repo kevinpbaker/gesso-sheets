@@ -30,6 +30,13 @@ export type Argument =
       readonly values: readonly CellValue[];
       readonly rows: number;
       readonly columns: number;
+      /**
+       * The one value this range gives where one value is wanted, by
+       * implicit intersection — see `Evaluator.readRange`. Absent, the
+       * first value stands in, which is what a range built by hand in a
+       * spec means.
+       */
+      readonly single?: CellValue;
     };
 
 /**
@@ -138,7 +145,7 @@ export function scalar(args: readonly Argument[], index: number): CellValue {
   if (arg === undefined) {
     return null;
   }
-  return arg.kind === 'value' ? arg.value : (arg.values[0] ?? null);
+  return arg.kind === 'value' ? arg.value : arg.single !== undefined ? arg.single : (arg.values[0] ?? null);
 }
 
 /** One argument as a number, or the error that stopped it. */
@@ -181,4 +188,27 @@ export function rangeAt(args: readonly Argument[], index: number): Extract<Argum
  */
 export function checked(args: readonly Argument[], min: number, max: number): CellError | null {
   return arity(args, min, max) ?? firstError(args);
+}
+
+/**
+ * `checked`, for a function that takes one value per argument.
+ *
+ * The difference is which errors count. `SUM(A1:A9)` is an error if any
+ * of the nine is — that is `checked`. `ABS(A1:A9)` is one value, the one
+ * implicit intersection picks, and an error elsewhere in the column is
+ * not its business: `ABS(N88:N96)` in row 96 is `ABS(N96)` in Excel,
+ * whatever N88 holds.
+ */
+export function checkedScalars(args: readonly Argument[], min: number, max: number): CellError | null {
+  const wrong = arity(args, min, max);
+  if (wrong !== null) {
+    return wrong;
+  }
+  for (let at = 0; at < args.length; at++) {
+    const value = scalar(args, at);
+    if (isError(value)) {
+      return value;
+    }
+  }
+  return null;
 }

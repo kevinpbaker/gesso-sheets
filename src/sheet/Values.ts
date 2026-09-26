@@ -92,12 +92,41 @@ export function toNumber(value: CellValue): number | CellError {
   if (typeof value === 'boolean') {
     return value ? 1 : 0;
   }
-  const trimmed = value.trim();
-  if (trimmed === '') {
-    return 0;
+  return numberOfText(value);
+}
+
+/**
+ * Text as a number, the way arithmetic reads it: `"42"`, `" 1.5 "`,
+ * `"1,000"`, `"$1,000.50"`, `"50%"`, `"(20)"` for minus twenty.
+ *
+ * Empty text is **not** zero. A blank cell is — it is `null`, handled
+ * above — but `""` is text with nothing in it, and `""*"1"` is
+ * `#VALUE!` in Excel; this used to give zero, which made a cell holding
+ * an empty string silently count as a number.
+ */
+export function numberOfText(text: string): number | CellError {
+  let body = text.trim();
+  if (body === '') {
+    return VALUE;
   }
-  const parsed = Number(trimmed);
-  return Number.isNaN(parsed) ? VALUE : parsed;
+  let sign = 1;
+  if (body.startsWith('(') && body.endsWith(')')) {
+    sign = -1;
+    body = body.slice(1, -1).trim();
+  }
+  let scale = 1;
+  if (body.endsWith('%')) {
+    scale = 0.01;
+    body = body.slice(0, -1).trim();
+  }
+  body = body.replace(/^([-+]?)\s*[$€£¥]\s*/, '$1');
+  if (/^[-+]?\d{1,3}(,\d{3})+(\.\d*)?$/.test(body)) {
+    body = body.replace(/,/g, '');
+  }
+  if (!/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(body)) {
+    return VALUE;
+  }
+  return sign * Number(body) * scale;
 }
 
 export function toText(value: CellValue): string | CellError {
@@ -187,6 +216,13 @@ export function compareValues(left: CellValue, right: CellValue): number | CellE
   }
   // Numbers sort before text and text before booleans, which is the
   // order spreadsheets use when the two sides are not the same kind.
+  // A blank is the other side's nothing: equal to "", to 0 and to
+  // FALSE, as Excel has it — `=""=A1` is TRUE for an empty A1.
+  if (left === null || right === null) {
+    const other = left === null ? right : left;
+    const nothing = typeof other === 'string' ? '' : typeof other === 'boolean' ? false : 0;
+    return compareValues(left === null ? nothing : left, right === null ? nothing : right);
+  }
   const leftRank = rank(left);
   const rightRank = rank(right);
   if (leftRank !== rightRank) {

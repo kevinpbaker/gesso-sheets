@@ -206,7 +206,7 @@ table('statistics', [
   ['LARGE(A1:A5, 1)', '40'],
   ['LARGE(A1:A5, 2)', '30'],
   ['SMALL(A1:A5, 1)', '5'],
-  ['LARGE(A1:A5, 9)', '#N/A'],
+  ['LARGE(A1:A5, 9)', '#NUM!'],
   // Rank one is the largest, which is the spreadsheet convention.
   ['RANK(30, A1:A5)', '2'],
   ['RANK(30, A1:A5, 1)', '4'],
@@ -263,7 +263,12 @@ table('text', [
   ['TEXT(1234.5, "#,##0.00")', '1,234.50'],
   ['TEXT(0.25, "0%")', '25%'],
   ['TEXT(D1, "YYYY-MM-DD")', '2026-09-24'],
-  ['TEXT(1, "nonsense")', '#VALUE!'],
+  ['TEXT(D1, "dddd d mmmm")', 'Thursday 24 September'],
+  ['TEXT(-1234.5, "$#,##0.00;($#,##0.00)")', '($1,234.50)'],
+  ['TEXT(0.75, "# ?/?")', '3/4'],
+  ['TEXT(2.5, "# ?/?")', '2 1/2'],
+  ['TEXT(1.5, "[h]:mm")', '36:00'],
+  ['TEXT(-1, "yyyy")', '#VALUE!'],
   ['CHAR(65)', 'A'],
   ['CODE("A")', '65'],
   ['EXACT("a", "a")', 'TRUE'],
@@ -287,6 +292,24 @@ table('lookup', [
   ['XLOOKUP(30, A1:A5, B1:B5)', 'East'],
   ['XLOOKUP(99, A1:A5, B1:B5, "none")', 'none'],
   ['XLOOKUP(99, A1:A5, B1:B5)', '#N/A'],
+  // A result wider than the searched column gives its row's first cell.
+  ['XLOOKUP(30, A1:A5, B1:C5)', 'East'],
+  // Searching from the end finds the last North, not the first.
+  ['XLOOKUP("North", B1:B5, A1:A5, "none", 0, -1)', '40'],
+  ['XLOOKUP("North", B1:B5, A1:A5, "none", 0, 1)', '10'],
+  ['XLOOKUP("North", B1:B5, A1:A5, "none", 0, 3)', '#VALUE!'],
+  // The nearest, over unsorted data: 30 is next above 25, and 20 next
+  // below it, wherever they fall in the column.
+  ['XLOOKUP(25, A1:A5, B1:B5, "none", 1)', 'East'],
+  ['XLOOKUP(25, A1:A5, B1:B5, "none", -1)', 'South'],
+  ['XLOOKUP(6, A1:A5, B1:B5, "none", 1)', 'North'],
+  // A binary search over the sorted A1:A4, and then over A1:A5, whose
+  // 5 at the end is out of order: bisecting never looks there, and
+  // Excel does not find it either.
+  ['XLOOKUP(30, A1:A4, B1:B4, "none", 0, 2)', 'East'],
+  ['XLOOKUP(25, A1:A4, B1:B4, "none", 1, 2)', 'East'],
+  ['XLOOKUP(25, A1:A4, B1:B4, "none", -1, 2)', 'South'],
+  ['XLOOKUP(5, A1:A5, B1:B5, "none", 0, 2)', 'none'],
   ['CHOOSE(2, "a", "b", "c")', 'b'],
   ['CHOOSE(9, "a", "b")', '#VALUE!'],
   ['ROWS(A1:A5)', '5'],
@@ -399,6 +422,14 @@ table('checks and conversions', [
   ['COLUMN(B2:D4)', '2'],
   ['ROW(1)', '#VALUE!']
 ]);
+
+/** POI's shape, from a file Excel calculated: an unsorted header row, and a blank at its end. */
+describe('an approximate lookup over a row that is not sorted', () => {
+  it('stops at an exact match, and steps past the blank', () => {
+    const cells = { F1: 'INTEGRAL', G1: 'STRING', H1: 'AREA', F2: 'a', G2: 'b', H2: 'c', I2: 'd' };
+    expect(answer('HLOOKUP("STRING", F1:I2, 2, TRUE)', cells)).toBe('b');
+  });
+});
 
 /** A total over subtotals counts the data once, which is what SUBTOTAL is for. */
 describe('SUBTOTAL over subtotals', () => {
