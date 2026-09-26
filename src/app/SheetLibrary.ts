@@ -47,6 +47,15 @@ export interface SheetLibrary {
   repository(id: string): SheetRepository;
   /** An id no document has. */
   newId(): string;
+  /**
+   * Holds a document for this tab, or answers null when another tab
+   * already holds it. The function returned lets it go.
+   *
+   * What stops two tabs over one document writing over each other: the
+   * copy each keeps in memory is its own, and whichever saved last
+   * would win, silently, with the other's edits gone.
+   */
+  claim(id: string): Promise<(() => void) | null>;
 }
 
 /**
@@ -83,5 +92,15 @@ export class InMemorySheetLibrary implements SheetLibrary {
 
   newId(): string {
     return `d${this.next++}`;
+  }
+
+  private readonly held = new Set<string>();
+
+  claim(id: string): Promise<(() => void) | null> {
+    if (this.held.has(id)) {
+      return Promise.resolve(null);
+    }
+    this.held.add(id);
+    return Promise.resolve(() => this.held.delete(id));
   }
 }

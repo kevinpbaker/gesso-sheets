@@ -1,4 +1,4 @@
-import { OpfsSheetRepository } from './OpfsSheetRepository';
+import { OpfsSheetRepository, SheetReadError } from './OpfsSheetRepository';
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 
 /**
@@ -39,15 +39,28 @@ export class OpfsSheetLibrary implements SheetLibrary {
 
   constructor(private readonly columnCount: number) {}
 
+  /**
+   * Every document, or a rejection when the index is there and cannot
+   * be read.
+   *
+   * Not an empty list on a failure, which is what it used to answer:
+   * an empty list is "this is the first document ever", and a put
+   * after it writes an index holding one entry, and every other
+   * document in the browser drops out of it. See
+   * `OpfsSheetRepository.load` for the same mistake with a workbook.
+   */
   async entries(): Promise<DocumentEntry[]> {
-    try {
-      const text = await this.readIndex();
-      const parsed: unknown = text === '' ? [] : JSON.parse(text);
-      return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
-    } catch (error) {
-      console.warn('[sheet] could not read the document index; starting a fresh one.', error);
+    const text = await this.readIndex();
+    if (text === '') {
       return [];
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch (error) {
+      throw new SheetReadError('The document index could not be read', { cause: error });
+    }
+    return Array.isArray(parsed) ? parsed.filter(isEntry) : [];
   }
 
   /**
@@ -66,10 +79,13 @@ export class OpfsSheetLibrary implements SheetLibrary {
     this.writing = this.writing.then(() =>
       exclusively(async () => {
         try {
+          // Read first, and not written at all if the read fails: an
+          // index written from a list that could not be read is an
+          // index with every other document missing from it.
           const others = (await this.entries()).filter(each => each.id !== entry.id);
           await this.writeIndex(JSON.stringify([...others, entry]));
         } catch (error) {
-          console.warn('[sheet] could not write the document index.', error);
+          console.warn('[sheet] could not update the document index; it was left as it was.', error);
         }
       })
     );
@@ -92,8 +108,43 @@ export class OpfsSheetLibrary implements SheetLibrary {
     return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   }
 
+  /**
+   * A Web Lock named for the document, held until it is let go —
+   * across every tab of the origin, which is the point.
+   *
+   * Waited for, briefly, rather than asked for only if free. A reload
+   * starts the new application worker while the old one is still being
+   * torn down, and the old one holds the lock until it is gone; asking
+   * with `ifAvailable` made a tab that was reloaded see its own
+   * document as open somewhere else. A second and a half is longer
+   * than a teardown and shorter than anybody waits for a tab.
+   */
+  claim(id: string): Promise<(() => void) | null> {
+    const locks = (
+      navigator as unknown as {
+        locks?: {
+          request(name: string, options: { signal: AbortSignal }, run: () => Promise<void>): Promise<void>;
+        };
+      }
+    ).locks;
+    if (locks === undefined) {
+      return Promise.resolve(() => {});
+    }
+    return new Promise(answer => {
+      locks
+        .request(`gessosheet-document-${id}`, { signal: AbortSignal.timeout(1500) }, () => {
+          // The lock lasts as long as this promise does.
+          return new Promise<void>(release => answer(release));
+        })
+        .catch(() => answer(null));
+    });
+  }
+
   private async readIndex(): Promise<string> {
-    const handle = await this.open();
+    if (!hasOpfs()) {
+      return '';
+    }
+    const handle = await this.openWaiting();
     try {
       const size = handle.getSize();
       const buffer = new Uint8Array(size);
@@ -105,7 +156,7 @@ export class OpfsSheetLibrary implements SheetLibrary {
   }
 
   private async writeIndex(text: string): Promise<void> {
-    const handle = await this.open();
+    const handle = await this.openWaiting();
     try {
       const bytes = new TextEncoder().encode(text);
       handle.truncate(0);
@@ -113,6 +164,27 @@ export class OpfsSheetLibrary implements SheetLibrary {
       handle.flush();
     } finally {
       handle.close();
+    }
+  }
+
+  /**
+   * The index's handle, waited for while another tab holds it — which
+   * every tab does for a moment whenever it opens or saves a document.
+   * A browser with no OPFS answers an empty index, having nothing to
+   * lose; one whose file stays held throws.
+   */
+  private async openWaiting(): Promise<SyncAccessHandle> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.open();
+      } catch (error) {
+        const held = typeof error === 'object' && error !== null && 'name' in error && error.name === 'NoModificationAllowedError';
+        if (held && attempt < 9) {
+          await new Promise(resolve => setTimeout(resolve, 40 * (attempt + 1)));
+          continue;
+        }
+        throw new SheetReadError('The document index could not be opened', { cause: error });
+      }
     }
   }
 
@@ -136,6 +208,12 @@ function exclusively(run: () => Promise<void>): Promise<void> {
   const locks = (navigator as unknown as { locks?: { request(name: string, run: () => Promise<void>): Promise<void> } })
     .locks;
   return locks === undefined ? run() : locks.request('gessosheet-document-index', run);
+}
+
+/** Whether this environment has an Origin Private File System at all. */
+function hasOpfs(): boolean {
+  const storage = (navigator as unknown as { storage?: { getDirectory?: unknown } }).storage;
+  return storage?.getDirectory !== undefined;
 }
 
 function isEntry(value: unknown): value is DocumentEntry {

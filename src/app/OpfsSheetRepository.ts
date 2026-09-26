@@ -52,6 +52,28 @@ interface OpfsDirectory {
  */
 const SAVE_DEBOUNCE_MS = 300;
 
+/**
+ * How many times a read waits for a file another tab has open, at 40,
+ * 80, 120… milliseconds: about two seconds in all, which is far longer
+ * than any write holds it and short enough that a genuinely stuck file
+ * is reported rather than waited on for ever.
+ */
+const READ_ATTEMPTS = 9;
+
+class NoOpfs extends Error {}
+
+/** A file that is there and could not be read — which must not be taken as a file that is not. */
+export class SheetReadError extends Error {}
+
+/** The error a sync access handle is refused with while another context holds one. */
+function isHeldElsewhere(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'name' in error && error.name === 'NoModificationAllowedError';
+}
+
+function pause(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export class OpfsSheetRepository implements SheetRepository {
   private readonly encoder = new TextEncoder();
   private readonly decoder = new TextDecoder();
@@ -65,25 +87,57 @@ export class OpfsSheetRepository implements SheetRepository {
     private readonly columnCount = 100
   ) {}
 
+  /**
+   * What is stored: a snapshot, or null when **nothing** is.
+   *
+   * Null means empty and only empty, because the caller takes it as
+   * leave to start fresh — and a fresh workbook is saved, over whatever
+   * was there. This used to answer null for a read that *failed* as
+   * well, and a read fails whenever another tab has the file open for
+   * a moment: a sync access handle is exclusive across the whole
+   * origin. Two tabs opened together could each read nothing, and the
+   * one that owned the document saved an empty sheet over it.
+   *
+   * So a file somebody else is holding is waited for, briefly, and a
+   * file that is there and cannot be read — held too long, or written
+   * by a build this one cannot parse — is an error the caller has to
+   * deal with, rather than an empty document it will save. Only a
+   * browser with no OPFS at all still answers null, since there is
+   * nothing there to lose.
+   */
   async load(): Promise<SheetSnapshot | null> {
-    try {
-      const handle = await this.open();
-      const size = handle.getSize();
-      if (size === 0) {
-        handle.close();
-        return null;
+    for (let attempt = 0; ; attempt++) {
+      let handle: SyncAccessHandle;
+      try {
+        handle = await this.open();
+      } catch (error) {
+        if (error instanceof NoOpfs) {
+          console.warn('[sheet] this browser has no OPFS; this session will not persist.');
+          return null;
+        }
+        if (isHeldElsewhere(error) && attempt < READ_ATTEMPTS) {
+          await pause(40 * (attempt + 1));
+          continue;
+        }
+        throw new SheetReadError(`${this.fileName} could not be read`, { cause: error });
       }
-      const buffer = new Uint8Array(size);
-      handle.read(buffer, { at: 0 });
-      handle.close();
-      return parseSnapshot(this.decoder.decode(buffer), this.columnCount);
-    } catch (error) {
-      // A browser without OPFS, a denied quota, a file this build
-      // cannot read. The sheet still works for this session; only the
-      // persistence is lost, and saying so is better than an empty
-      // grid with no explanation.
-      console.warn('[sheet] could not read from OPFS; starting fresh.', error);
-      return null;
+      let text: string;
+      try {
+        const size = handle.getSize();
+        if (size === 0) {
+          return null;
+        }
+        const buffer = new Uint8Array(size);
+        handle.read(buffer, { at: 0 });
+        text = this.decoder.decode(buffer);
+      } finally {
+        handle.close();
+      }
+      const snapshot = parseSnapshot(text, this.columnCount);
+      if (snapshot === null) {
+        throw new SheetReadError(`${this.fileName} holds a workbook this build cannot read`);
+      }
+      return snapshot;
     }
   }
 
@@ -140,7 +194,7 @@ export class OpfsSheetRepository implements SheetRepository {
   private async open(): Promise<SyncAccessHandle> {
     const storage = (navigator as unknown as { storage?: { getDirectory?: () => Promise<OpfsDirectory> } }).storage;
     if (storage?.getDirectory === undefined) {
-      throw new Error('This environment has no Origin Private File System.');
+      throw new NoOpfs('This environment has no Origin Private File System.');
     }
     const root = await storage.getDirectory();
     const file = await root.getFileHandle(this.fileName, { create: true });

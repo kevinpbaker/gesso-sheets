@@ -54,7 +54,7 @@ describe('the first document', () => {
     first.service.openDocument('');
     await first.service.settled;
 
-    expect(first.view()).toEqual({ id: FIRST_DOCUMENT, name: 'Untitled', file: null, edited: false });
+    expect(first.view()).toEqual({ id: FIRST_DOCUMENT, name: 'Untitled', file: null, edited: false, elsewhere: false });
     expect(first.cell(0, 0)).toBe('seeded');
     expect(library.repository(FIRST_DOCUMENT).peek()).not.toBeNull();
   });
@@ -145,6 +145,75 @@ describe('opening documents', () => {
     expect(one.view().edited).toBe(false);
     one.service.setCell(0, 0, 'x');
     expect(one.view().edited).toBe(true);
+  });
+});
+
+describe('one document in two tabs', () => {
+  /** Two copies kept at once would each write over the other's edits, and the last would win. */
+  it('is kept by the tab that opened it first, and only shown by the second', async () => {
+    const library = new InMemorySheetLibrary();
+    const first = tab(library);
+    first.service.openDocument('');
+    await first.service.settled;
+    first.service.setCell(0, 0, 'first tab');
+    await first.service.flush();
+
+    const second = tab(library);
+    second.service.openDocument(FIRST_DOCUMENT);
+    await second.service.settled;
+    expect(second.view().elsewhere).toBe(true);
+    expect(second.cell(0, 0)).toBe('first tab');
+    expect(second.transfer().report).toBe('Close the other tab and reload this one to edit here.');
+
+    second.service.setCell(0, 0, 'second tab');
+    await second.service.flush();
+    expect(library.repository(FIRST_DOCUMENT).peek()!.sheets[0].cells).toContainEqual({ row: 0, column: 0, input: 'first tab' });
+  });
+
+  it('is free again once the first tab moves to another document', async () => {
+    const library = new InMemorySheetLibrary();
+    const first = tab(library);
+    first.service.openDocument('');
+    await first.service.settled;
+    first.service.openDocument('new');
+    await first.service.settled;
+
+    const second = tab(library);
+    second.service.openDocument(FIRST_DOCUMENT);
+    await second.service.settled;
+    expect(second.view().elsewhere).toBe(false);
+  });
+});
+
+describe('a document that cannot be read', () => {
+  /**
+   * The data-loss path, closed: a read that fails is not an empty
+   * document, and an empty one must never be saved over it. It failed
+   * in a browser whenever two tabs touched the file at once.
+   */
+  it('is left as it was, with nothing saved over it', async () => {
+    const library = new InMemorySheetLibrary();
+    const keeper = tab(library);
+    keeper.service.openDocument('');
+    await keeper.service.settled;
+    keeper.service.setCell(0, 0, 'precious');
+    keeper.service.openDocument('new');
+    await keeper.service.settled;
+    await keeper.service.flush();
+    const repository = library.repository(FIRST_DOCUMENT);
+    const before = repository.peek();
+    repository.load = () => Promise.reject(new Error('held by another tab'));
+    const saves = repository.saves;
+
+    const reader = tab(library);
+    reader.service.openDocument(FIRST_DOCUMENT);
+    await reader.service.settled;
+    expect(reader.transfer().report).toBe('Untitled could not be read, so it was left as it was. Reload to try again.');
+    reader.service.setCell(5, 5, 'typed into the blank');
+    await reader.service.flush();
+
+    expect(repository.saves).toBe(saves);
+    expect(repository.peek()).toBe(before);
   });
 });
 

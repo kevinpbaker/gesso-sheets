@@ -229,6 +229,12 @@ export interface SheetDocumentView {
   readonly file: { readonly handle: number | null; readonly name: string } | null;
   /** Changed since it was opened or last saved to its file. */
   readonly edited: boolean;
+  /**
+   * Open in another tab, which holds it: this tab shows it and does not
+   * keep it, because two copies kept at once would each write over the
+   * other's edits.
+   */
+  readonly elsewhere: boolean;
 }
 
 export interface SheetTransfer {
@@ -940,7 +946,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
   transfer: { download: null, report: '' },
-  document: { id: '', name: '', file: null, edited: false },
+  document: { id: '', name: '', file: null, edited: false, elsewhere: false },
   stats: NO_STATS,
   find: NO_FIND,
   formats: EMPTY_FORMATS,

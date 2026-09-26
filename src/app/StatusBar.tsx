@@ -63,6 +63,9 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
         return '';
       }
       const name = current.file?.name ?? current.name;
+      if (current.elsewhere) {
+        return `${name} · open in another tab, not saved here`;
+      }
       return current.edited && current.file !== null ? `${name} · edited` : name;
     })
   );

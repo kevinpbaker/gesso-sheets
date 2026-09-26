@@ -9,7 +9,14 @@ import type { SheetSnapshot } from './SheetFile';
  * that needs a browser is the only thing that needs one.
  */
 export interface SheetRepository {
-  /** What was stored, or null when nothing has been written yet. */
+  /**
+   * What was stored, or null when nothing has been written yet.
+   *
+   * Rejects when something is there and cannot be read. Null is taken
+   * as leave to start a fresh workbook and save it, so an answer of
+   * null for a read that failed would save an empty sheet over the
+   * real one; see `OpfsSheetRepository.load`.
+   */
   load(): Promise<SheetSnapshot | null>;
   /**
    * Persists a snapshot shortly after being asked.

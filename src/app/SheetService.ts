@@ -116,7 +116,7 @@ export interface SheetServiceOptions {
 }
 
 /** The view of a document before one has been opened. */
-const NO_DOCUMENT: SheetDocumentView = { id: '', name: '', file: null, edited: false };
+const NO_DOCUMENT: SheetDocumentView = { id: '', name: '', file: null, edited: false, elsewhere: false };
 
 /** `Q3 sales.gsheet` is called `Q3 sales`. */
 function baseName(fileName: string): string {
@@ -207,6 +207,10 @@ export class SheetService {
   private entry: DocumentEntry | null = null;
   /** Whether anything has changed since the document was opened or saved to its file. */
   private edited = false;
+  /** Lets go of the open document's claim; see `SheetLibrary.claim`. */
+  private release: (() => void) | null = null;
+  /** Whether another tab holds the open document, so this one must not keep it. */
+  private elsewhere = false;
   /**
    * Opens, one after another. A document is loaded asynchronously, and
    * two opens that overlapped would each swap a document in under the
@@ -1496,7 +1500,16 @@ export class SheetService {
    * from the second run onwards is a file this build wrote.
    */
   async restore(seed?: (document: SheetDocument) => void): Promise<void> {
-    const stored = (await this.repository?.load()) ?? null;
+    let stored: SheetSnapshot | null;
+    try {
+      stored = (await this.repository?.load()) ?? null;
+    } catch (error) {
+      // Not restored, so nothing is persisted over what could not be
+      // read; see `SheetRepository.load`.
+      console.warn('[sheet] could not read the workbook; it was left as it was.', error);
+      this.publishSheet();
+      return;
+    }
     if (stored === null) {
       seed?.(this.document);
       this.document.sheet.recalculate();
@@ -1680,6 +1693,7 @@ export class SheetService {
   private enqueue(run: () => Promise<void>): void {
     this.opening = this.opening.then(run).catch(error => {
       console.warn('[sheet] could not open the document.', error);
+      this.report('That could not be opened, and nothing was changed. Reload to try again.');
     });
   }
 
@@ -1688,7 +1702,16 @@ export class SheetService {
     if (library === undefined || (id !== 'new' && id !== '' && id === this.entry?.id)) {
       return;
     }
-    const entries = await library.entries();
+    let entries: DocumentEntry[];
+    try {
+      entries = await library.entries();
+    } catch (error) {
+      // Without the list there is no telling which documents exist,
+      // and guessing "none" would seed a first one and index it alone.
+      console.warn('[sheet] could not read the document index.', error);
+      this.report('The list of workbooks could not be read. Reload to try again.');
+      return;
+    }
     const latest = [...entries].sort((a, b) => b.used - a.used)[0];
     const found = id === 'new' ? undefined : id === '' ? latest : (entries.find(each => each.id === id) ?? latest);
     if (found !== undefined && found.id === this.entry?.id) {
@@ -1701,10 +1724,29 @@ export class SheetService {
       used: this.now(),
       file: null
     };
-    const stored = await library.repository(entry.id).load();
+    let stored: SheetSnapshot | null;
+    try {
+      stored = await library.repository(entry.id).load();
+    } catch (error) {
+      // There is a workbook there and it could not be read. Opening an
+      // empty one in its place would save that empty one over it, so
+      // nothing is opened and nothing is saved; the tab stays on what
+      // it had, which on a first open is a blank that is kept nowhere.
+      console.warn('[sheet] could not read the document; it was left as it was.', error);
+      this.report(`${entry.name} could not be read, so it was left as it was. Reload to try again.`);
+      return;
+    }
     await this.swapTo({ ...entry, used: this.now() }, stored, first ? this.seed : undefined);
     this.edited = false;
     this.publishDocument();
+    if (this.elsewhere) {
+      // Not taken over when the other tab closes, and on purpose: this
+      // copy may be older than what that tab last saved, and keeping it
+      // then would write over those edits — the loss the claim is for.
+      // The status line already says it is open elsewhere; this says
+      // what to do about it, and short enough to stay on one line.
+      this.report('Close the other tab and reload this one to edit here.');
+    }
   }
 
   /**
@@ -1723,6 +1765,13 @@ export class SheetService {
     seed?: (document: SheetDocument) => void
   ): Promise<void> {
     await this.repository?.flush();
+    this.release?.();
+    this.release = null;
+    this.elsewhere = false;
+    if (this.library !== undefined) {
+      this.release = await this.library.claim(entry.id);
+      this.elsewhere = this.release === null;
+    }
     this.restored = false;
     const document = new SheetDocument();
     document.columnWidths = this.defaultWidths();
@@ -1759,7 +1808,8 @@ export class SheetService {
       id: this.entry?.id ?? '',
       name: this.entry?.name ?? '',
       file: this.entry?.file ?? null,
-      edited: this.edited
+      edited: this.edited,
+      elsewhere: this.elsewhere
     });
   }
 
@@ -2006,7 +2056,7 @@ export class SheetService {
   }
 
   private persist(): void {
-    if (!this.restored) {
+    if (!this.restored || this.elsewhere) {
       return;
     }
     this.repository?.save(this.snapshot());
