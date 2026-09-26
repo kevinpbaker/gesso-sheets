@@ -7,7 +7,9 @@ import { parseFormula } from './Parser';
 import { rewriteFormula } from './Rewrite';
 import { withIntersections } from './Legacy';
 import { literalOf } from './Workbook';
+import type { Validation } from './Validation';
 import { child, children, parseXml, type XmlElement } from './Xml';
+import { readValidations, type PendingList } from './XlsxRules';
 import { zipEntries, zipRead, type Inflate } from './Zip';
 
 /**
@@ -90,6 +92,8 @@ export interface XlsxSheet {
    * joined into it by Excel already.
    */
   readonly notes: readonly { readonly row: number; readonly column: number; readonly text: string }[];
+  /** What the sheet's cells may hold; see `XlsxRules.readValidations`. */
+  readonly validations: readonly Validation[];
 }
 
 export interface XlsxName {
@@ -113,6 +117,12 @@ export interface XlsxBook {
   readonly namesSkipped: number;
   /** Excel's iterative calculation, when the workbook turns it on; see `Workbook.iteration`. */
   readonly iteration: { readonly count: number; readonly delta: number } | null;
+  /**
+   * Rules the file has that this sheet cannot keep, by what they are:
+   * `validations`, and in later phases the rest. For the import's
+   * sentence, which says how many were left out rather than nothing.
+   */
+  readonly leftOut: Readonly<Record<string, number>>;
 }
 
 export class XlsxError extends Error {}
@@ -204,6 +214,8 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const cut = { rows: 0, columns: 0 };
   let valuesKept = 0;
   const sheets: XlsxSheet[] = [];
+  const lists: { sheet: number; pending: readonly PendingList[] }[] = [];
+  let validationsLeftOut = 0;
   for (const entry of children(child(workbook, 'sheets'), 'sheet')) {
     const target = targets.get(entry.attributes.id ?? '');
     const text = target === undefined ? null : read(target);
@@ -218,7 +230,44 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     const notes = comments(commentsAt === null ? null : read(commentsAt)).filter(
       note => note.row < limits.rows && note.column < limits.columns
     );
+    lists.push({ sheet: sheets.length, pending: sheet.pendingLists });
+    validationsLeftOut += sheet.validationsSkipped;
     sheets.push({ ...sheet.sheet, notes });
+  }
+  // A list whose values are a range of cells, filled from those cells
+  // now every sheet is read — a list on one sheet usually names a
+  // column on another. Its values are the cells as they are now: the
+  // rule keeps the list and not the reference, so a value added to the
+  // range later is not in it. What is in the cells is what was typed,
+  // for a literal, or the file's own answer, for a formula.
+  for (const { sheet: at, pending } of lists) {
+    const sheet = sheets[at];
+    const validations = [...sheet.validations];
+    const dropped = new Set<number>();
+    for (const pendingList of pending) {
+      // A defined name is its range, read off the workbook's names.
+      const defined =
+        pendingList.name === undefined ? null : names.find(each => each.name.toUpperCase() === pendingList.name?.toUpperCase());
+      const list = defined == null ? pendingList : { ...pendingList, ...defined };
+      const from = list.sheet === null ? sheet : sheets.find(each => each.name.toUpperCase() === list.sheet?.toUpperCase());
+      const values: string[] = [];
+      for (const cell of from?.cells ?? []) {
+        if (cell.row >= list.firstRow && cell.row <= list.lastRow && cell.column >= list.firstColumn && cell.column <= list.lastColumn) {
+          const shown = cell.input.startsWith('=') ? (cell.cached ?? '') : cell.input;
+          if (shown !== '' && !values.includes(shown)) {
+            values.push(shown);
+          }
+        }
+      }
+      const held = validations[list.at];
+      if (values.length === 0 || held === undefined) {
+        dropped.add(list.at);
+        continue;
+      }
+      validations[list.at] = { ...held, rule: { kind: 'list', values } };
+    }
+    validationsLeftOut += dropped.size;
+    sheets[at] = { ...sheet, validations: validations.filter((_, index) => !dropped.has(index)) };
   }
   if (sheets.length === 0) {
     throw new XlsxError('It has no worksheets this can read.');
@@ -230,7 +279,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const iteration = iterate
     ? { count: Number.isInteger(count) && count > 0 ? count : 100, delta: delta > 0 ? delta : 0.001 }
     : null;
-  return { sheets, names, valuesKept, cut, namesSkipped, iteration };
+  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut } };
 }
 
 // ---------------------------------------------------------------------------
@@ -715,6 +764,8 @@ function dateOrder(code: string): DatePattern {
 
 interface ReadSheet {
   readonly sheet: XlsxSheet;
+  readonly pendingLists: readonly PendingList[];
+  readonly validationsSkipped: number;
   readonly valuesKept: number;
   readonly cutRows: number;
   readonly cutColumns: number;
@@ -891,9 +942,25 @@ function worksheet(
     frozenColumns = Math.min(Math.max(0, Math.round(Number(pane.attributes.xSplit ?? 0))), limits.columns);
   }
 
+  const validated = readValidations(root, date1904);
   return {
     // The notes are in a part of their own, read beside this one.
-    sheet: { name, cells, styled, formats, columnWidths, hiddenRows, rowHeights, merges, frozenRows, frozenColumns, notes: [] },
+    sheet: {
+      name,
+      cells,
+      styled,
+      formats,
+      columnWidths,
+      hiddenRows,
+      rowHeights,
+      merges,
+      frozenRows,
+      frozenColumns,
+      notes: [],
+      validations: validated.validations
+    },
+    pendingLists: validated.pending,
+    validationsSkipped: validated.skipped,
     valuesKept,
     cutRows,
     cutColumns

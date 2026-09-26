@@ -90,7 +90,7 @@ function storedSheet(sheet: XlsxSheet, columnCount: number): StoredSheet {
     regions: { sheet: 0, rows: [], columns: [] },
     merges: sheet.merges,
     conditional: [],
-    validations: [],
+    validations: [...sheet.validations],
     charts: [],
     notes: sheet.notes,
     frozenRows: sheet.frozenRows,
@@ -124,6 +124,11 @@ export function reportOfXlsx(fileName: string, book: XlsxBook): string {
       lost.push(`${book.cut.columns.toLocaleString('en-US')} ${book.cut.columns === 1 ? 'column' : 'columns'}`);
     }
     parts.push(`${lost.join(' and ')} past the sheet's edge left out`);
+  }
+  for (const [what, count] of Object.entries(book.leftOut)) {
+    if (count > 0) {
+      parts.push(`${count} ${count === 1 ? what.replace(/s$/, '') : what} this sheet cannot keep left out`);
+    }
   }
   return `${parts.join('; ')}.`;
 }

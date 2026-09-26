@@ -108,7 +108,8 @@ describe('a workbook written as an .xlsx', () => {
   it('says what it cannot carry', () => {
     const document = new SheetDocument();
     seed(document);
-    expect(xlsxOfDocument(document, ROWS).leftOut.sort()).toEqual(['conditional formats', 'validations']);
+    // Validations are written since Phase 23; the seed's all fit.
+    expect(xlsxOfDocument(document, ROWS).leftOut.sort()).toEqual(['conditional formats']);
   });
 
   it('writes an array that spills over the cells it fills, and back', async () => {
@@ -208,5 +209,60 @@ describe('notes in an exported workbook', () => {
     // The sheet with no notes has none of it.
     expect(parts.some(part => part.name === 'xl/comments2.xml')).toBe(false);
     expect(named('xl/worksheets/sheet2.xml')).not.toContain('legacyDrawing');
+  });
+});
+
+/**
+ * Validations out and back — Phase 23.
+ *
+ * Every rule kind this sheet has, through the writer and the reader;
+ * the one kind of rule Excel cannot say, left out and said; and a list
+ * that names a range of cells rather than listing them, read from a
+ * file the way Excel writes one.
+ */
+describe('validations in an exported workbook', () => {
+  function ruled(): SheetDocument {
+    const document = new SheetDocument();
+    const at = (row: number, column: number, lastRow = row) => ({
+      start: { row, column, rowAbsolute: false, columnAbsolute: false },
+      end: { row: lastRow, column, rowAbsolute: false, columnAbsolute: false }
+    });
+    document.addValidation({ range: at(1, 0, 20), rule: { kind: 'list', values: ['North', 'South', 'Say "hi"'] }, strict: true, message: 'Pick a region' });
+    document.addValidation({ range: at(1, 1, 20), rule: { kind: 'number', min: 0, max: 100, integer: true }, strict: true });
+    document.addValidation({ range: at(1, 2, 20), rule: { kind: 'number', min: 0.5 } });
+    document.addValidation({ range: at(1, 3, 20), rule: { kind: 'text', maxLength: 12 }, strict: true });
+    document.addValidation({ range: at(1, 4, 20), rule: { kind: 'date', from: 46000, to: 46400 }, strict: false });
+    return document;
+  }
+
+  it('come back as the rules they were', async () => {
+    const back = await roundTrip(ruled());
+    expect(back.validations.map(validation => ({ rule: validation.rule, strict: validation.strict === true, message: validation.message }))).toEqual([
+      { rule: { kind: 'list', values: ['North', 'South', 'Say "hi"'] }, strict: true, message: 'Pick a region' },
+      { rule: { kind: 'number', min: 0, max: 100, integer: true }, strict: true, message: undefined },
+      { rule: { kind: 'number', min: 0.5 }, strict: false, message: undefined },
+      { rule: { kind: 'text', maxLength: 12 }, strict: true, message: undefined },
+      { rule: { kind: 'date', from: 46000, to: 46400 }, strict: false, message: undefined }
+    ]);
+    expect(back.validationAt(5, 1)?.rule.kind).toBe('number');
+    expect(back.validationAt(21, 1)).toBeNull();
+  });
+
+  it('go on refusing what they refused', async () => {
+    const back = await roundTrip(ruled());
+    expect(back.setCell(3, 1, '101')).not.toBeNull();
+    expect(back.setCell(3, 1, '42')).toBeNull();
+    expect(back.setCell(3, 0, 'West')).not.toBeNull();
+  });
+
+  it('leave out a list Excel cannot hold, and say so', () => {
+    const document = new SheetDocument();
+    document.addValidation({
+      range: { start: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false }, end: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false } },
+      rule: { kind: 'list', values: ['Smith, J', 'Jones, K'] }
+    });
+    const out = xlsxOfDocument(document, ROWS);
+    expect(out.leftOut).toEqual(['some validations']);
+    expect(xlsxParts(out.book).find(part => part.name === 'xl/worksheets/sheet1.xml')!.text).not.toContain('dataValidation');
   });
 });

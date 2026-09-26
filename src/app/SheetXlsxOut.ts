@@ -1,4 +1,5 @@
 import { DEFAULT_FORMAT, keyOf, type CellFormat } from '../sheet/Format';
+import { writeValidations } from '../sheet/XlsxRules';
 import type { XlsxOut, XlsxOutCell, XlsxOutName, XlsxOutRow, XlsxOutSheet } from '../sheet/XlsxWrite';
 import type { Deflate } from '../sheet/Zip';
 import { ROW_HEIGHT } from './dimensions';
@@ -42,8 +43,11 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
     if (page.conditional.length > 0) {
       leftOut.add('conditional formats');
     }
-    if (page.validations.length > 0) {
-      leftOut.add('validations');
+    // Written since Phase 23; only a rule the format cannot say — a
+    // list longer than Excel allows, or one with a comma in a value —
+    // is left out, and then it is said.
+    if (writeValidations(page.validations).unwritten > 0) {
+      leftOut.add('some validations');
     }
     if (page.charts.length > 0) {
       leftOut.add('charts');
@@ -128,7 +132,8 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
       merges: page.merges.all.filter(rect => rect.lastRow < rowCount),
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
-      notes: page.notes.all().filter(note => note.row < rowCount)
+      notes: page.notes.all().filter(note => note.row < rowCount),
+      validations: [...page.validations]
     });
   }
 

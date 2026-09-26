@@ -1,4 +1,6 @@
 import { columnName, quoteSheetName } from './A1';
+import type { Validation } from './Validation';
+import { writeValidations } from './XlsxRules';
 import type { CellEdge, CellFormat, NumberFormat } from './Format';
 import { withIntersections } from './Legacy';
 import type { MergeRect } from './Merges';
@@ -62,6 +64,8 @@ export interface XlsxOutSheet {
   readonly frozenColumns: number;
   /** The notes on the sheet's cells, written as Excel's comments. */
   readonly notes?: readonly { readonly row: number; readonly column: number; readonly text: string }[];
+  /** What the cells may hold; see `XlsxRules.writeValidations`. */
+  readonly validations?: readonly Validation[];
 }
 
 export interface XlsxOutName {
@@ -408,6 +412,9 @@ function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = f
       (columns === '' ? '' : `<cols>${columns}</cols>`) +
       `<sheetData>${data}</sheetData>` +
       (merges === '' ? '' : `<mergeCells count="${sheet.merges.length}">${merges}</mergeCells>`) +
+      // After the merges and before the drawing, which is the order the
+      // schema has them in and the order Excel refuses a file without.
+      writeValidations(sheet.validations ?? []).xml +
       // The comments' drawing: Excel shows a comment only through the
       // shape this names; see `notesOf`.
       (noted ? `<legacyDrawing r:id="rId2"/>` : '') +
