@@ -2273,15 +2273,38 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
   });
 
-  // Cells that scrolled away, so their bindings go with them.
+  /**
+   * Cells that scrolled away, so their bindings go with them.
+   *
+   * **A frozen cell never scrolls away, and judging one by the
+   * scrolling range says it always has.** `range$` is the range that
+   * moves, and once a pane is frozen it *starts after the bands* —
+   * rows 3 onwards and columns 1 onwards for a corner of three by one
+   * — so every cell in a band fails this test on the first emission
+   * after the freeze. It was then deleted from the cache and released
+   * from both fan-outs while its element stayed mounted and on
+   * screen, bound to a subject nothing would ever push to again: the
+   * band drew at the right place, at the right size, in the right
+   * colours, and empty.
+   *
+   * The application worker has always sent these cells — `rowsInView`
+   * and `columnsInView` add the bands to the window for exactly this
+   * reason — so the data was arriving and being thrown away on
+   * receipt.
+   *
+   * Per axis, because the two are independent: a frozen row scrolled
+   * sideways really does lose its right-hand cells, and a frozen
+   * column scrolled down really does lose its lower ones. What it
+   * cannot lose is the band itself.
+   */
   ctx.effect(sheetWindow.range$, range => {
+    const pane = frozen.value;
     for (const [key, mounted] of cells) {
-      if (
-        mounted.row < range.firstRow ||
-        mounted.row > range.lastRow ||
-        mounted.column < range.firstColumn ||
-        mounted.column > range.lastColumn
-      ) {
+      const rowShows = mounted.row < pane.rows || (mounted.row >= range.firstRow && mounted.row <= range.lastRow);
+      const columnShows =
+        mounted.column < pane.columns ||
+        (mounted.column >= range.firstColumn && mounted.column <= range.lastColumn);
+      if (!rowShows || !columnShows) {
         cells.delete(key);
         values.release(key);
         standings.release(key);

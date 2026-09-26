@@ -1335,23 +1335,25 @@ export class SheetService {
       this.document.sheet.recalculate();
     } else {
       applySnapshot(this.document, stored);
-      this.publishSheet();
     }
     this.restored = true;
-    this.selectionSubject.next(this.document.selection);
-    this.publishWindow();
-    this.publishFormats();
-    // The palette, which nothing else publishes on this path. Without
-    // it a loaded sheet's cells all point at entries the render
-    // worker has never been sent, so every one of them falls back to
-    // plain — the numbers come out formatted, because that happens on
-    // this thread, and not one cell is bold. Which is exactly how it
-    // looked in a browser.
-    this.publishPalette();
-    this.publishEditor();
-    this.publishStatus();
-    this.publishStats();
-    this.publishActiveFormat();
+    /**
+     * The same publish both ways round, which is the whole of the fix
+     * this used to need.
+     *
+     * A loaded file went through `publishSheet` and a seeded one went
+     * through a hand-written list of publishes that looked complete
+     * and was not: it left out the tabs, the geometry and the
+     * painter's rules. A seed of one plain sheet has no tabs worth
+     * drawing, no merges and no rules, so for six phases the gap cost
+     * nothing and stayed invisible — and the first seed that had all
+     * three opened with its banner clipped to one column, its freezes
+     * gone, its conditional formats absent and a tab strip claiming
+     * one sheet over a workbook of three.
+     *
+     * Two paths that have to publish the same thing are one path.
+     */
+    this.publishSheet();
     if (stored === null) {
       this.persist();
     }

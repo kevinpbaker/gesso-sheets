@@ -8,6 +8,7 @@ import { relativeRef } from '../sheet/A1';
 import { SheetDocument } from './SheetDocument';
 import { InMemorySheetRepository } from './SheetRepository';
 import { SheetService, type Schedule } from './SheetService';
+import type { SheetGeometry, SheetTabs } from './SheetContract';
 
 /**
  * Persistence — Phase 6.
@@ -198,6 +199,60 @@ describe('a sheet that is opened again', () => {
 
     expect(document.sheet.input(0, 0)).toBe('from the seed');
     expect(repository.peek()?.sheets[0].cells).toContainEqual({ row: 0, column: 0, input: 'from the seed' });
+  });
+
+  /**
+   * A seed is a document like any other, and has to be published like
+   * one.
+   *
+   * This path used to write a hand-kept list of publishes beside the
+   * one `publishSheet` does, and the list was missing three of them:
+   * the tabs, the geometry — which is where merges and freezes live —
+   * and the rules the conditional painter is given. A seed of one
+   * plain sheet has none of those three, so the gap cost nothing for
+   * six phases and showed up the first time a seed had all of them,
+   * as a banner clipped to one column over a tab strip claiming one
+   * sheet.
+   *
+   * The assertions are the three that were wrong, and each is read
+   * off the view the render worker would actually receive.
+   */
+  it('publishes a seeded workbook the same way it publishes a loaded one', async () => {
+    const { service } = harness();
+
+    await service.restore(document => {
+      document.renameSheet(0, 'First');
+      document.addSheet('Second');
+      document.activate(0);
+      document.setCell(0, 0, '5');
+      document.setCell(1, 0, '9');
+      document.merges.add({ firstRow: 0, lastRow: 0, firstColumn: 0, lastColumn: 2 });
+      document.frozenRows = 1;
+      document.frozenColumns = 1;
+      document.addConditional({
+        range: { start: relativeRef(0, 0), end: relativeRef(1, 0) },
+        scale: { from: '#ffffff', to: '#000000' },
+        test: null
+      });
+    });
+
+    let tabs: SheetTabs | undefined;
+    service.sheets.subscribe(value => (tabs = value)).unsubscribe();
+    expect(tabs?.entries.map(entry => entry.name)).toEqual(['First', 'Second']);
+
+    let geometry: SheetGeometry | undefined;
+    service.geometry.subscribe(value => (geometry = value)).unsubscribe();
+    expect(geometry?.merges).toHaveLength(1);
+    expect(geometry?.frozenRows).toBe(1);
+    expect(geometry?.frozenColumns).toBe(1);
+
+    // A colour scale over cells in the window has to have been asked
+    // for the extent it spreads between, and it is only ever asked if
+    // the painter was given the rules in the first place. The
+    // viewport is set here because nothing else does it in a spec:
+    // the render worker is what normally says what it can see.
+    service.setViewport(0, 0, 4, 0, 4);
+    expect(service.painterStats.scans).toBeGreaterThan(0);
   });
 
   it('does not seed over a sheet that exists', async () => {

@@ -552,6 +552,48 @@ describe('a frozen pane', () => {
     });
   });
 
+  /**
+   * A frozen cell goes on being fed after it is frozen.
+   *
+   * The bindings are dropped when a cell scrolls out of view, and the
+   * range that decides is the one that *scrolls* — which, once a pane
+   * is frozen, starts after the bands. Every cell in a band therefore
+   * read as out of view on the first range change after the freeze,
+   * and was released while it stayed mounted and on screen: correctly
+   * placed, correctly sized, and bound to a subject nothing would
+   * push to again.
+   *
+   * The specs above do not catch it, and it is worth saying why: they
+   * freeze a sheet whose cells are *already* drawn, and a released
+   * cell keeps whatever it was last given. It only shows when
+   * something arrives afterwards — an edit here, and a whole seeded
+   * workbook in a browser, which is where it was found.
+   */
+  it('goes on feeding a frozen cell after the pane is frozen', async () => {
+    await freeze(1, 1);
+    // The freeze is one range change; a scroll is the next, and the
+    // sweep runs on every one of them.
+    await scroll(COLUMN_WIDTH * 6, ROW_HEIGHT * 60);
+
+    h.service.setCell(0, 0, 'still fed');
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.queryByRole('cell', { name: 'still fed' })).not.toBeNull();
+  });
+
+  /** And the other band, which fails for the same reason on its own axis. */
+  it('goes on feeding a frozen row after the pane is frozen', async () => {
+    await freeze(1, 0);
+    await scroll(0, ROW_HEIGHT * 60);
+
+    h.service.setCell(0, 3, 'row still fed');
+    await h.served.settle();
+    await h.ui.settle();
+
+    expect(h.ui.queryByRole('cell', { name: 'row still fed' })).not.toBeNull();
+  });
+
   it('puts the column labels over the columns they label', async () => {
     await freeze(0, 2);
     await scroll(COLUMN_WIDTH * 6, 0);
