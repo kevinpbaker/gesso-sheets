@@ -36,7 +36,7 @@ interface ToolbarItemBase {
    * thing they get for stopping. Absent, the label is used, so a
    * button always has a tooltip and never a silent one.
    */
-  readonly tip?: string;
+  readonly tip?: string | (() => string);
   readonly pressed?: Observable<boolean>;
   readonly enabled?: Observable<boolean>;
   readonly onRun: () => void;

@@ -1390,9 +1390,9 @@ within its step and not to the last digit, and cannot: the answer
 depends on how many times the file was recalculated before it was
 saved, which the file does not say.
 
-Not yet: `A1#` for "the whole spill", a function lifted over an array
-(`ABS(A1:A9)` takes one value, where Excel 365 spills nine), and the
-formula bar showing the spilling formula, greyed, over a spilled cell.
+Not yet: `A1#` for "the whole spill", and a function lifted over an
+array (`ABS(A1:A9)` takes one value, where Excel 365 spills nine). The
+formula bar over a spilled cell came in Phase 21.
 
 ---
 
@@ -1832,7 +1832,7 @@ and the timer that moves them runs only while there is an outline. It
 was checked by specs and not by eye: the browser window was on
 another workspace for this one, and a hidden tab draws no screenshots.
 
-### Phase 21 — Typing less
+### Phase 21 — Typing less — **done**
 
 - **AutoComplete from the column.** Typing the first letters of a
   value that already appears above in the same column offers the rest,
@@ -1851,6 +1851,56 @@ another workspace for this one, and a hidden tab draws no screenshots.
 thousand entries — a keystroke's offer costs what a column of ten
 does — and a spec that the spilled cell's formula bar is the
 formula's, and cannot be edited as if it were its own.
+
+**Met.** `Words.budget.spec.ts` asks the same five prefixes of a column
+of ten and a column of a hundred thousand: 0.37 µs a keystroke against
+0.28, and a row typed at the foot of the long column plus the offer
+after it costs 3 µs. `Keyboard.spec.tsx` types through the grid — the
+first letter offers, more than one word waits, Backspace takes the
+offer and nothing else, a number and a formula get nothing — and has
+five specs on the spilled cell's bar, one of which fails with the bar's
+`readOnly` taken away. Checked in Chrome: C under the regions offers
+Central with *entral* selected, Enter writes it, Edit ▸ Undo then reads
+*Undo typing in A15*, and the cell under `=SEQUENCE(3)` shows the
+formula in the bar, in grey.
+
+**The words are an index, not a walk.** The plan above said
+AutoComplete stops at the first blank row, as Excel's does, and that
+this is what keeps it proportional. It is not: a column of a hundred
+thousand with no gaps is one block, and walking it is a hundred
+thousand reads a keystroke. So the words are the whole column's, kept
+in `src/sheet/Words.ts` sorted and case-folded, with a count per word so
+that clearing one of a thousand Norths keeps North. The workbook builds
+a column's words the first time it is asked, keeps them up to date on
+every write after that, and drops them all when cells move wholesale.
+The answer is a binary search, and "one word, or nothing" is the
+neighbour after it: *Nor* offers nothing beside North and Northwest,
+which is how AutoComplete avoids putting the wrong region on a row.
+The difference from Excel is that a word below a gap is offered too,
+which is what LibreOffice does.
+
+**The question crosses, and a late answer is dropped.** The render
+thread holds a window of the column and the words are in all of it, so
+each letter sends one question and the answer names the cell, the
+prefix and a serial. An answer about text that has since changed is
+thrown away rather than written over what is being typed. The word
+comes back as the column spells it, so *nor* becomes North and Enter
+writes the word that is already there.
+
+**The history did not know.** The plan said it did. A step was a list
+of edits and nothing more. Now `transact` takes a name, and the
+outermost name wins, so a sort that writes a thousand cells is a
+sort. A step nobody named is described from what it holds: one cell's
+text, with the format a typed date brings, is *typing in B4*; a
+structural edit says *insert 2 rows*. The toolbar's tooltip needed an
+engine change to follow the label: `tooltip` now takes a function for
+its text, asked each time it opens.
+
+**The spilled cell's bar is read-only.** It shows the formula the value
+came from, greyed. An edit begun there would start from the formula
+and write it into the spilled cell, which blocks the array. Typing
+over the cell from the sheet still replaces it, as in Excel, and the
+array reports `#SPILL!`.
 
 ### Phase 22 — Knowing where you are
 

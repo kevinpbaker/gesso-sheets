@@ -159,6 +159,13 @@ export interface SheetEditor {
    * and an address, which is all it draws.
    */
   readonly explain: SheetExplain | null;
+  /**
+   * The formula whose array this cell is showing a piece of, when it
+   * is one — with nothing typed in it, and an answer that came from
+   * somewhere. The formula bar shows it greyed, as Excel's does, and
+   * will not be typed into as if it were this cell's.
+   */
+  readonly spilledFrom: { readonly row: number; readonly column: number; readonly input: string } | null;
 }
 
 /**
@@ -392,6 +399,23 @@ export interface SheetPalette {
  * equal, the differ says nothing happened, and the second autofit
  * does nothing.
  */
+/**
+ * What a cell being typed into could be finished as: AutoComplete.
+ *
+ * A question and an answer, like `autofit`, because the render thread
+ * holds a window of the column and the words are in all of it. The
+ * answer names the cell and the prefix it was asked about, so one that
+ * arrives after the typing has moved on is recognised and dropped.
+ * `text` is the whole word, spelled as it was first typed, or empty.
+ */
+export interface SheetCompletion {
+  readonly serial: number;
+  readonly row: number;
+  readonly column: number;
+  readonly prefix: string;
+  readonly text: string;
+}
+
 export interface SheetAutofit {
   readonly serial: number;
   readonly columns: readonly SheetAutofitColumn[];
@@ -446,6 +470,12 @@ export interface SheetStatus {
   readonly evaluated: number;
   readonly canUndo: boolean;
   readonly canRedo: boolean;
+  /**
+   * What Undo and Redo would do, as the menu and the tooltip say it:
+   * `sort`, `typing in B4`. Empty when there is nothing to do.
+   */
+  readonly undoLabel: string;
+  readonly redoLabel: string;
   /** Whether circular formulas are gone round rather than refused. */
   readonly iterating: boolean;
 }
@@ -660,6 +690,11 @@ export interface SheetCommands {
    * One step of undo, and the selection stays where it is.
    */
   writeSelection(input: string): void;
+  /**
+   * Asks what typing `prefix` into a cell would complete to; the answer
+   * comes back on `completion` with the same serial.
+   */
+  complete(row: number, column: number, prefix: string, serial: number): void;
   undo(): void;
   redo(): void;
   /**
@@ -997,6 +1032,8 @@ export interface SheetView {
   /** The rules over the active cell; see `SheetActiveRules`. */
   readonly activeRules: SheetActiveRules;
   readonly autofit: SheetAutofit;
+  /** What the cell being typed into could be finished as; see `SheetCompletion`. */
+  readonly completion: SheetCompletion;
   /** The rows whose height the render worker should work out; see `SheetRowFit`. */
   readonly rowFit: SheetRowFit;
   /** The charts floating over this sheet; see `SheetCharts`. */
@@ -1075,9 +1112,9 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
-  editor: { row: 0, column: 0, input: '', explain: null },
+  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null },
   names: { entries: [], refused: '' },
-  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, iterating: false },
+  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false },
   clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },
   document: { id: '', name: '', file: null, edited: false, elsewhere: false },
@@ -1089,6 +1126,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
   activeRules: { conditional: null, validation: null },
   autofit: { serial: 0, columns: [] },
+  completion: { serial: 0, row: 0, column: 0, prefix: '', text: '' },
   rowFit: { serial: 0, rows: [] },
   charts: { entries: [], selected: 0 },
   series: { charts: {} }

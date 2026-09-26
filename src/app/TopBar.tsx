@@ -1,4 +1,4 @@
-import { BehaviorSubject, combineLatest, map, type Observable } from 'rxjs';
+import { BehaviorSubject, combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs';
 
 import {
   editorFor,
@@ -108,6 +108,26 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   };
 
   /**
+   * Undo and Redo say what they would do — "Undo sort" — because the
+   * history knows and a bare "Undo" makes somebody press it to find
+   * out. Read when a menu opens or a tooltip shows, off the replica,
+   * so it costs a property read and no subscription.
+   */
+  const labelNow = (id: CommandId): string | undefined => {
+    if (id !== 'undo' && id !== 'redo') {
+      return undefined;
+    }
+    const what = id === 'undo' ? status.value.undoLabel : status.value.redoLabel;
+    return what === '' ? undefined : `${COMMANDS[id].label} ${what}`;
+  };
+
+  const tipFor = (id: 'undo' | 'redo'): string => {
+    const accelerator = COMMANDS[id].accelerator;
+    const label = labelNow(id) ?? COMMANDS[id].label;
+    return accelerator === undefined ? label : `${label} (${acceleratorLabel(accelerator)})`;
+  };
+
+  /**
    * The toolbar, as data.
    *
    * A list rather than a row of elements so the toolbar can own its
@@ -116,8 +136,20 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * Three ways to reach a command and one place that performs it.
    */
   const tools: readonly ToolbarItem[] = [
-    { id: 'undo', icon: ICONS.undo, ...runs('undo'), enabled: status.pipe(map(s => s.canUndo)) },
-    { id: 'redo', icon: ICONS.redo, ...runs('redo'), enabled: status.pipe(map(s => s.canRedo)) },
+    {
+      id: 'undo',
+      icon: ICONS.undo,
+      ...runs('undo'),
+      tip: () => tipFor('undo'),
+      enabled: status.pipe(map(s => s.canUndo))
+    },
+    {
+      id: 'redo',
+      icon: ICONS.redo,
+      ...runs('redo'),
+      tip: () => tipFor('redo'),
+      enabled: status.pipe(map(s => s.canRedo))
+    },
     { id: 'bold', icon: ICONS.bold, ...runs('bold'), startsGroup: true, pressed: on(p => p.bold) },
     { id: 'italic', icon: ICONS.italic, ...runs('italic'), pressed: on(p => p.italic) },
     { id: 'underline', icon: ICONS.underline, ...runs('underline'), pressed: on(p => p.underline) },
@@ -861,7 +893,19 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * keystroke to cross between them.
    */
   const formula: Observable<string> = combineLatest([edit.draft, sheet.view.editor]).pipe(
-    map(([draft, current]) => draft ?? current.input)
+    map(([draft, current]) => draft ?? current.spilledFrom?.input ?? current.input)
+  );
+
+  /**
+   * Whether the bar is showing a formula that is not this cell's: the
+   * cursor is on a cell an array spilled into. Greyed, and read-only —
+   * an edit begun in the bar would start from the formula and write it
+   * into the spilled cell, which blocks the array it came from. Typing
+   * over the cell in the grid still replaces it, as in Excel.
+   */
+  const borrowed: Observable<boolean> = combineLatest([edit.draft, sheet.view.editor]).pipe(
+    map(([draft, current]) => draft === null && current.spilledFrom !== null),
+    distinctUntilChanged()
   );
 
   /**
@@ -911,6 +955,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         <MenuBar
           menus={menusFor(proof)}
           enabled={enabled}
+          labelNow={labelNow}
           onChoose={run}
           /**
            * The sheet gets the keyboard back, unless the command that
@@ -955,7 +1000,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           flex={1}
           minWidth={0}
           fontSize={12}
-          color="text"
+          color={borrowed.pipe(map(is => (is ? 'textMuted' : 'text')))}
+          readOnly={borrowed}
           textWrap="none"
           verticalAlign="middle"
           backgroundColor="background"

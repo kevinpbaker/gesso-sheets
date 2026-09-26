@@ -174,6 +174,11 @@ export class Sheet {
     return this.book.edgeFrom(this.index, row, column, rows, columns, extent);
   }
 
+  /** What typing `prefix` into a column would complete to; see `Workbook.completeIn`. */
+  completeIn(column: number, prefix: string): string | null {
+    return this.book.completeIn(this.index, column, prefix);
+  }
+
   /** Cells that hold something on this sheet. */
   get size(): number {
     return this.book.sizeOf(this.index);

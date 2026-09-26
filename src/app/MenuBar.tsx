@@ -28,6 +28,12 @@ export interface MenuBarProps {
   /** Called when the bar is done with the keyboard, so the sheet takes it. */
   readonly onDismiss: () => void;
   readonly menus?: readonly MenuDefinition[];
+  /**
+   * What a command is called at the moment its menu opens, for the
+   * ones whose name follows the sheet — "Undo sort". Absent, and for
+   * every command it returns undefined for, the table's label.
+   */
+  readonly labelNow?: (id: CommandId) => string | undefined;
   /** Receives the bar itself, so F10 can put the keyboard on it. */
   readonly ref?: (node: UiNode | null) => void;
 }
@@ -36,7 +42,7 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, _ctx: ComponentContext) {
   return createComponent(Bar<CommandId>, {
     menus: inputs.menus.value ?? MENUS,
     enabled: (id: CommandId) => inputs.enabled.value(id),
-    labelOf: (id: CommandId) => COMMANDS[id].label,
+    labelOf: (id: CommandId) => inputs.labelNow.value?.(id) ?? COMMANDS[id].label,
     acceleratorOf: (id: CommandId) => {
       const accelerator = COMMANDS[id].accelerator;
       return accelerator === undefined ? undefined : acceleratorLabel(accelerator);

@@ -39,6 +39,7 @@ import {
   type SheetDocumentView,
   type SheetDownload,
   type SheetAutofit,
+  type SheetCompletion,
   type SheetRowFit,
   type SheetRowFitRow,
   type SheetEdge,
@@ -174,6 +175,7 @@ export class SheetService {
   readonly activeFormat: Observable<SheetActiveFormat>;
   readonly activeRules: Observable<SheetActiveRules>;
   readonly autofit: Observable<SheetAutofit>;
+  readonly completion: Observable<SheetCompletion>;
   readonly rowFit: Observable<SheetRowFit>;
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
@@ -246,6 +248,13 @@ export class SheetService {
   });
   private readonly activeRulesSubject = new BehaviorSubject<SheetActiveRules>({ conditional: null, validation: null });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
+  private readonly completionSubject = new BehaviorSubject<SheetCompletion>({
+    serial: 0,
+    row: 0,
+    column: 0,
+    prefix: '',
+    text: ''
+  });
   private autofitSerial = 0;
   private readonly rowFitSubject = new BehaviorSubject<SheetRowFit>({ serial: 0, rows: [] });
   /**
@@ -347,7 +356,8 @@ export class SheetService {
       row: document.selection.row,
       column: document.selection.column,
       input: document.activeInput,
-      explain: null
+      explain: null,
+      spilledFrom: null
     });
     this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
     this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], refused: '' });
@@ -375,6 +385,7 @@ export class SheetService {
     this.activeFormat = this.activeFormatSubject;
     this.activeRules = this.activeRulesSubject;
     this.autofit = this.autofitSubject;
+    this.completion = this.completionSubject;
     this.rowFit = this.rowFitSubject;
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
@@ -749,9 +760,22 @@ export class SheetService {
     this.setSelection(to.row, to.column, extend ? anchorRow : to.row, extend ? anchorColumn : to.column);
   }
 
+  /**
+   * AutoComplete's answer, from the words the column holds; see
+   * `Workbook.completeIn`. A prefix that is a formula, or that does not
+   * start with a letter, is not a word and gets nothing — a number
+   * that completed to a code would be worse than no help.
+   */
+  complete(row: number, column: number, prefix: string, serial: number): void {
+    const text = /^\p{L}/u.test(prefix) ? (this.document.sheet.completeIn(column, prefix) ?? '') : '';
+    this.completionSubject.next({ serial, row, column, prefix, text });
+  }
+
   writeSelection(input: string): void {
     const at = this.document.selection;
-    writeRect(this.document, rectOf(at), input, { row: at.row, column: at.column });
+    const rect = rectOf(at);
+    const cells = (rect.lastRow - rect.firstRow + 1) * (rect.lastColumn - rect.firstColumn + 1);
+    this.document.transact(() => writeRect(this.document, rect, input, { row: at.row, column: at.column }), `typing in ${cells} cells`);
     this.selectionSubject.next(this.document.selection);
     this.afterEdit();
   }
@@ -809,18 +833,25 @@ export class SheetService {
     const copied = this.copied !== null && this.copied.text === text ? this.copied : null;
     let written: Rect;
     if (copied !== null && copied.cut && mode === 'all') {
-      written = moveCopied(this.document, copied, corner, this.document.active);
+      let moved: Rect | null = null;
+      this.document.transact(() => (moved = moveCopied(this.document, copied, corner, this.document.active)), 'move');
+      written = moved!;
       // A cut is pasted once; what is left is an ordinary copy of the
       // cells where they are now.
       this.copied = null;
       this.clipboardSubject.next({ ...this.clipboardSubject.value, marked: null });
     } else if (copied !== null) {
-      written = pasteCopied(this.document, copied, corner, mode);
+      let pasted: Rect | null = null;
+      this.document.transact(() => (pasted = pasteCopied(this.document, copied, corner, mode)), PASTE_LABELS[mode]);
+      written = pasted!;
     } else if (mode === 'formats') {
       this.report('Formats can only be pasted from a copy made in this sheet.');
       return;
     } else {
-      written = pasteBlock(this.document, mode === 'transposed' ? transposedText(text) : text, corner, null);
+      let pasted: Rect | null = null;
+      const block = mode === 'transposed' ? transposedText(text) : text;
+      this.document.transact(() => (pasted = pasteBlock(this.document, block, corner, null)), PASTE_LABELS[mode]);
+      written = pasted!;
     }
     this.document.setSelection(written.firstRow, written.firstColumn, written.lastRow, written.lastColumn);
     this.selectionSubject.next(this.document.selection);
@@ -878,7 +909,7 @@ export class SheetService {
           }
         }
       }
-    });
+    }, 'format painter');
     this.afterFormat();
   }
 
@@ -891,7 +922,7 @@ export class SheetService {
 
   clearRange(): void {
     this.editedOverMark();
-    clearRect(this.document, rectOf(this.document.selection));
+    this.document.transact(() => clearRect(this.document, rectOf(this.document.selection)), 'clear');
     this.afterEdit();
   }
 
@@ -899,7 +930,7 @@ export class SheetService {
     this.editedOverMark();
     const source = rectOf(this.document.selection);
     const target = fillTarget(source, toRow, toColumn);
-    fillRect(this.document, source, target);
+    this.document.transact(() => fillRect(this.document, source, target), 'fill');
     this.document.setSelection(target.firstRow, target.firstColumn, target.lastRow, target.lastColumn);
     this.selectionSubject.next(this.document.selection);
     this.afterEdit();
@@ -1172,7 +1203,7 @@ export class SheetService {
       return;
     }
     const target = fillTarget(rect, last, rect.lastColumn);
-    fillRect(this.document, rect, target);
+    this.document.transact(() => fillRect(this.document, rect, target), 'fill');
     this.document.setSelection(target.firstRow, target.firstColumn, target.lastRow, target.lastColumn);
     this.selectionSubject.next(this.document.selection);
     this.afterEdit();
@@ -1196,7 +1227,7 @@ export class SheetService {
    * disagree about what a relative reference does when it moves.
    */
   private fillWithin(source: Rect, target: Rect): void {
-    fillRect(this.document, source, fillTarget(source, target.lastRow, target.lastColumn));
+    this.document.transact(() => fillRect(this.document, source, fillTarget(source, target.lastRow, target.lastColumn)), 'fill');
     this.afterEdit();
   }
 
@@ -1232,7 +1263,10 @@ export class SheetService {
     const where = at(key);
     const options = optionsOf(view);
     const before = this.document.sheet.input(where.row, where.column);
-    this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options));
+    this.document.transact(
+      () => this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options)),
+      'replace'
+    );
     this.afterEdit();
     this.search(view.query, options);
     this.goToMatch(stepTo(this.found, key, true));
@@ -1259,7 +1293,7 @@ export class SheetService {
         const before = this.document.sheet.input(where.row, where.column);
         this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options));
       }
-    });
+    }, 'replace all');
     this.afterEdit();
     this.search(view.query, options);
   }
@@ -1343,7 +1377,7 @@ export class SheetService {
 
   clearFormat(): void {
     this.editedOverMark();
-    this.applyToSelection(() => DEFAULT_FORMAT);
+    this.applyToSelection(() => DEFAULT_FORMAT, 'clear formatting');
   }
 
   /**
@@ -1394,7 +1428,7 @@ export class SheetService {
           this.document.setFormat(row, column, applyChange(held, { borders }));
         }
       }
-    });
+    }, 'borders');
     this.afterFormat();
   }
 
@@ -1415,7 +1449,7 @@ export class SheetService {
    * region cannot do is vary per cell inside it, which is exactly
    * what a region means.
    */
-  private applyToSelection(change: (format: CellFormat) => CellFormat): void {
+  private applyToSelection(change: (format: CellFormat) => CellFormat, label?: string): void {
     const rect = rectOf(this.document.selection);
     const { rowCount, columnCount } = this.geometrySubject.value;
     const lastRow = Math.min(rect.lastRow, rowCount - 1);
@@ -1445,7 +1479,7 @@ export class SheetService {
           this.document.setFormat(row, column, change(this.document.formatAt(row, column)));
         }
       }
-    });
+    }, label);
     this.afterFormat();
   }
 
@@ -1491,11 +1525,15 @@ export class SheetService {
       ? currentRegion(this.document, at.row, at.column, rowCount, columnCount)
       : { ...selected, lastRow: Math.min(selected.lastRow, rowCount - 1) };
 
-    sortRect(this.document, rect, {
-      column,
-      ascending,
-      hasHeader: widen && looksLikeHeader(this.document, rect)
-    });
+    this.document.transact(
+      () =>
+        sortRect(this.document, rect, {
+          column,
+          ascending,
+          hasHeader: widen && looksLikeHeader(this.document, rect)
+        }),
+      'sort'
+    );
     // The block that was sorted is what is now selected, so it is
     // plain what moved — and so a second sort does not have to guess
     // again.
@@ -1607,7 +1645,7 @@ export class SheetService {
           }
         }
       }
-    });
+    }, 'merge');
     this.document.merges.add(merged);
     this.publishGeometry();
     this.afterEdit();
@@ -2790,11 +2828,14 @@ export class SheetService {
 
   private publishEditor(): void {
     const { row, column } = this.document.selection;
+    const input = this.document.activeInput;
+    const anchor = input === '' ? this.document.sheet.spilledFrom(row, column) : null;
     this.editorSubject.next({
       row,
       column,
-      input: this.document.activeInput,
-      explain: this.explainAt(row, column)
+      input,
+      explain: this.explainAt(row, column),
+      spilledFrom: anchor === null ? null : { ...anchor, input: this.document.sheet.input(anchor.row, anchor.column) }
     });
   }
 
@@ -2841,6 +2882,8 @@ export class SheetService {
       evaluated: this.document.sheet.stats.evaluated,
       canUndo: this.document.canUndo,
       canRedo: this.document.canRedo,
+      undoLabel: this.document.undoLabel,
+      redoLabel: this.document.redoLabel,
       iterating: this.document.book.iteration !== null
     };
   }
@@ -2929,3 +2972,11 @@ function transposed(grid: readonly (readonly CellValue[])[], rows: number, colum
   }
   return out;
 }
+
+/** What Undo calls each kind of paste. */
+const PASTE_LABELS: Readonly<Record<SheetPasteMode, string>> = {
+  all: 'paste',
+  values: 'paste values',
+  formats: 'paste formats',
+  transposed: 'paste transposed'
+};

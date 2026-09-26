@@ -1480,6 +1480,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
           if (!caretPlaced) {
             caretPlaced = true;
             model.select(text.length);
+            typed = text;
+            // The letter that opened the cell is typing too, and it is
+            // the one that most often has a word to finish.
+            if (offerOnOpen) {
+              offerOnOpen = false;
+              offerCompletion(text, model.focus);
+            }
           }
           // Focus follows the edit into the cell — unless the person
           // put the caret in the formula bar, in which case taking it
@@ -1532,7 +1539,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       zIndex: 1,
       role: 'textbox',
       label: 'Cell',
-      onInput: (event: UiTextChangeEvent) => edit.write(event.value),
+      onInput: (event: UiTextChangeEvent) => {
+        const before = typed ?? '';
+        const shown = offered;
+        offered = null;
+        edit.write(event.value);
+        typed = event.value;
+        // Backspace over an offer takes the offer away and nothing else,
+        // and must not be answered with the same offer again.
+        if (shown !== null && event.value === before) {
+          return;
+        }
+        const grew = event.value.length > before.length && fold(event.value).startsWith(fold(before));
+        if (grew && editorNode !== null) {
+          offerCompletion(event.value, editorFor(editorNode).focus);
+        }
+      },
       // The caret moving with the text unchanged: an arrow key, a
       // click into the text, select-all. Nothing else reports it, and
       // the bracket beside the caret depends on it.
@@ -1551,6 +1573,52 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * Reset when a cell opens or closes; see the editor's `ref`.
    */
   let caretPlaced = false;
+
+  /**
+   * AutoComplete: the rest of a word the column already holds, offered
+   * selected after what was typed, so Enter takes it and typing on
+   * replaces it.
+   *
+   * `typed` is what the person has typed, which is not what the cell
+   * shows while an offer is up; `offered` is the offer on screen. The
+   * question goes to the other thread, which holds the whole column,
+   * and the answer is used only while it is still about this cell and
+   * this text — an answer that arrives after another key is dropped.
+   */
+  let typed: string | null = null;
+  let offered: string | null = null;
+  let offerOnOpen = false;
+  let completionSerial = 0;
+  const offerCompletion = (text: string, caret: number): void => {
+    if (text === '' || text.startsWith('=') || caret !== text.length || choices.value.length > 0) {
+      return;
+    }
+    const at = edit.selectionNow();
+    completionSerial++;
+    sheet.send.complete(at.row, at.column, text, completionSerial);
+  };
+  ctx.effect(sheet.view.completion, answer => {
+    if (answer.serial !== completionSerial || answer.text === '' || editorNode === null) {
+      return;
+    }
+    const draft = edit.draftNow();
+    const at = edit.selectionNow();
+    if (draft !== answer.prefix || draft !== typed || at.row !== answer.row || at.column !== answer.column) {
+      return;
+    }
+    const model = editorFor(editorNode);
+    if (!model.collapsed || model.focus !== draft.length) {
+      return;
+    }
+    // The word as the column spells it: `nor` becomes North, as it does
+    // in Excel, so that Enter writes the word that is already there.
+    const whole = answer.text;
+    offered = whole;
+    edit.write(whole);
+    model.replaceText(whole);
+    model.select(draft.length, whole.length);
+    refreshSpans();
+  });
 
   /** The frozen strip at the start of a row: the row's number. */
   /**
@@ -1729,6 +1797,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       return;
     }
     const action = keyAction(event.key, event.modifiers, edit.openNow());
+    if (action?.kind === 'replace') {
+      offerOnOpen = true;
+    }
     // Alt+Enter's line break, and a date typed into a cell that is
     // already open, go in at the caret — which is this side's.
     if (action !== null && (action.kind === 'insert' || action.kind === 'stamp') && edit.openNow()) {
@@ -3001,6 +3072,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     openAt = next;
     // A new edit places its caret once; see the editor's `ref`.
     caretPlaced = false;
+    typed = null;
+    offered = null;
     sheetWindow.invalidate();
   });
 
@@ -3193,4 +3266,9 @@ function sameHint(before: FormulaHint, after: FormulaHint): boolean {
     return before.name === after.name && before.argument === after.argument;
   }
   return sameNames(before, after);
+}
+
+/** Case folded, for comparing what was typed with what is offered. */
+function fold(text: string): string {
+  return text.toLocaleLowerCase();
 }

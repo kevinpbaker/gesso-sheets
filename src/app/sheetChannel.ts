@@ -32,6 +32,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       activeFormat: service.activeFormat,
       activeRules: service.activeRules,
       autofit: service.autofit,
+      completion: service.completion,
       rowFit: service.rowFit,
       charts: service.charts,
       series: service.chartSeries
@@ -83,6 +84,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       jumpToEdge: (row, column, anchorRow, anchorColumn, rows, columns, extend) =>
         service.jumpToEdge(row, column, anchorRow, anchorColumn, rows, columns, extend),
       writeSelection: input => service.writeSelection(input),
+      complete: (row, column, prefix, serial) => service.complete(row, column, prefix, serial),
       setColumnWidth: (column, width) => service.setColumnWidth(column, width),
       setRowHeight: (row, height) => service.setRowHeight(row, height),
       fitRowsToContents: (first, last) => service.fitRowsToContents(first, last),

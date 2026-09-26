@@ -20,6 +20,7 @@ import { isArray, type ArrayValue } from './FunctionKit';
 import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
 import { Sheet } from './Sheet';
+import { Words } from './Words';
 import { shiftFormula, shiftIndex, type Shift } from './Shift';
 import { tokenize } from './Tokenizer';
 import { CIRC, formatValue, SPILL, VALUE, type CellValue } from './Values';
@@ -206,6 +207,16 @@ export class Workbook {
   private readonly spills = new Map<number, Spill>();
   /** The cells an array has filled, and which formula filled them. */
   private readonly spilled = new Map<number, number>();
+  /**
+   * The words each column holds, for AutoComplete, by `columnKey`.
+   *
+   * Built the first time a column is asked and kept up to date by
+   * every write after that, so a keystroke costs a binary search and
+   * never a walk. Anything that moves cells wholesale — a shift, a
+   * sheet moved or removed — drops the lot, and the next question
+   * builds again.
+   */
+  private readonly words = new Map<number, Words>();
 
   constructor(names: readonly string[] = ['Sheet1']) {
     for (const name of names) {
@@ -444,6 +455,7 @@ export class Workbook {
       this.facades.push(new Sheet(this, index));
     }
     this.cells.clear();
+    this.words.clear();
     for (const [key, cell] of carried) {
       this.cells.set(key, cell);
     }
@@ -491,6 +503,7 @@ export class Workbook {
       this.clearCell(sheet, row, column);
       return;
     }
+    this.unword(sheet, column, key);
     this.dropSpill(key);
     this.spilled.delete(key);
     this.wakeSpillsOver(key);
@@ -507,7 +520,48 @@ export class Workbook {
       this.forget(key);
       this.cells.set(key, { input, formula: null, value: asText ? input : literalValue(input) });
     }
+    this.enword(sheet, column, key);
     this.markDependentsDirty(key);
+  }
+
+  /**
+   * What typing `prefix` into a column would complete to: the one text
+   * the column holds that starts that way, or null.
+   */
+  completeIn(sheet: number, column: number, prefix: string): string | null {
+    return this.wordsOf(sheet, column).complete(prefix);
+  }
+
+  private wordsOf(sheet: number, column: number): Words {
+    const at = columnKey(sheet, column);
+    let words = this.words.get(at);
+    if (words === undefined) {
+      words = new Words();
+      for (const [key, cell] of this.cells) {
+        if (sheetOf(key) === sheet && columnOf(key) === column && isWord(cell)) {
+          words.add(cell.input);
+        }
+      }
+      this.words.set(at, words);
+    }
+    return words;
+  }
+
+  /** A cell about to change, out of its column's words if they are kept. */
+  private unword(sheet: number, column: number, key: number): void {
+    const words = this.words.get(columnKey(sheet, column));
+    const cell = this.cells.get(key);
+    if (words !== undefined && cell !== undefined && isWord(cell)) {
+      words.remove(cell.input);
+    }
+  }
+
+  private enword(sheet: number, column: number, key: number): void {
+    const words = this.words.get(columnKey(sheet, column));
+    const cell = this.cells.get(key);
+    if (words !== undefined && cell !== undefined && isWord(cell)) {
+      words.add(cell.input);
+    }
   }
 
   clearCell(sheet: number, row: number, column: number): void {
@@ -520,6 +574,7 @@ export class Workbook {
     this.dropSpill(key);
     this.wakeSpillsOver(key);
     this.graph.clearPrecedents(key);
+    this.unword(sheet, column, key);
     this.cells.delete(key);
     this.dirty.delete(key);
     this.forget(key);
@@ -591,6 +646,7 @@ export class Workbook {
     // after a shift every key on the moved side is wrong; re-reading
     // each formula is the only version that cannot be half-right.
     this.cells.clear();
+    this.words.clear();
     this.graph.clear();
     this.dirty.clear();
     // Every formula is re-read and dirtied below, and each spills again
@@ -1441,3 +1497,11 @@ function anyDirty(keys: ReadonlySet<number>, dirty: ReadonlySet<number>): boolea
  * is a lookup; the sheet's contents may be a hundred thousand cells.
  */
 const NEAR_GAP = 64;
+
+/**
+ * Whether a cell is a word AutoComplete offers: text somebody typed,
+ * not a number, a date, a formula or its answer.
+ */
+function isWord(cell: { readonly formula: unknown; readonly value: CellValue; readonly input: string }): boolean {
+  return cell.formula === null && typeof cell.value === 'string' && cell.input !== '';
+}

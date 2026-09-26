@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  gesso-components: file:vendor/gesso-components-0.3.0-389ceb14.tgz
+  gesso-components: file:vendor/gesso-components-0.3.0-08415699.tgz
   gesso-core: file:vendor/gesso-core-0.3.0-d21c891b.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
   gesso-framework: file:vendor/gesso-framework-0.3.0-dc5ddffc.tgz
@@ -17,8 +17,8 @@ importers:
   .:
     dependencies:
       gesso-components:
-        specifier: file:vendor/gesso-components-0.3.0-389ceb14.tgz
-        version: file:vendor/gesso-components-0.3.0-389ceb14.tgz(rxjs@7.8.2)
+        specifier: file:vendor/gesso-components-0.3.0-08415699.tgz
+        version: file:vendor/gesso-components-0.3.0-08415699.tgz(rxjs@7.8.2)
       gesso-core:
         specifier: file:vendor/gesso-core-0.3.0-d21c891b.tgz
         version: file:vendor/gesso-core-0.3.0-d21c891b.tgz(rxjs@7.8.2)
@@ -367,8 +367,8 @@ packages:
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
     os: [darwin]
 
-  gesso-components@file:vendor/gesso-components-0.3.0-389ceb14.tgz:
-    resolution: {integrity: sha512-rjlgex+SAaH2z75v4/168PfOcE9Wq3XnnVJSbi30oMER/6I8z9I19gk7/mlO4C+xWOgrnl1QSjXgAYGC/KJGlw==, tarball: file:vendor/gesso-components-0.3.0-389ceb14.tgz}
+  gesso-components@file:vendor/gesso-components-0.3.0-08415699.tgz:
+    resolution: {integrity: sha512-dNe+Pnur8Zl0L/NFf9JPM6X4NCBN/wTNdD/RKRLbO1f3+t5jhXlIzl0Mha7HXieEYvtkhSBVqGgALQ8g0KQPbw==, tarball: file:vendor/gesso-components-0.3.0-08415699.tgz}
     version: 0.3.0
     peerDependencies:
       rxjs: ^7.8.2
@@ -838,7 +838,7 @@ snapshots:
   fsevents@2.3.3:
     optional: true
 
-  gesso-components@file:vendor/gesso-components-0.3.0-389ceb14.tgz(rxjs@7.8.2):
+  gesso-components@file:vendor/gesso-components-0.3.0-08415699.tgz(rxjs@7.8.2):
     dependencies:
       gesso-core: file:vendor/gesso-core-0.3.0-d21c891b.tgz(rxjs@7.8.2)
       gesso-framework: file:vendor/gesso-framework-0.3.0-dc5ddffc.tgz(rxjs@7.8.2)

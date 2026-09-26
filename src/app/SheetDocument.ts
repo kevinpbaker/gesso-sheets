@@ -3,7 +3,7 @@ import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format'
 import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
 import type { Chart } from '../sheet/Chart';
-import type { RangeRef } from '../sheet/A1';
+import { columnName, type RangeRef } from '../sheet/A1';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
 import type { NamedRange, NameProblem } from '../sheet/Names';
@@ -325,6 +325,16 @@ export class SheetDocument {
   }
   /** Edits collected by an open `transact`, or null outside one. */
   private collecting: Edit[] | null = null;
+  /** What the step being collected is called, once something has said. */
+  private collectingLabel: string | null = null;
+  /**
+   * What each step on the stacks is called, for "Undo sort".
+   *
+   * Beside the steps rather than in them, because a step is a list of
+   * edits and every reader of one — undo, redo, `selectStep` — reads it
+   * as that. A step nobody named is described from what it holds.
+   */
+  private readonly labels = new WeakMap<Step, string>();
 
   // ---------------------------------------------------------------------
   // The active page, which is what every unqualified call means
@@ -652,22 +662,44 @@ export class SheetDocument {
    * opening another, so a fill that pastes is still one press of
    * ctrl-Z.
    */
-  transact(run: () => void): void {
+  transact(run: () => void, label?: string): void {
     if (this.collecting !== null) {
+      // The outermost name wins: a sort that writes cells is a sort.
+      this.collectingLabel ??= label ?? null;
       run();
       return;
     }
     const step: Edit[] = [];
     this.collecting = step;
+    this.collectingLabel = label ?? null;
     try {
       run();
     } finally {
       this.collecting = null;
     }
     if (step.length > 0) {
+      this.labels.set(step, this.collectingLabel ?? describeStep(step));
       this.undoStack.push(step);
       this.redoStack.length = 0;
     }
+    this.collectingLabel = null;
+  }
+
+  /**
+   * What Undo would take back, as the menu says it: `sort`, `typing in
+   * B4`. Empty when there is nothing to undo.
+   */
+  get undoLabel(): string {
+    return this.labelOf(this.undoStack[this.undoStack.length - 1]);
+  }
+
+  /** What Redo would put forward again, on the same terms. */
+  get redoLabel(): string {
+    return this.labelOf(this.redoStack[this.redoStack.length - 1]);
+  }
+
+  private labelOf(step: Step | undefined): string {
+    return step === undefined ? '' : (this.labels.get(step) ?? describeStep(step));
   }
 
   private record(edit: Edit): void {
@@ -1392,4 +1424,53 @@ function shiftRows(rows: Set<number>, held: readonly number[], shift: Shift): vo
       rows.add(moved);
     }
   }
+}
+
+/**
+ * What a step nobody named is called, from the edits in it.
+ *
+ * Typing is the common case and the one worth being exact about: one
+ * cell's text, with whatever format a typed date brought along, is
+ * "typing in B4". Everything else is named by the kind of thing it
+ * changed, which is what the commands that do not name their own steps
+ * have in common.
+ */
+function describeStep(step: Step): string {
+  const texts = step.filter(edit => edit.kind === 'text');
+  if (texts.length === 1) {
+    const typed = texts[0];
+    const alongside = step.every(
+      edit => edit.kind === 'text' || (edit.kind === 'format' && edit.row === typed.row && edit.column === typed.column)
+    );
+    if (alongside) {
+      return `typing in ${columnName(typed.column)}${typed.row + 1}`;
+    }
+  }
+  const kinds = new Set(step.map(edit => edit.kind));
+  if (kinds.size === 1) {
+    const only = step[0];
+    switch (only.kind) {
+      case 'text':
+        return `changes to ${step.length} cells`;
+      case 'format':
+      case 'region':
+        return 'formatting';
+      case 'structure': {
+        const { axis, by } = only.shift;
+        const count = Math.abs(by);
+        const noun = count === 1 ? axis : `${count} ${axis}s`;
+        return `${by > 0 ? 'insert' : 'delete'} ${noun}`;
+      }
+      case 'names':
+        return 'naming';
+      case 'rules':
+        return 'rules';
+      case 'charts':
+        return 'chart';
+    }
+  }
+  if ([...kinds].every(kind => kind === 'format' || kind === 'region')) {
+    return 'formatting';
+  }
+  return 'changes';
 }

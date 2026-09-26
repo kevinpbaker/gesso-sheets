@@ -4,7 +4,7 @@ import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, textProperty, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
-import type { UiKeyModifiers } from 'gesso-core';
+import { editorFor, type UiKeyModifiers } from 'gesso-core';
 
 import { Sheet } from './SheetContract';
 import { SheetApp } from './SheetApp';
@@ -538,6 +538,177 @@ describe('the sheet from the keyboard', () => {
         await press('Enter');
         expect(h.document.sheet.input(0, 0)).toMatch(/^Due \d{4}-\d{2}-\d{2}$/);
       });
+    });
+  });
+
+  /**
+   * A cell an array spilled into — Phase 21.
+   *
+   * It holds nothing of its own, so the formula bar used to show
+   * nothing, and the value looked as if it had come from nowhere.
+   */
+  describe('the formula bar over a spilled cell', () => {
+    const bar = () => h.ui.getByRole('textbox', { name: 'Formula' });
+
+    beforeEach(async () => {
+      h = await mount(d => d.setCell(0, 1, '=SEQUENCE(3)'));
+      await press('ArrowRight');
+    });
+
+    it('shows the formula the cell’s value came from', async () => {
+      await press('ArrowDown');
+      expect(address()).toBe('B2');
+      expect(bar()).toHaveText('=SEQUENCE(3)');
+      expect(bar().properties.get('readOnly')).toBe(true);
+    });
+
+    it('is an ordinary bar on the formula’s own cell', async () => {
+      expect(bar()).toHaveText('=SEQUENCE(3)');
+      expect(bar().properties.get('readOnly')).not.toBe(true);
+    });
+
+    it('is an ordinary bar again once the cursor moves off the array', async () => {
+      await press('ArrowDown');
+      await press('ArrowRight');
+      expect(bar()).toHaveText('');
+      expect(bar().properties.get('readOnly')).not.toBe(true);
+    });
+
+    it('will not be typed into as if the formula were the spilled cell’s', async () => {
+      await press('ArrowDown');
+      h.ui.fireEvent.focus(bar());
+      await h.ui.settle();
+      await type('9');
+      await press('Enter');
+
+      expect(h.document.sheet.input(1, 1)).toBe('');
+      expect(h.document.sheet.value(1, 1)).toBe(2);
+    });
+
+    it('still lets the cell be typed over from the sheet, which blocks the array', async () => {
+      await press('ArrowDown');
+      await press('9');
+      await press('Enter');
+
+      expect(h.document.sheet.input(1, 1)).toBe('9');
+      expect(h.document.sheet.value(0, 1)).toEqual({ kind: 'error', code: '#SPILL!' });
+    });
+  });
+
+  /**
+   * AutoComplete from the column — Phase 21.
+   *
+   * The rest of a word the column already holds, offered selected, so
+   * Enter takes it and typing on replaces it.
+   */
+  describe('AutoComplete', () => {
+    const cell = () => h.ui.getByRole('textbox', { name: 'Cell' });
+    const selected = () => {
+      const model = editorFor(cell());
+      return model.text.slice(model.start, model.end);
+    };
+
+    beforeEach(async () => {
+      h = await mount(d => {
+        d.setCell(0, 0, 'Region');
+        d.setCell(1, 0, 'North');
+        d.setCell(2, 0, 'South');
+        d.setCell(3, 0, 'Northwest');
+        d.setCell(4, 0, '7 Main St');
+        d.setCell(0, 1, 'Total');
+      });
+      for (let i = 0; i < 5; i++) {
+        await press('ArrowDown');
+      }
+    });
+
+    /** A key through the editor, and the round trip its offer takes. */
+    async function key(text: string): Promise<void> {
+      await type(text);
+      await h.served.settle();
+      await h.ui.settle();
+    }
+
+    it('offers the rest of the one word the letters start', async () => {
+      await press('S');
+      await h.served.settle();
+      await h.ui.settle();
+
+      expect(cell()).toHaveText('South');
+      expect(selected()).toBe('outh');
+    });
+
+    it('takes the offer on Enter', async () => {
+      await press('S');
+      await h.served.settle();
+      await h.ui.settle();
+      await press('Enter');
+
+      expect(h.document.sheet.input(5, 0)).toBe('South');
+    });
+
+    it('spells the word as the column does', async () => {
+      await press('s');
+      await h.served.settle();
+      await h.ui.settle();
+      await press('Enter');
+
+      expect(h.document.sheet.input(5, 0)).toBe('South');
+    });
+
+    it('waits while the letters could be more than one word', async () => {
+      await press('N');
+      await key('or');
+      expect(cell()).toHaveText('Nor');
+
+      await key('thw');
+      expect(cell()).toHaveText('Northwest');
+      expect(selected()).toBe('est');
+    });
+
+    it('is typed over, and asks again with what was typed', async () => {
+      await press('N');
+      await key('orth');
+      // "North" is a whole word already and is offered nothing; the
+      // w makes it Northwest.
+      expect(cell()).toHaveText('North');
+      await key('w');
+      expect(cell()).toHaveText('Northwest');
+      await key('ard');
+      expect(cell()).toHaveText('Northward');
+    });
+
+    it('lets Backspace take the offer away and nothing more', async () => {
+      await press('S');
+      await h.served.settle();
+      await h.ui.settle();
+      expect(cell()).toHaveText('South');
+
+      await press('Backspace');
+      await h.served.settle();
+      await h.ui.settle();
+      expect(cell()).toHaveText('S');
+      await press('Enter');
+      expect(h.document.sheet.input(5, 0)).toBe('S');
+    });
+
+    it('offers nothing for a number, or a formula', async () => {
+      await press('7');
+      await h.served.settle();
+      await h.ui.settle();
+      expect(cell()).toHaveText('7');
+      await press('Escape');
+
+      await press('=');
+      await key('S');
+      expect(cell()).toHaveText('=S');
+    });
+
+    it('offers only what this column holds', async () => {
+      await press('T');
+      await h.served.settle();
+      await h.ui.settle();
+      expect(cell()).toHaveText('T');
     });
   });
 });
