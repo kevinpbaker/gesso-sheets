@@ -261,6 +261,34 @@ async function main(): Promise<void> {
       throw new Error('The menu would not close.');
     }
 
+    // And again with the menu the right button opens, over the cells:
+    // Phase 18's, and held to the same budget, because it is the same
+    // question — whether an overlay over a scrolling sheet costs the
+    // sheet anything.
+    // Opened to the left of where the wheel turns, as a menu over the
+    // point being scrolled would take the wheel for itself.
+    await devtools.rightClick(160, 260);
+    await sleep(120);
+    if ((await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`)) === 0) {
+      throw new Error('A right-click on the cells did not open a menu.');
+    }
+    const withContext = report(
+      'scrolling with the context menu open',
+      await scrollRun(devtools, 'scrolling with the context menu open'),
+      failures
+    );
+    check(
+      failures,
+      `scrolling with the context menu open: median frame ${withContext.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms with none`,
+      withContext.median - idle.median <= BUDGET.costOfAnOpenMenu,
+      BUDGET.costOfAnOpenMenu
+    );
+    await devtools.press('Escape', 27);
+    await sleep(120);
+    if ((await devtools.evaluate<number>(`document.querySelectorAll('[role="menu"]').length`)) !== 0) {
+      throw new Error('The context menu would not close.');
+    }
+
     // --------------------------------------------------------------
     // A row inserted into two hundred thousand dependent formulas
     // --------------------------------------------------------------

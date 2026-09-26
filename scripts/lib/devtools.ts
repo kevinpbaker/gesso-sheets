@@ -147,6 +147,21 @@ export class DevTools {
     }
   }
 
+  /** The second button, pressed and released: what opens a context menu. */
+  async rightClick(x: number, y: number): Promise<void> {
+    for (const type of ['mousePressed', 'mouseReleased'] as const) {
+      await this.send('Input.dispatchMouseEvent', {
+        type,
+        x,
+        y,
+        button: 'right',
+        buttons: type === 'mousePressed' ? 2 : 0,
+        clickCount: 1,
+        pointerType: 'mouse'
+      });
+    }
+  }
+
   /**
    * A key, with the modifiers a shortcut is held with.
    *

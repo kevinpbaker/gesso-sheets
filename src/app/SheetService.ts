@@ -1030,6 +1030,35 @@ export class SheetService {
     this.fillWithin({ ...rect, firstRow: rect.firstRow - 1, lastRow: rect.firstRow - 1 }, rect);
   }
 
+  /**
+   * The fill handle's double-click: the selection filled down as far as
+   * the data beside it goes — the column to its left, or to its right
+   * when the left has nothing there — to the last row before a blank.
+   * Excel's rule, and the fill nobody wants to drag for.
+   */
+  fillToData(): void {
+    const rect = rectOf(this.document.selection);
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const filled = (column: number, row: number): boolean =>
+      column >= 0 && column < columnCount && this.document.sheet.input(row, column) !== '';
+    const beside = [rect.firstColumn - 1, rect.lastColumn + 1].find(column => filled(column, rect.lastRow + 1) || filled(column, rect.firstRow));
+    if (beside === undefined) {
+      return;
+    }
+    let last = rect.lastRow;
+    while (last + 1 < rowCount && filled(beside, last + 1)) {
+      last++;
+    }
+    if (last <= rect.lastRow) {
+      return;
+    }
+    const target = fillTarget(rect, last, rect.lastColumn);
+    fillRect(this.document, rect, target);
+    this.document.setSelection(target.firstRow, target.firstColumn, target.lastRow, target.lastColumn);
+    this.selectionSubject.next(this.document.selection);
+    this.afterEdit();
+  }
+
   fillRight(): void {
     const rect = rectOf(this.document.selection);
     if (rect.lastColumn > rect.firstColumn) {

@@ -3,6 +3,7 @@ import { map } from 'rxjs/operators';
 
 import {
   Box,
+  contextMenu,
   decorated,
   EditableText,
   editorFor,
@@ -22,7 +23,9 @@ import {
   type SheetRange,
   type UiVirtualSheet
 } from 'gesso-core';
+import { Menu, type MenuItem } from 'gesso-components';
 import {
+  createComponent,
   fanOut,
   FocusService,
   internalState,
@@ -70,7 +73,7 @@ import {
 } from './SheetContract';
 import { colouredReferences, formulaSpans } from './FormulaColours';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
-import { commandFor } from './SheetCommands';
+import { COMMANDS, commandFor, type CommandId } from './SheetCommands';
 import { keyAction } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
 
@@ -1080,6 +1083,180 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     return true;
   };
 
+  /**
+   * What a press on the strips landed on: the corner, a column's
+   * letter or a row's number — or nothing, for a press on the cells.
+   *
+   * One question asked of the grid's own press, rather than a handler
+   * on every header: the strips are mounted for every visible row and
+   * column, and a binding per header is the per-cell cliff again. A
+   * frozen column's letter does not scroll, so it is read from the
+   * offset as it stands; anything past the pane from where the sheet
+   * has scrolled to.
+   */
+  type HeaderHit = { kind: 'corner' } | { kind: 'column'; column: number } | { kind: 'row'; row: number };
+  const headerHit = (event: { x: number; y: number }): HeaderHit | null => {
+    const box = viewport.value;
+    if (box.width === 0) {
+      return null;
+    }
+    const x = event.x - box.x;
+    const y = event.y - box.y;
+    const inHeader = y >= 0 && y < HEADER_HEIGHT;
+    const inGutter = x >= 0 && x < GUTTER_WIDTH;
+    if (inHeader && inGutter) {
+      return { kind: 'corner' };
+    }
+    if (inHeader) {
+      return { kind: 'column', column: columnAtX(x) };
+    }
+    if (inGutter && y >= HEADER_HEIGHT) {
+      return { kind: 'row', row: rowAtY(y) };
+    }
+    return null;
+  };
+  /**
+   * The same question asked of the node that was pressed, which is
+   * the answer that does not depend on where: a click a screen reader
+   * sends has no point, and a letter is a letter wherever on it the
+   * press landed. Walks up to the strip's own nodes, which carry what
+   * they are — the column in `posInSet`, the row in the label.
+   */
+  const headerOfNode = (node: UiNode | null): HeaderHit | null => {
+    for (let at: UiNode | null = node; at !== null && at !== gridNode; at = at.parent) {
+      const role = at.properties.get('role');
+      if (role === 'columnheader') {
+        return { kind: 'column', column: Number(at.properties.get('posInSet')) - 1 };
+      }
+      if (role === 'rowheader') {
+        return { kind: 'row', row: Number(at.properties.get('label')) - 1 };
+      }
+      if (role === 'button' && at.properties.get('label') === SELECT_ALL) {
+        return { kind: 'corner' };
+      }
+      if (role === 'cell' || role === 'row') {
+        return null;
+      }
+    }
+    return null;
+  };
+  const columnAtX = (x: number): number =>
+    x - GUTTER_WIDTH < columnLeft(frozen.value.columns) ? sheetWindow.columnAt(x) : sheetWindow.cellAt(x, HEADER_HEIGHT).column;
+  const rowAtY = (y: number): number =>
+    y - HEADER_HEIGHT < rowTop(frozen.value.rows) ? sheetWindow.rowAt(y) : sheetWindow.cellAt(GUTTER_WIDTH, y).row;
+
+  /**
+   * Whole columns, whole rows, or the sheet, as the selection.
+   *
+   * The active cell is a corner — row 1 of the first column, the first
+   * column of the first row — which is where Excel puts it, and the one
+   * move of the selection that must not scroll: somebody who clicked a
+   * letter half way down a sheet is looking at the half they clicked.
+   */
+  let keepScroll = false;
+  /**
+   * `active` is where the pointer is and `anchor` where the selection
+   * started, as a Shift+click on the cells has it: the end that moves
+   * is the active one.
+   */
+  const selectColumns = (active: number, anchor: number): void => {
+    keepScroll = true;
+    edit.selectRect(0, active, rowCount.value - 1, anchor);
+    keepScroll = false;
+  };
+  const selectRows = (active: number, anchor: number): void => {
+    keepScroll = true;
+    edit.selectRect(active, 0, anchor, columnCount() - 1);
+    keepScroll = false;
+  };
+  const columnCount = (): number => sheet.view.geometry.value.columnCount;
+  const selectHeader = (hit: HeaderHit, extend: boolean): void => {
+    if (edit.openNow()) {
+      edit.commit(0, 0);
+    }
+    const held = edit.selectionNow();
+    if (hit.kind === 'corner') {
+      keepScroll = true;
+      edit.selectRect(0, 0, rowCount.value - 1, columnCount() - 1);
+      keepScroll = false;
+    } else if (hit.kind === 'column') {
+      selectColumns(hit.column, extend ? held.anchorColumn : hit.column);
+    } else {
+      selectRows(hit.row, extend ? held.anchorRow : hit.row);
+    }
+    if (gridNode !== null) {
+      focus.focus(gridNode);
+    }
+  };
+  /** A drag across the letters or the numbers, from where it started. */
+  let headerSweep: { kind: 'column' | 'row'; from: number } | null = null;
+
+  /**
+   * The menu a right-click opens, built from the command table like
+   * every other menu so that it cannot drift: what the pointer was on
+   * decides which commands are in it.
+   */
+  const menuOpen = new BehaviorSubject(false);
+  const menuAt = new BehaviorSubject({ x: 0, y: 0 });
+  const menuItems = new BehaviorSubject<readonly MenuItem[]>([]);
+  const MENU_FOR: Readonly<Record<'cell' | 'column' | 'row', readonly CommandId[]>> = {
+    cell: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertColumnLeft', 'deleteRows', 'deleteColumns', 'sortAscending', 'sortDescending', 'clear'],
+    column: ['cut', 'copy', 'paste', 'insertColumnLeft', 'insertColumnRight', 'deleteColumns', 'hideColumns', 'showColumns', 'autofitColumns', 'sortAscending', 'sortDescending', 'clear'],
+    row: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertRowBelow', 'deleteRows', 'hideRows', 'showRows', 'fitRows', 'clear']
+  };
+  const openMenu = (kind: 'cell' | 'column' | 'row', at: { x: number; y: number }): void => {
+    menuItems.next(MENU_FOR[kind].map(id => ({ value: id, label: COMMANDS[id].label })));
+    menuAt.next(at);
+    menuOpen.next(true);
+  };
+  /**
+   * A right-click: on something outside the selection, that thing is
+   * selected first, as everywhere — the menu acts on what it was opened
+   * over. Inside the selection, the selection stays.
+   */
+  const onContext = (at: { x: number; y: number }): void => {
+    const hit = headerHit(at);
+    const held = edit.selectionNow();
+    const firstRow = Math.min(held.row, held.anchorRow);
+    const lastRow = Math.max(held.row, held.anchorRow);
+    const firstColumn = Math.min(held.column, held.anchorColumn);
+    const lastColumn = Math.max(held.column, held.anchorColumn);
+    if (hit?.kind === 'column') {
+      const whole = firstRow === 0 && lastRow >= rowCount.value - 1;
+      if (!whole || hit.column < firstColumn || hit.column > lastColumn) {
+        selectHeader(hit, false);
+      }
+      openMenu('column', at);
+      return;
+    }
+    if (hit?.kind === 'row') {
+      const whole = firstColumn === 0 && lastColumn >= columnCount() - 1;
+      if (!whole || hit.row < firstRow || hit.row > lastRow) {
+        selectHeader(hit, false);
+      }
+      openMenu('row', at);
+      return;
+    }
+    if (hit?.kind === 'corner') {
+      selectHeader(hit, false);
+      openMenu('cell', at);
+      return;
+    }
+    const cellAt = cellUnder({ x: at.x, y: at.y } as UiPointerEvent);
+    if (cellAt !== null && !(cellAt.row >= firstRow && cellAt.row <= lastRow && cellAt.column >= firstColumn && cellAt.column <= lastColumn)) {
+      selectByPointer(cellAt.row, cellAt.column);
+    }
+    openMenu('cell', at);
+  };
+  /** Shift+F10 and the Menu key: the same menu, at the active cell. */
+  const openMenuFromKeyboard = (): void => {
+    const box = viewport.value;
+    const at = edit.selectionNow();
+    const x = box.x + GUTTER_WIDTH + sheetWindow.offsetOf(at.column) - scrollX.value + 8;
+    const y = box.y + HEADER_HEIGHT + sheetWindow.rowOffsetOf(at.row) - scrollY.value + sheetWindow.rowHeightOf(at.row);
+    openMenu('cell', { x: Math.max(box.x, Math.min(x, box.x + box.width - 8)), y: Math.max(box.y, Math.min(y, box.y + box.height - 8)) });
+  };
+
   const selectByPointer = (row: number, column: number, extend = false): void => {
     // A click ends any sweep, whatever the gesture recogniser thinks.
     //
@@ -1345,6 +1522,13 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
             sized.value = next;
           }
         },
+        // Two clicks on a row's foot fit it to what it holds, which for a
+        // row somebody dragged means forgetting the drag.
+        onClick: (event: UiPointerEvent) => event.stopPropagation(),
+        onDoubleClick: (event: UiPointerEvent) => {
+          event.stopPropagation();
+          sheet.send.fitRowsToContents(row, row);
+        },
         onPanEnd: event => {
           if (heightDrag !== null) {
             event.stopPropagation();
@@ -1388,6 +1572,12 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       if (event.key === 'Escape' && edit.dismiss()) {
         event.preventDefault();
         event.stopPropagation();
+        return;
+      }
+      if (event.key === 'ContextMenu' || (event.key === 'F10' && event.modifiers.shift)) {
+        event.preventDefault();
+        event.stopPropagation();
+        openMenuFromKeyboard();
         return;
       }
       const command = commandFor(event.key, event.modifiers);
@@ -1573,6 +1763,14 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // has not been mounted yet.
         const box = viewport.value;
         fillTo = sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+      },
+      // Two clicks fill down as far as the column beside goes: the fill
+      // everybody uses, and one that otherwise takes a drag the length
+      // of the data.
+      onClick: (event: UiPointerEvent) => event.stopPropagation(),
+      onDoubleClick: (event: UiPointerEvent) => {
+        event.stopPropagation();
+        sheet.send.fillToData();
       },
       onPanEnd: (event: UiPointerEvent) => {
         filling = false;
@@ -2013,6 +2211,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       Text({
         key: 'corner',
         text: '',
+        role: 'button',
+        label: SELECT_ALL,
         width: GUTTER_WIDTH,
         height: HEADER_HEIGHT,
         flexShrink: 0,
@@ -2097,13 +2297,34 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // pointer passes the slop, which is what a grip wants.
         onPanStart: event => {
           resizing = { column, width: widths.value[column] ?? COLUMN_WIDTH, from: event.x };
+          // The grid sweeps a selection on a pan, and a column's letter
+          // selects the column: a drag on its edge does neither.
+          event.stopPropagation();
         },
         onPanMove: event => {
           if (resizing !== null) {
+            event.stopPropagation();
             resizeTo(resizing.column, resizing.width + (event.x - resizing.from));
           }
         },
-        onPanEnd: () => {
+        // A click on the edge is not a click on the letter, and two of
+        // them fit the column to what it holds — every selected column,
+        // when this one is among them, as Excel does.
+        onClick: (event: UiPointerEvent) => event.stopPropagation(),
+        onDoubleClick: (event: UiPointerEvent) => {
+          event.stopPropagation();
+          const at = edit.selectionNow();
+          const first = Math.min(at.column, at.anchorColumn);
+          const last = Math.max(at.column, at.anchorColumn);
+          const whole = Math.min(at.row, at.anchorRow) === 0 && Math.max(at.row, at.anchorRow) >= rowCount.value - 1;
+          if (whole && column >= first && column <= last) {
+            sheet.send.measureColumns(first, last);
+          } else {
+            sheet.send.measureColumns(column, column);
+          }
+        },
+        onPanEnd: event => {
+          event.stopPropagation();
           if (resizing !== null) {
             // The end of the drag, and the only moment the other
             // thread hears about it. Sending each frame would be a
@@ -2212,8 +2433,16 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       label: 'Sheet',
       focusable: true,
       ref: node => (gridNode = node),
-      modifiers: [viewport.modifier],
+      modifiers: [viewport.modifier, contextMenu({ onOpen: at => onContext(at) })],
       onKeyDown: onKey,
+      // A press on a column's letter, a row's number or the corner. A
+      // press on a cell is the cell's own click, and this lets it be.
+      onClick: (event: UiPointerEvent) => {
+        const hit = headerOfNode(event.target);
+        if (hit !== null) {
+          selectHeader(hit, event.modifiers.shift);
+        }
+      },
       // Sweeping a selection out with the pointer.
       //
       // On the grid rather than on every cell: three listeners instead
@@ -2227,6 +2456,18 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         // chart, which is how a chart stops being selected.
         if (charts.value.selected !== 0) {
           sheet.send.selectChart(0);
+        }
+        // A drag across the letters or the numbers sweeps whole columns
+        // or rows, as a drag across cells sweeps cells.
+        const hit = headerOfNode(event.target) ?? headerHit(event);
+        if (hit !== null) {
+          selectHeader(hit, event.modifiers.shift);
+          if (hit.kind !== 'corner') {
+            const held = edit.selectionNow();
+            headerSweep =
+              hit.kind === 'column' ? { kind: 'column', from: held.anchorColumn } : { kind: 'row', from: held.anchorRow };
+          }
+          return;
         }
         const at = cellUnder(event);
         if (at === null) {
@@ -2250,6 +2491,20 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         }
       },
       onPanMove: (event: UiPointerEvent) => {
+        if (headerSweep !== null) {
+          if (event.buttons === 0) {
+            return;
+          }
+          const box = viewport.value;
+          const x = event.x - box.x;
+          const y = event.y - box.y;
+          if (headerSweep.kind === 'column') {
+            selectColumns(columnAtX(Math.max(GUTTER_WIDTH, x)), headerSweep.from);
+          } else {
+            selectRows(rowAtY(Math.max(HEADER_HEIGHT, y)), headerSweep.from);
+          }
+          return;
+        }
         if (pickingFrom !== null) {
           if (event.buttons === 0) {
             return;
@@ -2274,6 +2529,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       onPanEnd: () => {
         sweeping = false;
         pickingFrom = null;
+        headerSweep = null;
       },
       // Text from the clipboard with no caret anywhere. Before the
       // engine offered this the paste was dropped: `paste` had nothing
@@ -2601,7 +2857,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    */
   ctx.effect(edit.selection, at => {
     const view = viewport.value;
-    if (view.width === 0 || view.height === 0) {
+    if (view.width === 0 || view.height === 0 || keepScroll) {
       return;
     }
     const top = HEADER_HEIGHT + sheetWindow.rowOffsetOf(at.row);
@@ -2652,7 +2908,27 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
   });
 
-  return grid;
+  const menu = createComponent(Menu, {
+    open: menuOpen,
+    onOpenChange: (open: boolean) => {
+      menuOpen.next(open);
+      if (!open && gridNode !== null) {
+        focus.focus(gridNode);
+      }
+    },
+    items: menuItems,
+    at: menuAt,
+    label: 'Cell actions',
+    onSelect: (value: string) => {
+      menuOpen.next(false);
+      if (gridNode !== null) {
+        focus.focus(gridNode);
+      }
+      edit.runCommand(value as CommandId);
+    }
+  });
+
+  return Box({ flex: 1, minHeight: 0, width: percent(100) }, grid, menu);
 }
 
 function sameCell(a: { row: number; column: number } | null, b: { row: number; column: number } | null): boolean {
@@ -2714,6 +2990,9 @@ export type { SheetWindow };
 const MARK_SIZE = 6;
 
 const NO_SHAPES: DecorationShape[] = [];
+
+/** The corner above row 1, which selects the sheet. */
+const SELECT_ALL = 'Select all';
 
 /**
  * How thick a reference's outline is.

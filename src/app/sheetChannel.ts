@@ -75,6 +75,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       paste: text => service.paste(text),
       clearRange: () => service.clearRange(),
       fill: (toRow, toColumn) => service.fill(toRow, toColumn),
+      fillToData: () => service.fillToData(),
       setColumnWidth: (column, width) => service.setColumnWidth(column, width),
       setRowHeight: (row, height) => service.setRowHeight(row, height),
       fitRowsToContents: (first, last) => service.fitRowsToContents(first, last),

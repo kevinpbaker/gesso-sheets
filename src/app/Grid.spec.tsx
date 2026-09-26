@@ -1101,9 +1101,12 @@ describe('picking a reference by clicking', () => {
       throw new Error(`row ${row} is not on screen`);
     }
     const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
+    // Below the header row, which is sticky and drawn over a row that
+    // has scrolled part of the way under it: a press there is a press
+    // on the column's letter, which selects the column.
     const point = {
       x: grid.x + GUTTER_WIDTH + column * COLUMN_WIDTH + 4,
-      y: h.ui.getVisibleBox(rowNode).y + 4
+      y: Math.max(h.ui.getVisibleBox(rowNode).y, grid.y + HEADER_HEIGHT) + 4
     };
     // A row can be mounted and still be above the visible area, which
     // is what a scrolled grid looks like from here. Clicking there

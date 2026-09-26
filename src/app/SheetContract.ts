@@ -640,6 +640,8 @@ export interface SheetCommands {
   clearRange(): void;
   /** Extends the selection over a cell, repeating it with its formulas moved. */
   fill(toRow: number, toColumn: number): void;
+  /** The fill handle's double-click: down as far as the data beside the selection goes. */
+  fillToData(): void;
   /**
    * A column was dragged to a new width.
    *

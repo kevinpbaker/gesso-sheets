@@ -32,6 +32,12 @@ export interface SheetEditing {
   readonly startedIn: () => 'grid' | 'bar' | null;
   moveTo(row: number, column: number): void;
   /**
+   * A rectangle as the selection, with the active cell given: what a
+   * click on a column's letter or a row's number means. The active
+   * cell is one corner and the anchor the other.
+   */
+  selectRect(row: number, column: number, anchorRow: number, anchorColumn: number): void;
+  /**
    * Puts the keyboard back on the sheet.
    *
    * The chrome needs this and cannot do it: the grid's node belongs
@@ -174,6 +180,22 @@ export function editing(
   };
 
   const moveTo = (row: number, column: number): void => place(row, column, false);
+  const selectRect = (row: number, column: number, anchorRow: number, anchorColumn: number): void => {
+    const { rowCount, columnCount } = extent();
+    const lastRow = Math.max(0, rowCount - 1);
+    const lastColumn = Math.max(0, columnCount - 1);
+    const next = {
+      row: clamp(row, 0, lastRow),
+      column: clamp(column, 0, lastColumn),
+      anchorRow: clamp(anchorRow, 0, lastRow),
+      anchorColumn: clamp(anchorColumn, 0, lastColumn)
+    };
+    if (same(next, selection.value)) {
+      return;
+    }
+    selection.value = next;
+    sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
+  };
   const extendTo = (row: number, column: number): void => place(row, column, true);
 
   const commit = (rows: number, columns: number): void => {
@@ -304,6 +326,7 @@ export function editing(
     extendTo,
     pasteText: text => sheet.send.paste(text),
     moveTo,
+    selectRect,
     focusSheet: () => focusSheet(),
     provideFocus: run => {
       focusSheet = run;
