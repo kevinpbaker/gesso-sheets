@@ -214,6 +214,23 @@ export interface SheetClipboard {
  * or the empty string: it answers "did that work", and travels here
  * because it is only ever read beside the download it is not.
  */
+/**
+ * Which document the tab is showing, and whether it has a file.
+ *
+ * Its own key because it changes at its own rate — when a document is
+ * opened, saved, or first edited after either — and the title, the
+ * route and the File menu all read it.
+ */
+export interface SheetDocumentView {
+  /** The library's id for it; the route is `/d/<id>`. Empty until one is open. */
+  readonly id: string;
+  readonly name: string;
+  /** The file it was saved to or opened from, or null. */
+  readonly file: { readonly handle: number | null; readonly name: string } | null;
+  /** Changed since it was opened or last saved to its file. */
+  readonly edited: boolean;
+}
+
 export interface SheetTransfer {
   readonly download: SheetDownload | null;
   readonly report: string;
@@ -221,6 +238,13 @@ export interface SheetTransfer {
 
 export interface SheetDownload {
   readonly serial: number;
+  /** What it is, which decides what the picker offers and what a save means. */
+  readonly kind: 'workbook' | 'csv';
+  /**
+   * The shell's handle to write to, for a Save; null for a Save As or
+   * an export, which ask the shell where.
+   */
+  readonly handle: number | null;
   /** A file name to suggest, extension included. */
   readonly name: string;
   readonly mediaType: string;
@@ -483,6 +507,20 @@ export interface SheetCommands {
   importCsv(fileName: string, text: string): void;
   /** Builds the sheet in view as a CSV, and publishes it on `transfer`. */
   exportCsv(): void;
+  /**
+   * Shows a document: `''` for the last one used, `'new'` for a blank
+   * one, or an id from the route. Opening the one already open does
+   * nothing, so the render worker sends this on every route change.
+   */
+  openDocument(id: string): void;
+  /** Opens what a file held — a workbook as a document, a CSV as a sheet. */
+  openFile(fileName: string, text: string, handle: number | null): void;
+  /** Builds the workbook for the shell to save; `asNew` is Save As. */
+  saveDocument(asNew: boolean): void;
+  /** Where the shell put a download, so a workbook can remember its file. */
+  fileSaved(kind: 'workbook' | 'csv', name: string, handle: number | null, via: 'file' | 'download'): void;
+  /** A sentence about a file that did not go where it was sent, for the status line. */
+  reportFile(text: string): void;
   /**
    * Puts a chart over the selection, and selects it.
    *
@@ -796,6 +834,8 @@ export interface SheetView {
   readonly clipboard: SheetClipboard;
   /** CSV out, and what the last CSV in became; see `SheetTransfer`. */
   readonly transfer: SheetTransfer;
+  /** Which document this is; see `SheetDocumentView`. */
+  readonly document: SheetDocumentView;
   /** Sum, average and count over the selection. */
   readonly stats: SheetStats;
   readonly find: SheetFindView;
@@ -895,6 +935,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false },
   clipboard: { text: '', serial: 0 },
   transfer: { download: null, report: '' },
+  document: { id: '', name: '', file: null, edited: false },
   stats: NO_STATS,
   find: NO_FIND,
   formats: EMPTY_FORMATS,

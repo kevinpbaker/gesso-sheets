@@ -35,6 +35,8 @@ import {
   type SheetActiveFormat,
   type SheetActiveRules,
   type SheetTransfer,
+  type SheetDocumentView,
+  type SheetDownload,
   type SheetAutofit,
   type SheetEdge,
   type SheetFormatChange,
@@ -55,9 +57,10 @@ import type { Shift } from '../sheet/Shift';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 import { sortRect } from './SheetSort';
 import { NO_STATS, type SheetStats } from './Statistics';
-import type { SheetDocument } from './SheetDocument';
+import { SheetDocument } from './SheetDocument';
 import { cellKey, columnName } from '../sheet/A1';
-import { snapshotOf, applySnapshot, type SheetSnapshot } from './SheetFile';
+import { snapshotOf, applySnapshot, parseSnapshot, type SheetSnapshot } from './SheetFile';
+import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
 import { exportCsv, importCsv } from './SheetCsv';
 import {
@@ -96,6 +99,25 @@ export interface SheetServiceOptions {
   readonly columnCount?: number;
   /** Where the sheet is kept. Without one it is kept nowhere. */
   readonly repository?: SheetRepository;
+  /**
+   * Every workbook this browser keeps, for a service that opens them
+   * by id; see `openDocument`. With a library the repository is the
+   * open document's, and changes when another is opened.
+   */
+  readonly library?: SheetLibrary;
+  /** What the very first document starts with, before anybody types. */
+  readonly seed?: (document: SheetDocument) => void;
+  /** The clock a document's `used` is read from. */
+  readonly now?: () => number;
+}
+
+/** The view of a document before one has been opened. */
+const NO_DOCUMENT: SheetDocumentView = { id: '', name: '', file: null, edited: false };
+
+/** `Q3 sales.gsheet` is called `Q3 sales`. */
+function baseName(fileName: string): string {
+  const base = fileName.replace(/\.[^.]*$/, '').trim();
+  return base === '' ? 'Untitled' : base;
 }
 
 /**
@@ -126,6 +148,7 @@ export class SheetService {
   readonly status: Observable<SheetStatus>;
   readonly clipboard: Observable<SheetClipboard>;
   readonly transfer: Observable<SheetTransfer>;
+  readonly documentView: Observable<SheetDocumentView>;
   readonly selectionStats: Observable<SheetStats>;
   readonly findView: Observable<SheetFindView>;
   readonly formats: Observable<SheetFormatWindow>;
@@ -175,6 +198,20 @@ export class SheetService {
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
   private readonly transferSubject = new BehaviorSubject<SheetTransfer>({ download: null, report: '' });
+  private readonly documentSubject = new BehaviorSubject<SheetDocumentView>(NO_DOCUMENT);
+  /** The open document's entry in the library, or null without one. */
+  private entry: DocumentEntry | null = null;
+  /** Whether anything has changed since the document was opened or saved to its file. */
+  private edited = false;
+  /**
+   * Opens, one after another. A document is loaded asynchronously, and
+   * two opens that overlapped would each swap a document in under the
+   * other.
+   */
+  private opening: Promise<void> = Promise.resolve();
+  private readonly library: SheetLibrary | undefined;
+  private readonly seed: ((document: SheetDocument) => void) | undefined;
+  private readonly now: () => number;
   private downloadSerial = 0;
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
   private readonly findSubject = new BehaviorSubject<SheetFindView>(NO_FIND);
@@ -227,7 +264,7 @@ export class SheetService {
   private viewport = { firstRow: 0, lastRow: -1, firstColumn: 0, lastColumn: -1 };
   private readonly budget: number;
   private readonly schedule: Schedule;
-  private readonly repository: SheetRepository | undefined;
+  private repository: SheetRepository | undefined;
   private pumping = false;
   /**
    * Whether a load has finished.
@@ -244,10 +281,19 @@ export class SheetService {
   private chartPoints = 0;
   private stressChart = 0;
 
-  constructor(
-    private readonly document: SheetDocument,
-    options: SheetServiceOptions = {}
-  ) {
+  /**
+   * The workbook in front of somebody. Not readonly, since Phase 16:
+   * opening another document swaps a fresh one in rather than
+   * rewriting this one, because a snapshot applied over a workbook
+   * writes *over* what is there and leaves what it does not mention.
+   */
+  private document: SheetDocument;
+
+  constructor(document: SheetDocument, options: SheetServiceOptions = {}) {
+    this.document = document;
+    this.library = options.library;
+    this.seed = options.seed;
+    this.now = options.now ?? Date.now;
     this.budget = options.budget ?? 2_000;
     this.schedule = options.schedule ?? defaultSchedule;
     const columnCount = options.columnCount ?? 100;
@@ -289,6 +335,7 @@ export class SheetService {
     this.status = this.statusSubject;
     this.clipboard = this.clipboardSubject;
     this.transfer = this.transferSubject;
+    this.documentView = this.documentSubject;
     this.selectionStats = this.statsSubject;
     this.findView = this.findSubject;
     this.formats = this.formatsSubject;
@@ -484,15 +531,12 @@ export class SheetService {
   }
 
   exportCsv(): void {
-    this.downloadSerial++;
-    this.transferSubject.next({
-      ...this.transferSubject.value,
-      download: {
-        serial: this.downloadSerial,
-        name: `${this.document.sheet.name}.csv`,
-        mediaType: 'text/csv',
-        text: exportCsv(this.document)
-      }
+    this.publishDownload({
+      kind: 'csv',
+      name: `${this.document.sheet.name}.csv`,
+      mediaType: 'text/csv',
+      text: exportCsv(this.document),
+      handle: null
     });
   }
 
@@ -1463,6 +1507,218 @@ export class SheetService {
   }
 
   // ---------------------------------------------------------------------
+  // Documents
+  // ---------------------------------------------------------------------
+
+  /**
+   * Shows a document from the library, by id.
+   *
+   * `''` is "whichever was used last", which is what a tab opened at
+   * `/` wants, and `'new'` is a blank one. An id the library does not
+   * know falls back to the last used rather than to nothing: a url
+   * from another browser is somebody's mistake, and the sheet is the
+   * right thing to show them. The very first document of all starts
+   * from the seed; every document after it starts empty.
+   *
+   * Opening the document already open does nothing, which is what
+   * lets the render worker send this whenever its route changes
+   * without caring whether the change was its own.
+   */
+  openDocument(id: string): void {
+    this.enqueue(() => this.open(id));
+  }
+
+  /**
+   * Opens what a file held: a workbook as a document of its own, and
+   * anything else through `importCsv`.
+   *
+   * A workbook is matched to the document it was last opened as by its
+   * handle, so reopening a file from the recent list shows the same
+   * document rather than a second copy of it — with the file's
+   * contents, since the file is what somebody chose to open.
+   */
+  openFile(fileName: string, text: string, handle: number | null): void {
+    if (!/\.(gsheet|json)$/i.test(fileName)) {
+      this.importCsv(fileName, text);
+      return;
+    }
+    this.enqueue(async () => {
+      const snapshot = parseSnapshot(text, this.geometrySubject.value.columnCount);
+      if (snapshot === null) {
+        this.report(`${fileName} was not opened: it is not a workbook this can read.`);
+        return;
+      }
+      const entries = (await this.library?.entries()) ?? [];
+      const known = handle === null ? undefined : entries.find(each => each.file?.handle === handle);
+      const entry: DocumentEntry = {
+        id: known?.id ?? this.library?.newId() ?? 'file',
+        name: baseName(fileName),
+        used: this.now(),
+        file: { handle, name: fileName }
+      };
+      await this.swapTo(entry, snapshot);
+      // Written through at once: the file is the source, and a copy
+      // that waited for the first edit to be kept would be a document
+      // that vanished from the library if the tab closed first.
+      this.persist();
+      this.edited = false;
+      this.publishDocument();
+      this.report(`Opened ${fileName}.`);
+    });
+  }
+
+  /**
+   * Builds the workbook as a `.gsheet` and publishes it on `transfer`
+   * for the render worker to hand to the shell.
+   *
+   * With the file it was last saved to, unless `asNew` — which is the
+   * difference between Save and Save As, and the render worker's
+   * `saveFile` call turns it into a write or a picker.
+   */
+  saveDocument(asNew: boolean): void {
+    const file = this.entry?.file ?? null;
+    const handle = !asNew && file !== null ? file.handle : null;
+    this.publishDownload({
+      kind: 'workbook',
+      name: file?.name ?? `${this.entry?.name ?? 'Untitled'}.gsheet`,
+      mediaType: 'application/json',
+      text: JSON.stringify(this.snapshot()),
+      handle
+    });
+  }
+
+  /**
+   * What became of a download: where the shell wrote it, or that it
+   * did not.
+   *
+   * A workbook saved to a file makes that file the document's, and the
+   * document stops being edited. A download is recorded with no
+   * handle, because there is nothing to save back to — the next Save
+   * asks where again, which is the honest answer in a browser that
+   * cannot write to a file it did not open.
+   */
+  fileSaved(kind: 'workbook' | 'csv', name: string, handle: number | null, via: 'file' | 'download'): void {
+    const verb = via === 'file' ? 'Saved' : 'Downloaded';
+    if (kind === 'csv') {
+      this.report(`${verb} ${name}.`);
+      return;
+    }
+    this.enqueue(async () => {
+      if (this.entry !== null) {
+        this.entry = { ...this.entry, name: baseName(name), file: { handle, name } };
+        await this.library?.put(this.entry);
+      }
+      this.edited = false;
+      this.publishDocument();
+      this.report(`${verb} ${name}.`);
+    });
+  }
+
+  reportFile(text: string): void {
+    this.report(text);
+  }
+
+  /** Settles when every open asked for so far has. For specs, and the proof. */
+  get settled(): Promise<void> {
+    return this.opening;
+  }
+
+  private enqueue(run: () => Promise<void>): void {
+    this.opening = this.opening.then(run).catch(error => {
+      console.warn('[sheet] could not open the document.', error);
+    });
+  }
+
+  private async open(id: string): Promise<void> {
+    const library = this.library;
+    if (library === undefined || (id !== 'new' && id !== '' && id === this.entry?.id)) {
+      return;
+    }
+    const entries = await library.entries();
+    const latest = [...entries].sort((a, b) => b.used - a.used)[0];
+    const found = id === 'new' ? undefined : id === '' ? latest : (entries.find(each => each.id === id) ?? latest);
+    if (found !== undefined && found.id === this.entry?.id) {
+      return;
+    }
+    const first = found === undefined && id !== 'new' && entries.length === 0;
+    const entry: DocumentEntry = found ?? {
+      id: first ? FIRST_DOCUMENT : library.newId(),
+      name: 'Untitled',
+      used: this.now(),
+      file: null
+    };
+    const stored = await library.repository(entry.id).load();
+    await this.swapTo({ ...entry, used: this.now() }, stored, first ? this.seed : undefined);
+    this.edited = false;
+    this.publishDocument();
+  }
+
+  /**
+   * Puts a fresh workbook in front of somebody, from a snapshot or a
+   * seed, and makes `entry` the open document.
+   *
+   * Everything this service remembers *about* the last workbook goes
+   * with it: the paints a rule interned, the chart with handles round
+   * it, the matches of a search, the block last copied and where it
+   * came from. Each of those is an index or a position into a
+   * workbook that is no longer the one on screen.
+   */
+  private async swapTo(
+    entry: DocumentEntry,
+    stored: SheetSnapshot | null,
+    seed?: (document: SheetDocument) => void
+  ): Promise<void> {
+    await this.repository?.flush();
+    this.restored = false;
+    const document = new SheetDocument();
+    document.columnWidths = this.defaultWidths();
+    this.document = document;
+    this.repository = this.library?.repository(entry.id) ?? this.repository;
+    this.refusal = '';
+    this.extraPaints.length = 0;
+    this.extraIds.clear();
+    this.publishedBase = 0;
+    this.selectedChart = 0;
+    this.hiddenWidths.clear();
+    this.copied = null;
+    this.clearFind();
+    if (stored === null) {
+      seed?.(document);
+      document.sheet.recalculate();
+    } else {
+      applySnapshot(document, stored);
+    }
+    this.restored = true;
+    this.entry = entry;
+    await this.library?.put(entry);
+    this.publishSheet();
+    this.publishNames('');
+    this.publishPalette();
+    if (stored === null) {
+      this.persist();
+    }
+    this.pump();
+  }
+
+  private publishDocument(): void {
+    this.documentSubject.next({
+      id: this.entry?.id ?? '',
+      name: this.entry?.name ?? '',
+      file: this.entry?.file ?? null,
+      edited: this.edited
+    });
+  }
+
+  private publishDownload(download: Omit<SheetDownload, 'serial'>): void {
+    this.downloadSerial++;
+    this.transferSubject.next({ ...this.transferSubject.value, download: { ...download, serial: this.downloadSerial } });
+  }
+
+  private report(report: string): void {
+    this.transferSubject.next({ ...this.transferSubject.value, report });
+  }
+
+  // ---------------------------------------------------------------------
   // Charts
   // ---------------------------------------------------------------------
 
@@ -1700,6 +1956,10 @@ export class SheetService {
       return;
     }
     this.repository?.save(this.snapshot());
+    if (!this.edited && this.entry !== null) {
+      this.edited = true;
+      this.publishDocument();
+    }
   }
 
   /** What every edit that is not a single keystroke has to do afterwards. */
