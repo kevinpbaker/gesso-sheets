@@ -114,7 +114,7 @@ export async function openXlsx(bytes: Uint8Array, inflate: Inflate, limits: Xlsx
     // relationships, the strings, the styles and the worksheets. A
     // file's images and pivot caches can be most of its bytes, and
     // inflating them to throw them away would be most of the time.
-    if (/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|worksheets\/[^/]+\.xml)$/i.test(name)) {
+    if (/^xl\/(workbook\.xml|_rels\/workbook\.xml\.rels|sharedStrings\.xml|styles\.xml|theme\/theme1\.xml|worksheets\/[^/]+\.xml)$/i.test(name)) {
       parts.set(name.toLowerCase(), decoder.decode(await zipRead(bytes, entry, inflate)));
     }
   }
@@ -136,7 +136,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const workbook = parseXml(workbookText);
   const targets = relationships(read('xl/_rels/workbook.xml.rels'));
   const strings = sharedStrings(read('xl/sharedStrings.xml'));
-  const formats = styles(read('xl/styles.xml'));
+  const formats = styles(read('xl/styles.xml'), themeColours(read('xl/theme/theme1.xml')));
 
   const names: XlsxName[] = [];
   let namesSkipped = 0;
@@ -247,7 +247,7 @@ function stringOf(item: XmlElement): string {
  * the ids either way — LibreOffice writes `applyFont="false"` on a
  * bold style, and the bold is real.
  */
-function styles(text: string | null): CellFormat[] {
+function styles(text: string | null, theme: readonly string[]): CellFormat[] {
   if (text === null) {
     return [DEFAULT_FORMAT];
   }
@@ -264,6 +264,15 @@ function styles(text: string | null): CellFormat[] {
   if (xfs.length === 0) {
     return [DEFAULT_FORMAT];
   }
+  const colourOf = (element: XmlElement | null): string => colourIn(element, theme);
+  const fillOf = (fill: XmlElement | undefined): string => {
+    const pattern = child(fill, 'patternFill');
+    return pattern?.attributes.patternType === 'solid' ? colourOf(child(pattern, 'fgColor')) : '';
+  };
+  const edgeOf = (edge: XmlElement | null): CellEdge => {
+    const width = EDGE_WIDTHS[edge?.attributes.style ?? ''] ?? 0;
+    return width === 0 ? { width: 0, color: '' } : { width, color: colourOf(child(edge, 'color')) };
+  };
   return xfs.map(xf => {
     const id = Number(xf.attributes.numFmtId ?? 0);
     const number = numberFormatOf(codes.get(id) ?? BUILT_IN[id] ?? 'General');
@@ -306,22 +315,114 @@ function flag(element: XmlElement | null): boolean {
 }
 
 /**
- * An `ARGB` colour as `#rrggbb`, or '' for one given by theme or index.
+ * A colour as `#rrggbb`, or '' for the default.
  *
- * Theme colours need the theme part and a tint calculation, and an
- * indexed palette is a table from 1995; both are dropped rather than
- * guessed, which draws the text in the default colour — the right
- * failure for a colour, because it is always legible.
+ * Three spellings. `rgb` is the colour itself, as ARGB. `theme` is a
+ * slot in the workbook's theme, lightened or darkened by `tint` — which
+ * is how Excel writes nearly every colour a person picks from its
+ * palette, so dropping it lost most of the colour in a real workbook.
+ * `indexed` is the 1995 palette of 64, which old files and some
+ * exporters still use; 64 and above are "the system's own colour",
+ * which is the default here. Anything else is the default too, which
+ * is the right failure for a colour: text in it is always legible.
  */
-function colourOf(element: XmlElement | null): string {
-  const rgb = element?.attributes.rgb;
-  return rgb !== undefined && /^[0-9a-f]{8}$/i.test(rgb) ? `#${rgb.slice(2).toLowerCase()}` : '';
+function colourIn(element: XmlElement | null, theme: readonly string[]): string {
+  if (element === null) {
+    return '';
+  }
+  const rgb = element.attributes.rgb;
+  let hex: string | undefined;
+  if (rgb !== undefined && /^[0-9a-f]{8}$/i.test(rgb)) {
+    hex = rgb.slice(2);
+  } else if (element.attributes.theme !== undefined) {
+    hex = theme[Number(element.attributes.theme)];
+  } else if (element.attributes.indexed !== undefined) {
+    hex = INDEXED[Number(element.attributes.indexed)];
+  }
+  if (hex === undefined) {
+    return '';
+  }
+  const tint = Number(element.attributes.tint ?? 0);
+  return `#${(Number.isFinite(tint) && tint !== 0 ? tinted(hex, tint) : hex).toLowerCase()}`;
 }
 
-function fillOf(fill: XmlElement | undefined): string {
-  const pattern = child(fill, 'patternFill');
-  return pattern?.attributes.patternType === 'solid' ? colourOf(child(pattern, 'fgColor')) : '';
+/**
+ * The theme's twelve colours, in the order a `theme` attribute counts
+ * them — which is not the order the theme part writes them. The first
+ * two pairs are swapped: SpreadsheetML's 0 is the light background and
+ * 1 the dark text, where the part lists dark first.
+ */
+function themeColours(text: string | null): string[] {
+  if (text === null) {
+    return [];
+  }
+  const scheme = findElement(parseXml(text), 'clrScheme');
+  const order = ['lt1', 'dk1', 'lt2', 'dk2', 'accent1', 'accent2', 'accent3', 'accent4', 'accent5', 'accent6', 'hlink', 'folHlink'];
+  return order.map(name => {
+    const slot = child(scheme, name);
+    const colour = slot?.children[0];
+    return colour?.attributes.val !== undefined && colour.name === 'srgbClr'
+      ? colour.attributes.val
+      : (colour?.attributes.lastClr ?? '');
+  });
 }
+
+function findElement(element: XmlElement, name: string): XmlElement | null {
+  if (element.name === name) {
+    return element;
+  }
+  for (const each of element.children) {
+    const found = findElement(each, name);
+    if (found !== null) {
+      return found;
+    }
+  }
+  return null;
+}
+
+/**
+ * A colour lightened (a tint above zero) or darkened (below), as
+ * Excel does it: on the lightness in HSL, moved that fraction of the
+ * way to white or to black.
+ */
+function tinted(hex: string, tint: number): string {
+  const [r, g, b] = [0, 2, 4].map(at => parseInt(hex.slice(at, at + 2), 16) / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  let lightness = (max + min) / 2;
+  const delta = max - min;
+  const saturation = delta === 0 ? 0 : delta / (1 - Math.abs(2 * lightness - 1));
+  let hue = 0;
+  if (delta !== 0) {
+    hue = max === r ? ((g - b) / delta) % 6 : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  }
+  lightness = tint < 0 ? lightness * (1 + tint) : lightness * (1 - tint) + tint;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const x = chroma * (1 - Math.abs((((hue % 6) + 6) % 6) % 2 - 1));
+  const m = lightness - chroma / 2;
+  const sector = Math.floor((((hue % 6) + 6) % 6));
+  const [r1, g1, b1] = [
+    [chroma, x, 0],
+    [x, chroma, 0],
+    [0, chroma, x],
+    [0, x, chroma],
+    [x, 0, chroma],
+    [chroma, 0, x]
+  ][sector];
+  return [r1, g1, b1].map(value => Math.round((value + m) * 255).toString(16).padStart(2, '0')).join('');
+}
+
+/** The legacy palette an `indexed` colour counts into; Excel's defaults. */
+const INDEXED: readonly string[] = [
+  '000000', 'FFFFFF', 'FF0000', '00FF00', '0000FF', 'FFFF00', 'FF00FF', '00FFFF',
+  '000000', 'FFFFFF', 'FF0000', '00FF00', '0000FF', 'FFFF00', 'FF00FF', '00FFFF',
+  '800000', '008000', '000080', '808000', '800080', '008080', 'C0C0C0', '808080',
+  '9999FF', '993366', 'FFFFCC', 'CCFFFF', '660066', 'FF8080', '0066CC', 'CCCCFF',
+  '000080', 'FF00FF', 'FFFF00', '00FFFF', '800080', '800000', '008080', '0000FF',
+  '00CCFF', 'CCFFFF', 'CCFFCC', 'FFFF99', '99CCFF', 'FF99CC', 'CC99FF', 'FFCC99',
+  '3366FF', '33CCCC', '99CC00', 'FFCC00', 'FF9900', 'FF6600', '666699', '969696',
+  '003366', '339966', '003300', '333300', '993300', '993366', '333399', '333333'
+];
 
 function alignOf(horizontal: string | undefined): CellPaint['align'] {
   switch (horizontal) {
@@ -348,10 +449,6 @@ const EDGE_WIDTHS: Readonly<Record<string, number>> = {
   double: 3
 };
 
-function edgeOf(edge: XmlElement | null): CellEdge {
-  const width = EDGE_WIDTHS[edge?.attributes.style ?? ''] ?? 0;
-  return width === 0 ? { width: 0, color: '' } : { width, color: colourOf(child(edge, 'color')) };
-}
 
 /**
  * The formats Excel numbers without writing out, by id.

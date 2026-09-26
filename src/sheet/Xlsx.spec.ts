@@ -100,6 +100,13 @@ describe('a workbook LibreOffice wrote', () => {
   });
 });
 
+/** Two colours within two in 255 on every channel. */
+function near(actual: string, expected: string): boolean {
+  const channels = (hex: string) => [1, 3, 5].map(at => parseInt(hex.slice(at, at + 2), 16));
+  const [a, b] = [channels(actual), channels(expected)];
+  return actual.length === 7 && a.every((value, at) => Math.abs(value - b[at]) <= 2);
+}
+
 /** A workbook of one sheet, from the sheet's XML and whatever else a spec needs. */
 function book(sheet: string, extra: Record<string, string> = {}, limits = LIMITS): XlsxBook {
   const parts: Record<string, string> = {
@@ -185,6 +192,40 @@ describe('the shapes Excel writes', () => {
     const read = book('<cols><col min="2" max="3" hidden="1"/><col min="4" max="4" width="20" customWidth="1"/></cols><sheetData/>');
     const widths = read.sheets[0].columnWidths;
     expect([widths.get(1), widths.get(2), widths.get(3)]).toEqual([0, 0, 140]);
+  });
+
+  /**
+   * How Excel writes nearly every colour a person picks: a theme slot
+   * and a tint. The expected colours are the ones Excel shows for those
+   * swatches, so the tint arithmetic is held to Excel and not to itself
+   * — within two in 255 a channel, because Excel's own rounding in HLS
+   * is not published and differs from the documented formula by that
+   * much, which nobody can see.
+   */
+  it('reads theme colours and their tints, and the legacy palette', () => {
+    const theme = (accent: string) =>
+      `<a:theme><a:themeElements><a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>` +
+      `<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2>` +
+      `<a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="${accent}"/></a:accent1>` +
+      `</a:clrScheme></a:themeElements></a:theme>`;
+    const styles =
+      '<styleSheet><fonts count="2"><font><sz val="11"/></font><font><sz val="11"/><color theme="1"/></font></fonts>' +
+      '<fills count="4"><fill><patternFill patternType="none"/></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor theme="4" tint="0.79998168889431442"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor theme="4" tint="-0.249977111117893"/></patternFill></fill>' +
+      '<fill><patternFill patternType="solid"><fgColor indexed="22"/></patternFill></fill></fills>' +
+      '<cellXfs count="4"><xf fontId="0" fillId="0"/><xf fontId="1" fillId="1"/><xf fontId="0" fillId="2"/><xf fontId="0" fillId="3"/></cellXfs></styleSheet>';
+    const sheet = '<sheetData><row r="1"><c r="A1" s="1"><v>1</v></c><c r="B1" s="2"><v>1</v></c><c r="C1" s="3"><v>1</v></c></row></sheetData>';
+    const office = book(sheet, { 'xl/styles.xml': styles, 'xl/theme/theme1.xml': theme('4472C4') }).sheets[0];
+    const at = (column: number) => office.formats[office.cells[column].style].paint;
+    // "Blue, Accent 1, Lighter 80%", and the text colour, which is slot 1: dark 1.
+    expect(near(at(0).fill, '#d9e1f2')).toBe(true);
+    expect(at(0).color).toBe('#000000');
+    // The 2007 theme's accent, darker by a quarter, as Excel shows it.
+    const old = book(sheet, { 'xl/styles.xml': styles, 'xl/theme/theme1.xml': theme('4F81BD') }).sheets[0];
+    expect(near(old.formats[old.cells[1].style].paint.fill, '#366092')).toBe(true);
+    // The legacy palette's silver.
+    expect(at(2).fill).toBe('#c0c0c0');
   });
 
   it('refuses a file that is not a workbook, with a sentence', async () => {
