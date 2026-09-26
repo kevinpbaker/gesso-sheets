@@ -4,6 +4,7 @@ import { type ComponentContext, type Inputs } from 'gesso-framework';
 import { Grid } from './Grid';
 import { Sheet } from './SheetContract';
 import { editing } from './SheetEditing';
+import { fileActions } from './Files';
 import { SheetTabs } from './SheetTabs';
 import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
@@ -39,6 +40,7 @@ export interface SheetAppProps {
 export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const edit = editing(ctx, sheet);
+  const files = fileActions(ctx, sheet);
 
   /**
    * A file dragged in from the desktop, opened.
@@ -74,7 +76,7 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
       borderColor="transparent"
       borderWidth={0}
       modifiers={[drop]}>
-      <TopBar editing={edit} proof={inputs.proof.value === true} />
+      <TopBar editing={edit} files={files} proof={inputs.proof.value === true} />
       <Grid editing={edit} />
       <SheetTabs editing={edit} />
       <StatusBar />

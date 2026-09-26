@@ -20,6 +20,12 @@
 import { isPrintable, keyAction, type KeyModifiers } from './SheetKeys';
 
 export type CommandId =
+  | 'newDocument'
+  | 'openFile'
+  | 'openRecent'
+  | 'saveDocument'
+  | 'saveDocumentAs'
+  | 'downloadCsv'
   | 'undo'
   | 'redo'
   | 'cut'
@@ -192,6 +198,18 @@ export function isReachable(command: Command, inAMenu: boolean): boolean {
 }
 
 export const COMMANDS: Readonly<Record<CommandId, Command>> = {
+  /**
+   * No key for New. Ctrl+N is the browser's, and it is the one
+   * shortcut a page is not allowed to cancel: a key that opened a
+   * browser window half the time and a blank workbook the other half
+   * would be worse than a menu item.
+   */
+  newDocument: { id: 'newDocument', label: 'New' },
+  openFile: { id: 'openFile', label: 'Open…', accelerator: { key: 'o', ctrl: true } },
+  openRecent: { id: 'openRecent', label: 'Open recent…' },
+  saveDocument: { id: 'saveDocument', label: 'Save', accelerator: { key: 's', ctrl: true } },
+  saveDocumentAs: { id: 'saveDocumentAs', label: 'Save as…', accelerator: { key: 's', ctrl: true, shift: true } },
+  downloadCsv: { id: 'downloadCsv', label: 'Download sheet as CSV' },
   undo: { id: 'undo', label: 'Undo', accelerator: { key: 'z', ctrl: true }, viaKeyTable: true },
   redo: { id: 'redo', label: 'Redo', accelerator: { key: 'y', ctrl: true }, viaKeyTable: true },
   cut: { id: 'cut', label: 'Cut', accelerator: { key: 'x', ctrl: true }, viaKeyTable: true },
@@ -497,17 +515,22 @@ export interface MenuDefinition {
 }
 
 /**
- * The bar, as it stands after Phase 8.
+ * The bar.
  *
- * Six menus, and the last one missing is File — which arrives with
- * Phase 16, when there is a file to open. A menu of disabled items is
- * a worse answer than no menu: it advertises, and then it refuses.
- *
- * Format's mnemonic is `o` rather than `f`, because File is coming
- * and will want `f` — and a mnemonic that moves once people have
- * learned it is worse than one that was never the obvious letter.
+ * File arrived with Phase 16, when there was a file to open; until
+ * then it was left off, because a menu of disabled items advertises
+ * and then refuses. Format's mnemonic is `o` rather than `f` for the
+ * reason that was written here in Phase 8: File was coming and would
+ * want `f`, and a mnemonic that moves once people have learned it is
+ * worse than one that was never the obvious letter.
  */
 export const MENUS: readonly MenuDefinition[] = [
+  {
+    id: 'file',
+    label: 'File',
+    mnemonic: 'f',
+    entries: ['newDocument', 'openFile', 'openRecent', SEPARATOR, 'saveDocument', 'saveDocumentAs', SEPARATOR, 'downloadCsv']
+  },
   {
     id: 'edit',
     label: 'Edit',

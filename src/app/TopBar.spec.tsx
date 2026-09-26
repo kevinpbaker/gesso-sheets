@@ -121,6 +121,8 @@ describe('the top bar from the keyboard', () => {
 
     it('opens a menu with ArrowDown and lists its commands', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
 
       expect(h.ui.getByRole('menu', { name: 'Edit' })).toBeDefined();
@@ -142,6 +144,8 @@ describe('the top bar from the keyboard', () => {
      */
     it('walks to the menu next door with a menu still open', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       expect(h.ui.getByRole('menu', { name: 'Edit' })).toBeDefined();
 
@@ -160,6 +164,8 @@ describe('the top bar from the keyboard', () => {
       expect(h.document.sheet.value(0, 0)).toBe(5);
 
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       await press('Enter');
 
@@ -200,6 +206,8 @@ describe('the top bar from the keyboard', () => {
 
     it('shows the accelerator beside the command', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       // Drawn in the row, so the text is under the menu item rather
       // than in its name. A menu that did not print its keys would be
@@ -210,6 +218,8 @@ describe('the top bar from the keyboard', () => {
 
     it('greys a command that cannot be run', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       // Nothing has been typed, so there is nothing to undo.
       expect(h.ui.getByRole('menuitem', { name: 'Undo', disabled: true })).toBeDefined();
@@ -222,6 +232,8 @@ describe('the top bar from the keyboard', () => {
      */
     it('takes two Escapes to get back to the sheet', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       await press('Escape');
       expect(h.ui.queryByRole('menu', { name: 'Edit' })).toBeNull();
@@ -567,6 +579,8 @@ describe('the top bar from the keyboard', () => {
      */
     it('explains Paste rather than pretending', async () => {
       await press('F10');
+      // File is first; Edit is one along.
+      await press('ArrowRight');
       await press('ArrowDown');
       await press('p');
       await press('Enter');
@@ -826,6 +840,9 @@ describe('the menu under the pointer', () => {
 
   async function openEdit(): Promise<void> {
     h.ui.fireEvent.press('F10');
+    await h.ui.settle();
+    // File is first; Edit is one along.
+    h.ui.fireEvent.press('ArrowRight');
     await h.ui.settle();
     h.ui.fireEvent.press('ArrowDown');
     await h.ui.settle();

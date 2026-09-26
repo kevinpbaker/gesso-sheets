@@ -32,9 +32,16 @@ export function ProofScreen(_inputs: Inputs<{}>, _ctx: ComponentContext) {
 }
 
 export const SHEET = route({ path: '/', component: SheetScreen });
+/**
+ * One document, by the library's id for it. The same screen as `/`,
+ * which is the last document used: which one to show is a thing
+ * `Files.ts` reads from the route and tells the application worker,
+ * so the screen itself does not change between them.
+ */
+export const DOCUMENT = route({ path: '/d/:id', component: SheetScreen });
 export const PROOF = route({ path: PROOF_PATH, component: ProofScreen });
 
-export const ROUTES = [SHEET, PROOF];
+export const ROUTES = [SHEET, DOCUMENT, PROOF];
 
 /**
  * The application's root, which is an outlet and a background.

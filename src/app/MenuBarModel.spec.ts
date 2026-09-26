@@ -21,6 +21,15 @@ function withNothingEnabled(...disabled: CommandId[]): MenuBarContext {
   return { ...everything, enabled: id => !disabled.includes(id) };
 }
 
+/**
+ * The bar with Edit focused and nothing open.
+ *
+ * These specs walk Edit's items because Edit is the menu whose items
+ * are known by heart; since File arrived in front of it, getting there
+ * is one ArrowRight, and naming it keeps the walk about Edit.
+ */
+const AT_EDIT: MenuBarState = { ...CLOSED, focused: MENUS.findIndex(menu => menu.id === 'edit') };
+
 /** Press a run of keys, from a starting state. */
 function press(from: MenuBarState, keys: readonly string[], context = everything, menus = MENUS) {
   let state = from;
@@ -61,7 +70,7 @@ describe('the bar with nothing open', () => {
 
   it('opens downward on Enter, Space and ArrowDown', () => {
     for (const key of ['Enter', ' ', 'ArrowDown']) {
-      const { state } = press(CLOSED, [key]);
+      const { state } = press(AT_EDIT, [key]);
       expect(state.open, key).toBe(true);
       expect(highlighted(state), key).toBe('undo');
     }
@@ -69,7 +78,7 @@ describe('the bar with nothing open', () => {
 
   /** ArrowUp opens onto the *last* item, which is what it means. */
   it('opens upward on ArrowUp', () => {
-    const { state } = press(CLOSED, ['ArrowUp']);
+    const { state } = press(AT_EDIT, ['ArrowUp']);
     expect(state.open).toBe(true);
     expect(highlighted(state)).toBe('gotoCell');
   });
@@ -99,7 +108,7 @@ describe('the bar with nothing open', () => {
 });
 
 describe('a menu that is open', () => {
-  const open = press(CLOSED, ['ArrowDown']).state;
+  const open = press(AT_EDIT, ['ArrowDown']).state;
 
   it('walks its items, skipping the rules between them', () => {
     // Edit opens on Undo; Redo is next; the third press has to clear
@@ -116,13 +125,13 @@ describe('a menu that is open', () => {
 
   it('skips a command that cannot be chosen', () => {
     const context = withNothingEnabled('redo');
-    const state = press(CLOSED, ['ArrowDown'], context).state;
+    const state = press(AT_EDIT, ['ArrowDown'], context).state;
     expect(highlighted(press(state, ['ArrowDown'], context).state)).toBe('cut');
   });
 
   it('opens onto the first command that can be chosen', () => {
     const context = withNothingEnabled('undo', 'redo');
-    expect(highlighted(press(CLOSED, ['ArrowDown'], context).state)).toBe('cut');
+    expect(highlighted(press(AT_EDIT, ['ArrowDown'], context).state)).toBe('cut');
   });
 
   /**
@@ -132,12 +141,12 @@ describe('a menu that is open', () => {
    */
   it('moves to the menu next door and stays open', () => {
     const next = press(open, ['ArrowRight']).state;
-    expect(next.focused).toBe(1);
+    expect(next.focused).toBe(AT_EDIT.focused + 1);
     expect(next.open).toBe(true);
-    expect(highlighted(next)).toBe(MENUS[1].entries[0]);
+    expect(highlighted(next)).toBe(MENUS[AT_EDIT.focused + 1].entries[0]);
 
     const back = press(next, ['ArrowLeft']).state;
-    expect(back.focused).toBe(0);
+    expect(back.focused).toBe(AT_EDIT.focused);
     expect(back.open).toBe(true);
   });
 
@@ -153,7 +162,7 @@ describe('a menu that is open', () => {
     // Force the highlight onto the disabled item the only way the
     // model allows — it never lands there on its own, which is the
     // point, but a stale state must not choose it either.
-    const stuck: MenuBarState = { focused: 0, open: true, active: 0 };
+    const stuck: MenuBarState = { focused: AT_EDIT.focused, open: true, active: 0 };
     const step = menuBarStep(stuck, 'Enter', MENUS, context);
     expect(step?.choose).toBeUndefined();
     expect(step?.state.open).toBe(true);
@@ -168,7 +177,7 @@ describe('a menu that is open', () => {
   it('closes to the bar on the first Escape and to the sheet on the second', () => {
     const first = menuBarStep(open, 'Escape', MENUS, everything);
     expect(first?.state.open).toBe(false);
-    expect(first?.state.focused).toBe(0);
+    expect(first?.state.focused).toBe(AT_EDIT.focused);
     expect(first?.dismiss).toBeUndefined();
 
     const second = menuBarStep(first!.state, 'Escape', MENUS, everything);

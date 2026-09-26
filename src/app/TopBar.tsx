@@ -16,6 +16,8 @@ import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
 import { ChartBar } from './ChartBar';
+import type { FileActions } from './Files';
+import { RecentBar } from './RecentBar';
 import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
 import { Sheet } from './SheetContract';
@@ -54,6 +56,8 @@ import { PasteHint, Shortcuts } from './Shortcuts';
  */
 export interface TopBarProps {
   readonly editing: SheetEditing;
+  /** Open, save and the rest; see `Files.ts`. */
+  readonly files: FileActions;
   /**
    * Whether this is the proof route, which is the only thing above
    * the grid that differs between the two.
@@ -76,6 +80,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const edit = inputs.editing.value;
   const status = sheet.view.status;
   const proof = inputs.proof.value === true;
+  const files = inputs.files.value;
 
   /** A property of the active cell's paint, as something to bind. */
   const on = (read: (paint: CellPaint) => boolean): Observable<boolean> =>
@@ -153,6 +158,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const rulesTab = internalState<RulesTab>('format');
   /** Whether the chart bar is open; see `ruling` for why it is its own. */
   const charting = internalState(false);
+  /** Whether the recent-files bar is open; see `ruling` for why it is its own. */
+  const recenting = internalState(false);
   const shortcutsOpen = internalState(false);
   /**
    * The line under the bar: what the name box is waiting for, or why
@@ -182,7 +189,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    */
   let rulesFieldNode: UiNode | null = null;
   let chartFieldNode: UiNode | null = null;
-  let wanted: 'name' | 'find' | 'rules' | 'chart' | null = null;
+  let recentFieldNode: UiNode | null = null;
+  let wanted: 'name' | 'find' | 'rules' | 'chart' | 'recent' | null = null;
 
   /**
    * Focus a field and select what is in it.
@@ -213,7 +221,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * waiting for a node that had already arrived. Ctrl+F opened a bar
    * and left the person typing into the sheet behind it.
    */
-  const askFor = (which: 'name' | 'find' | 'rules' | 'chart', open?: () => void): void => {
+  const askFor = (which: 'name' | 'find' | 'rules' | 'chart' | 'recent', open?: () => void): void => {
     wanted = which;
     open?.();
     const node =
@@ -223,22 +231,26 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           ? findFieldNode
           : which === 'rules'
             ? rulesFieldNode
-            : chartFieldNode;
+            : which === 'chart'
+              ? chartFieldNode
+              : recentFieldNode;
     if (wanted === which && node !== null) {
       wanted = null;
       take(node);
     }
   };
 
-  const arrived = (which: 'name' | 'find' | 'rules' | 'chart') => (node: UiNode | null) => {
+  const arrived = (which: 'name' | 'find' | 'rules' | 'chart' | 'recent') => (node: UiNode | null) => {
     if (which === 'name') {
       nameBoxNode = node;
     } else if (which === 'find') {
       findFieldNode = node;
     } else if (which === 'rules') {
       rulesFieldNode = node;
-    } else {
+    } else if (which === 'chart') {
       chartFieldNode = node;
+    } else {
+      recentFieldNode = node;
     }
     if (node !== null && wanted === which) {
       wanted = null;
@@ -367,6 +379,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         notice.value = '';
         askFor('name');
         return;
+      case 'newDocument':
+        files.newDocument();
+        break;
+      case 'openFile':
+        files.open();
+        break;
+      case 'openRecent':
+        askFor('recent', () => (recenting.value = true));
+        return;
+      case 'saveDocument':
+        files.save(false);
+        break;
+      case 'saveDocumentAs':
+        files.save(true);
+        break;
+      case 'downloadCsv':
+        files.exportCsv();
+        break;
       /**
        * `Insert ▸ Name`, which is the name box with a sentence under
        * it.
@@ -656,6 +686,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       pasteHint.value = false;
       return true;
     }
+    if (recenting.value) {
+      recenting.value = false;
+      return true;
+    }
     if (charting.value) {
       // A chart keeps its handles when the bar closes; Escape here is
       // about the bar, and clicking the grid is what lets a chart go.
@@ -750,6 +784,20 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * The chart bar, built once and switched in — for the reason the
    * find bar and the rules bar are.
    */
+  /** The recent-files bar, built once and switched in, for the reason the others are. */
+  const recentBar = [
+    <box key="recentrule" width={percent(100)} height={1} backgroundColor="border" />,
+    <RecentBar
+      key="recent"
+      files={files}
+      onClose={() => {
+        recenting.value = false;
+        edit.focusSheet();
+      }}
+      ref={arrived('recent')}
+    />
+  ];
+
   const chartBar = [
     <box key="chartrule" width={percent(100)} height={1} backgroundColor="border" />,
     <ChartBar key="chart" editing={edit} onClose={() => (charting.value = false)} ref={arrived('chart')} />
@@ -834,7 +882,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
               claimed !== nameBoxNode &&
               claimed !== findFieldNode &&
               claimed !== rulesFieldNode &&
-              claimed !== chartFieldNode
+              claimed !== chartFieldNode &&
+              claimed !== recentFieldNode
             ) {
               edit.focusSheet();
             }
@@ -878,6 +927,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       </row>
       {ruling.pipe(map(open => (open ? rulesBar : [])))}
       {charting.pipe(map(open => (open ? chartBar : [])))}
+      {recenting.pipe(map(open => (open ? recentBar : [])))}
       {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />

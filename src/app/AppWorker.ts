@@ -1,7 +1,7 @@
 import { serveChannels } from 'gesso-framework';
 
 import { COLUMN_COUNT } from './dimensions';
-import { OpfsSheetRepository } from './OpfsSheetRepository';
+import { OpfsSheetLibrary } from './OpfsSheetLibrary';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
@@ -18,24 +18,22 @@ import { SheetService } from './SheetService';
  * below is testable with bare vitest in node, and `boundaries.spec.ts`
  * fails the build if that stops being true.
  *
- * The order of the last two lines matters. `serveChannels` is called
- * synchronously, before any await, or the handshake is missed and the
- * render worker binds to a channel nobody is serving. Reading the file
- * happens after, and the screen shows an empty grid for the frame or
- * two it takes — which is honest, and better than a seeded sheet that
- * is about to be replaced by the real one.
+ * `serveChannels` is called synchronously, before any await, or the
+ * handshake is missed and the render worker binds to a channel nobody
+ * is serving. Nothing is read here at all: which workbook to show is
+ * the route's, and the route is in the render worker, so the first
+ * thing it sends is `openDocument`. The screen shows an empty grid for
+ * the frame or two that takes — which is honest, and better than a
+ * seeded sheet that is about to be replaced by the real one.
  *
  * `gesso-vite-plugin` finds this file by name and writes the
  * `appLogicWorker` construction into `createApp`, so `main.ts` names
  * neither worker.
  */
-const document = new SheetDocument();
-const repository = new OpfsSheetRepository('gessosheet.json', COLUMN_COUNT);
-const service = new SheetService(document, { repository });
+const library = new OpfsSheetLibrary(COLUMN_COUNT);
+const service = new SheetService(new SheetDocument(), { library, seed });
 
 serveChannels([sheetChannel(service)]);
-
-void service.restore(seed);
 
 // A tab being closed does not wait for a debounce. The write is
 // synchronous once it starts, which is the other half of why this

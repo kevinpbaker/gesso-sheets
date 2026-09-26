@@ -1076,7 +1076,7 @@ a choice with a cost: widen a column above a chart and the cells move
 under it. An anchor is a translation into this coordinate space
 rather than a different one, and the space had to exist first.
 
-### Phase 16 — Files that leave the tab
+### Phase 16 — Files that leave the tab — **done**
 
 CSV import and export, `.gsheet` open and save-as through the File
 System Access API, several documents open at once, recent files, and
@@ -1103,6 +1103,61 @@ it as one is how spreadsheet injection works.
 **Exit:** Phase 6's proof, widened — import a CSV exported from
 somewhere else, save it to the local disk as `.gsheet`, close the
 tab, reopen the file, and the formulas added since recalculate.
+
+**Met, in Chrome, and in node.** A CSV dropped on the window became a
+sheet of its own; four formulas were added over it; Ctrl+S wrote a
+`.gsheet` through a real `FileSystemFileHandle`; the tab was closed;
+a new, blank tab reopened the file from *Open recent*, landed on the
+same document by its handle, and recalculated 13.5, 30, 57.75 and
+101.25 — "Ready · 4 evaluated". The one thing replaced was the native
+dialog, by a function returning an OPFS handle, since automation
+cannot click one; everything past it is the shipped code. The same
+story runs in `Documents.spec.ts` against a second, empty library.
+`pnpm proof` did not move: 4.30 ms median with the chart open, as
+before.
+
+Most of it was the engine's, and it is worth saying which parts.
+Gesso could already turn a file drop into a drag — and nothing posted
+one, so the shell half is new (gesso `625e31d`), and the first spec of
+it found that every dropped file would have arrived with no bytes
+(`1efb2d3`). Files through the shell did not exist at all: `openFiles`,
+`saveFile`, `reopenFile`, `recentFiles` and `forgetFile` are new on
+`ShellService` (`0fee892`), and Ctrl+S reaching the application rather
+than Chrome's "Save page as" needed `interceptKey` (`059976c`).
+
+Four decisions to carry forward.
+
+**A tab is a document.** "Several documents open at once" is several
+tabs, each at `/d/<id>`, each with its own copy in OPFS and an index
+of them beside it. Holding many in one tab would have meant a service
+that is not bound to one workbook, and a browser already has tabs.
+`/` is the last used, `/d/new` a blank one, and both are replaced with
+the real id as soon as it is known, so a reload reopens what was
+there. The first document keeps `gessosheet.json`, so a profile from
+before this phase opens where it was.
+
+**A document is not a file.** The copy in OPFS is saved on every edit
+whether or not anybody chose a file; a file is where it was last saved
+*to*. That is how a tab closes without a Save and loses nothing, while
+Save still means something — and why the status line says *edited*
+only for a document that has a file to differ from.
+
+**A handle crosses as a number.** The shell keeps every
+`FileSystemFileHandle` in IndexedDB and hands out its key, which is
+all "recent files" is. A download has no handle, so the next Save asks
+again — the honest answer in Firefox and Safari, which cannot write
+back to a file they did not open.
+
+**A CSV is data.** `=1+2` arriving in one is text, formatted Text so it
+stays text through an edit and a reload; on the way out, a text value
+another program would run gets OWASP's apostrophe, and a negative
+number, which is not text, does not.
+
+Found on the way and fixed with it: a viewport naming a sheet that is
+not showing used to *switch* to it, which made two tab changes in one
+turn a ping-pong neither thread could leave. Two files dropped at once
+found it. A viewport now answers for the sheet that is showing, and
+switching is `activateSheet`'s alone.
 
 ---
 

@@ -35,6 +35,14 @@ if (host === null) {
 }
 
 const panel = isProofPath(location.pathname) ? proofPanel(host) : null;
-const app = createApp({ ...(panel?.options ?? {}), history: { mode: 'path' } });
+const app = createApp({
+  ...(panel?.options ?? {}),
+  history: { mode: 'path' },
+  // Save and Open are the workbook's, not the page's. The shell has to
+  // say so before the render worker has heard of the key, or Chrome's
+  // "Save page as" opens over the sheet; see `interceptKey`.
+  interceptKey: event =>
+    (event.ctrlKey || event.metaKey) && !event.altKey && (event.key.toLowerCase() === 's' || event.key.toLowerCase() === 'o')
+});
 panel?.attach(app);
 app.mount(host);
