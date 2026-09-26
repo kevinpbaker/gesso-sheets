@@ -31,6 +31,7 @@ import {
   bold,
   currencyDollar,
   italic,
+  paintBrush,
   percentBadge,
   underline
 } from './heroicons';
@@ -89,6 +90,7 @@ export const ICONS = {
   alignLeft: bars3BottomLeft,
   alignCenter: barsThreeBottomCentre,
   alignRight: bars3BottomRight,
+  painter: paintBrush,
   currency: currencyDollar,
   percent: percentBadge,
   recalculate: arrowPath

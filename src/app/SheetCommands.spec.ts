@@ -39,7 +39,10 @@ describe('the command table', () => {
     // because at the moment the key goes down there is nothing to
     // paste. The text arrives a moment later as a Paste event. The
     // menu still advertises Ctrl+V, and that is correct.
-    paste: action => action === null
+    paste: action => action === null,
+    // Ctrl+Shift+V is the browser's paste as plain text, and the grid
+    // lands the Paste event it sends as values; see Grid's onKey.
+    pasteValues: action => action === null
   };
 
   it('advertises the key the key table actually answers', () => {

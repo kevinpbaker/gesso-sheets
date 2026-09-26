@@ -25,6 +25,7 @@ import {
   NO_FIND,
   PLAIN_PAINT,
   type SheetClipboard,
+  type SheetPasteMode,
   type SheetEditor,
   type SheetNames,
   type SheetExplain,
@@ -73,7 +74,11 @@ import { writeXlsx } from '../sheet/XlsxWrite';
 import { openXlsx, XlsxError } from '../sheet/Xlsx';
 import {
   clearRect,
-  copyRect,
+  copiedOf,
+  moveCopied,
+  pasteCopied,
+  transposedText,
+  type Copied,
   currentRegion,
   fillRect,
   fillTarget,
@@ -81,7 +86,6 @@ import {
   pasteBlock,
   rectOf,
   writeRect,
-  type CopyOrigin,
   type Rect
 } from './SheetRanges';
 
@@ -211,7 +215,7 @@ export class SheetService {
   private readonly editorSubject: BehaviorSubject<SheetEditor>;
   private readonly namesSubject: BehaviorSubject<SheetNames>;
   private readonly statusSubject: BehaviorSubject<SheetStatus>;
-  private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0 });
+  private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0, marked: null });
   private readonly transferSubject = new BehaviorSubject<SheetTransfer>({ download: null, report: '' });
   private readonly documentSubject = new BehaviorSubject<SheetDocumentView>(NO_DOCUMENT);
   /** The open document's entry in the library, or null without one. */
@@ -285,7 +289,7 @@ export class SheetService {
    * out of Excel means what it says, and moving references that were
    * never relative to this sheet would be inventing an intent.
    */
-  private copied: CopyOrigin | null = null;
+  private copied: Copied | null = null;
   private serial = 0;
 
   private viewport = { firstRow: 0, lastRow: -1, firstColumn: 0, lastColumn: -1 };
@@ -701,6 +705,7 @@ export class SheetService {
   }
 
   setCell(row: number, column: number, input: string): void {
+    this.editedOverMark();
     // What the last dropped file became is news until somebody starts
     // working, and then it is clutter.
     if (this.transferSubject.value.report !== '') {
@@ -765,12 +770,14 @@ export class SheetService {
   }
 
   undo(): void {
+    this.editedOverMark();
     if (this.document.undo()) {
       this.afterHistory();
     }
   }
 
   redo(): void {
+    this.editedOverMark();
     if (this.document.redo()) {
       this.afterHistory();
     }
@@ -778,30 +785,118 @@ export class SheetService {
 
   copy(cut: boolean): void {
     const rect = rectOf(this.document.selection);
-    const text = copyRect(this.document, rect);
-    this.copied = { text, row: rect.firstRow, column: rect.firstColumn };
+    this.copied = copiedOf(this.document, rect, cut);
     this.serial++;
-    this.clipboardSubject.next({ text, serial: this.serial });
-    if (cut) {
-      clearRect(this.document, rect);
-      this.afterEdit();
-    }
+    this.clipboardSubject.next({
+      text: this.copied.text,
+      serial: this.serial,
+      marked: { sheet: this.document.active, ...rect, cut }
+    });
   }
 
-  paste(text: string): void {
+  /**
+   * Text from the clipboard, at the selection.
+   *
+   * When it is what this sheet last copied, the copy is pasted from
+   * what it was when it was copied — its formulas moved, its formats
+   * with it — and a cut moves the cells and everything that pointed at
+   * them. Text from anywhere else is written as it arrived, turned on
+   * its side for `transposed`; it has no formats to paste.
+   */
+  paste(text: string, mode: SheetPasteMode = 'all'): void {
     const at = rectOf(this.document.selection);
-    const written = pasteBlock(this.document, text, { row: at.firstRow, column: at.firstColumn }, this.copied);
+    const corner = { row: at.firstRow, column: at.firstColumn };
+    const copied = this.copied !== null && this.copied.text === text ? this.copied : null;
+    let written: Rect;
+    if (copied !== null && copied.cut && mode === 'all') {
+      written = moveCopied(this.document, copied, corner, this.document.active);
+      // A cut is pasted once; what is left is an ordinary copy of the
+      // cells where they are now.
+      this.copied = null;
+      this.clipboardSubject.next({ ...this.clipboardSubject.value, marked: null });
+    } else if (copied !== null) {
+      written = pasteCopied(this.document, copied, corner, mode);
+    } else if (mode === 'formats') {
+      this.report('Formats can only be pasted from a copy made in this sheet.');
+      return;
+    } else {
+      written = pasteBlock(this.document, mode === 'transposed' ? transposedText(text) : text, corner, null);
+    }
     this.document.setSelection(written.firstRow, written.firstColumn, written.lastRow, written.lastColumn);
     this.selectionSubject.next(this.document.selection);
     this.afterEdit();
   }
 
+  pasteSpecial(mode: SheetPasteMode): void {
+    if (this.copied === null) {
+      this.report('Copy something first: Paste special pastes what this sheet last copied.');
+      return;
+    }
+    this.paste(this.copied.text, mode);
+  }
+
+  unmark(): void {
+    if (this.clipboardSubject.value.marked === null) {
+      return;
+    }
+    // A cut called off is nothing to paste; a copy stays pasteable
+    // without its outline, as in Excel.
+    if (this.copied?.cut === true) {
+      this.copied = null;
+    }
+    this.clipboardSubject.next({ ...this.clipboardSubject.value, marked: null });
+  }
+
+  /**
+   * The format painter's source: the formats of the selection when it
+   * was picked up, apart from the clipboard, which the painter must not
+   * disturb — somebody can copy, paint, and still paste what they copied.
+   */
+  private painted: Copied | null = null;
+
+  pickFormats(): void {
+    this.painted = copiedOf(this.document, rectOf(this.document.selection), false);
+  }
+
+  paintFormats(): void {
+    const source = this.painted;
+    if (source === null) {
+      return;
+    }
+    const target = rectOf(this.document.selection);
+    const height = source.formats.length;
+    const width = source.formats[0]?.length ?? 0;
+    // A target no larger than a click is the source's size from there.
+    const lastRow = target.lastRow === target.firstRow ? target.firstRow + height - 1 : target.lastRow;
+    const lastColumn = target.lastColumn === target.firstColumn ? target.firstColumn + width - 1 : target.lastColumn;
+    this.document.transact(() => {
+      for (let row = target.firstRow; row <= lastRow; row++) {
+        for (let column = target.firstColumn; column <= lastColumn; column++) {
+          const format = source.formats[(row - target.firstRow) % height]?.[(column - target.firstColumn) % width];
+          if (format !== undefined) {
+            this.document.setFormat(row, column, format);
+          }
+        }
+      }
+    });
+    this.afterFormat();
+  }
+
+  /** An edit ends the outline: what is marked may no longer be what was copied. */
+  private editedOverMark(): void {
+    if (this.clipboardSubject.value.marked !== null) {
+      this.unmark();
+    }
+  }
+
   clearRange(): void {
+    this.editedOverMark();
     clearRect(this.document, rectOf(this.document.selection));
     this.afterEdit();
   }
 
   fill(toRow: number, toColumn: number): void {
+    this.editedOverMark();
     const source = rectOf(this.document.selection);
     const target = fillTarget(source, toRow, toColumn);
     fillRect(this.document, source, target);
@@ -1041,6 +1136,7 @@ export class SheetService {
    * key that silently does nothing nine times out of ten.
    */
   fillDown(): void {
+    this.editedOverMark();
     const rect = rectOf(this.document.selection);
     if (rect.lastRow > rect.firstRow) {
       this.fillWithin({ ...rect, lastRow: rect.firstRow }, rect);
@@ -1059,6 +1155,7 @@ export class SheetService {
    * Excel's rule, and the fill nobody wants to drag for.
    */
   fillToData(): void {
+    this.editedOverMark();
     const rect = rectOf(this.document.selection);
     const { rowCount, columnCount } = this.geometrySubject.value;
     const filled = (column: number, row: number): boolean =>
@@ -1082,6 +1179,7 @@ export class SheetService {
   }
 
   fillRight(): void {
+    this.editedOverMark();
     const rect = rectOf(this.document.selection);
     if (rect.lastColumn > rect.firstColumn) {
       this.fillWithin({ ...rect, lastColumn: rect.firstColumn }, rect);
@@ -1239,10 +1337,12 @@ export class SheetService {
    * One step on the undo stack however many cells it touched.
    */
   format(change: SheetFormatChange): void {
+    this.editedOverMark();
     this.applyToSelection(format => applyChange(format, change));
   }
 
   clearFormat(): void {
+    this.editedOverMark();
     this.applyToSelection(() => DEFAULT_FORMAT);
   }
 
@@ -1383,6 +1483,7 @@ export class SheetService {
    * guess about whether the first row is a heading.
    */
   sortRange(column: number, ascending: boolean, widen: boolean): void {
+    this.editedOverMark();
     const { rowCount, columnCount } = this.geometrySubject.value;
     const at = this.document.selection;
     const selected = rectOf(at);
@@ -1716,6 +1817,7 @@ export class SheetService {
    * is what says whether that is affordable; see the phase's notes.
    */
   private structural(shift: Shift): void {
+    this.editedOverMark();
     this.document.applyShift(shift);
     this.publishGeometry();
     this.publishWindow();
@@ -2035,6 +2137,7 @@ export class SheetService {
     this.selectedChart = 0;
     this.hiddenWidths.clear();
     this.copied = null;
+    this.clipboardSubject.next({ ...this.clipboardSubject.value, marked: null });
     this.clearFind();
     if (stored === null) {
       seed?.(document);

@@ -1,5 +1,9 @@
+import { DEFAULT_FORMAT, type CellFormat } from '../sheet/Format';
+import { moveFormula } from '../sheet/Move';
 import { rewriteFormula } from '../sheet/Rewrite';
 import { fromTsv, toTsv, type Block } from '../sheet/Tsv';
+import { isError, type CellValue } from '../sheet/Values';
+import { literalOf } from '../sheet/Workbook';
 import type { SheetDocument } from './SheetDocument';
 import type { SheetSelection } from './SheetContract';
 
@@ -280,4 +284,197 @@ export function looksLikeHeader(document: SheetDocument, rect: Rect): boolean {
   // text: no evidence either way, and leaving the first row in place
   // is the answer that cannot scramble a heading into the data.
   return sawText;
+}
+
+/**
+ * A block as it was when it was copied: what was typed, what it came
+ * to, and how it was formatted, cell by cell.
+ *
+ * Kept whole rather than re-read at paste time because the paste may
+ * be onto the block itself, or after the source has changed — and
+ * because a cut is pasted from here after the source is gone.
+ */
+export interface Copied {
+  /** The text put on the clipboard, which is how a paste knows it is this copy. */
+  readonly text: string;
+  readonly sheet: number;
+  readonly rect: Rect;
+  readonly cut: boolean;
+  readonly inputs: readonly (readonly string[])[];
+  readonly values: readonly (readonly CellValue[])[];
+  readonly formats: readonly (readonly CellFormat[])[];
+}
+
+export function copiedOf(document: SheetDocument, rect: Rect, cut: boolean): Copied {
+  const inputs: string[][] = [];
+  const values: CellValue[][] = [];
+  const formats: CellFormat[][] = [];
+  for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+    const typed: string[] = [];
+    const came: CellValue[] = [];
+    const looks: CellFormat[] = [];
+    for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+      typed.push(document.sheet.input(row, column));
+      came.push(document.sheet.value(row, column));
+      looks.push(document.formatAt(row, column));
+    }
+    inputs.push(typed);
+    values.push(came);
+    formats.push(looks);
+  }
+  return { text: toTsv(inputs), sheet: document.active, rect, cut, inputs, values, formats };
+}
+
+/** What Paste special can paste. */
+export type PasteMode = 'all' | 'values' | 'formats' | 'transposed';
+
+const TEXT_FORMAT: CellFormat = { ...DEFAULT_FORMAT, number: { kind: 'text' } };
+
+/**
+ * A copied block written at a corner, in one of the four ways.
+ *
+ * - `all` is what was typed, with formulas moved by how far they went,
+ *   and the formats with them;
+ * - `values` is what the cells came to, as literals — a formula lands
+ *   as its answer — into the formats already there, as in Excel. Text
+ *   that would not read back as itself is kept as text;
+ * - `formats` is the formats and nothing else;
+ * - `transposed` is `all` with rows as columns, each formula moved by
+ *   how far its own cell went.
+ */
+export function pasteCopied(document: SheetDocument, copied: Copied, at: { row: number; column: number }, mode: PasteMode): Rect {
+  const rows = copied.inputs.length;
+  const columns = copied.inputs[0]?.length ?? 0;
+  const flipped = mode === 'transposed';
+  const place = (row: number, column: number) =>
+    flipped ? { row: at.row + column, column: at.column + row } : { row: at.row + row, column: at.column + column };
+  document.transact(() => {
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < columns; column++) {
+        const to = place(row, column);
+        if (mode !== 'values') {
+          document.setFormat(to.row, to.column, copied.formats[row][column]);
+        }
+        if (mode === 'formats') {
+          continue;
+        }
+        if (mode === 'values') {
+          const value = copied.values[row][column];
+          const text = literalText(value);
+          if (typeof value === 'string' && literalOf(value) !== value) {
+            document.setFormat(to.row, to.column, TEXT_FORMAT);
+          }
+          document.setCell(to.row, to.column, text);
+          continue;
+        }
+        const from = { row: copied.rect.firstRow + row, column: copied.rect.firstColumn + column };
+        const input = copied.inputs[row][column];
+        const rowDelta = to.row - from.row;
+        const columnDelta = to.column - from.column;
+        document.setCell(to.row, to.column, rowDelta === 0 && columnDelta === 0 ? input : rewriteFormula(input, rowDelta, columnDelta));
+      }
+    }
+  });
+  const height = flipped ? columns : rows;
+  const width = flipped ? rows : columns;
+  return { firstRow: at.row, lastRow: at.row + height - 1, firstColumn: at.column, lastColumn: at.column + width - 1 };
+}
+
+/** A value as the literal that types it back. */
+function literalText(value: CellValue): string {
+  if (value === null) {
+    return '';
+  }
+  if (typeof value === 'boolean') {
+    return value ? 'TRUE' : 'FALSE';
+  }
+  if (isError(value)) {
+    return `=${value.code}`;
+  }
+  return String(value);
+}
+
+/** Text from somewhere else, turned on its side. */
+export function transposedText(text: string): string {
+  const block = fromTsv(text);
+  const width = Math.max(0, ...block.map(line => line.length));
+  const out: string[][] = [];
+  for (let column = 0; column < width; column++) {
+    out.push(block.map(line => line[column] ?? ''));
+  }
+  return toTsv(out);
+}
+
+/**
+ * A cut, pasted: the block moves, and every formula in the workbook
+ * that pointed into it points at the same cells in their new place —
+ * see `Move.ts`. One step of undo, whatever it touched.
+ */
+export function moveCopied(document: SheetDocument, copied: Copied, at: { row: number; column: number }, onSheet: number): Rect {
+  const names = document.book.sheetNames();
+  const from = names[copied.sheet];
+  const to = names[onSheet];
+  const rows = copied.inputs.length;
+  const columns = copied.inputs[0]?.length ?? 0;
+  const target: Rect = { firstRow: at.row, lastRow: at.row + rows - 1, firstColumn: at.column, lastColumn: at.column + columns - 1 };
+  if (from === undefined || to === undefined) {
+    return target;
+  }
+  const move = {
+    sheet: from,
+    ...copied.rect,
+    rowDelta: at.row - copied.rect.firstRow,
+    columnDelta: at.column - copied.rect.firstColumn,
+    ...(onSheet === copied.sheet ? {} : { toSheet: to })
+  };
+  const inBlock = (sheet: number, row: number, column: number, rect: Rect): boolean =>
+    row >= rect.firstRow && row <= rect.lastRow && column >= rect.firstColumn && column <= rect.lastColumn && sheet >= 0;
+
+  // Everything that reads the block, found before anything moves.
+  const rewrites: { sheet: number; row: number; column: number; input: string }[] = [];
+  for (let sheet = 0; sheet < document.sheetCount; sheet++) {
+    const page = document.pageAt(sheet);
+    if (page === undefined) {
+      continue;
+    }
+    for (const cell of page.sheet.entries()) {
+      if (!cell.input.startsWith('=')) {
+        continue;
+      }
+      if (sheet === copied.sheet && inBlock(sheet, cell.row, cell.column, copied.rect)) {
+        continue;
+      }
+      if (sheet === onSheet && inBlock(sheet, cell.row, cell.column, target)) {
+        continue;
+      }
+      const moved = moveFormula(cell.input, move, names[sheet] ?? '');
+      if (moved !== cell.input) {
+        rewrites.push({ sheet, row: cell.row, column: cell.column, input: moved });
+      }
+    }
+  }
+
+  const active = document.active;
+  document.transact(() => {
+    document.activate(copied.sheet);
+    for (let row = copied.rect.firstRow; row <= copied.rect.lastRow; row++) {
+      for (let column = copied.rect.firstColumn; column <= copied.rect.lastColumn; column++) {
+        document.setCell(row, column, '');
+        document.setFormat(row, column, DEFAULT_FORMAT);
+      }
+    }
+    document.activate(onSheet);
+    for (let row = 0; row < rows; row++) {
+      for (let column = 0; column < columns; column++) {
+        document.setFormat(at.row + row, at.column + column, copied.formats[row][column]);
+        document.setCell(at.row + row, at.column + column, moveFormula(copied.inputs[row][column], move, from, true));
+      }
+    }
+    for (const rewrite of rewrites) {
+      document.activate(rewrite.sheet);
+      document.setCell(rewrite.row, rewrite.column, rewrite.input);
+    }
+    document.activate(active);
+  });
+  return target;
 }

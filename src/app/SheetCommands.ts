@@ -32,6 +32,10 @@ export type CommandId =
   | 'cut'
   | 'copy'
   | 'paste'
+  | 'pasteValues'
+  | 'pasteFormats'
+  | 'pasteTransposed'
+  | 'formatPainter'
   | 'clear'
   | 'selectAll'
   | 'fillDown'
@@ -220,6 +224,21 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   cut: { id: 'cut', label: 'Cut', accelerator: { key: 'x', ctrl: true }, viaKeyTable: true },
   copy: { id: 'copy', label: 'Copy', accelerator: { key: 'c', ctrl: true }, viaKeyTable: true },
   paste: { id: 'paste', label: 'Paste', accelerator: { key: 'v', ctrl: true }, viaKeyTable: true },
+  /**
+   * From the menu, what this sheet last copied; from the keyboard, the
+   * browser's paste with the key held — which Chrome already hands over
+   * as plain text — landing as values. `viaKeyTable` because the key
+   * must reach the browser to be a paste at all.
+   */
+  pasteValues: {
+    id: 'pasteValues',
+    label: 'Paste values only',
+    accelerator: { key: 'v', ctrl: true, shift: true },
+    viaKeyTable: true
+  },
+  pasteFormats: { id: 'pasteFormats', label: 'Paste formats only' },
+  pasteTransposed: { id: 'pasteTransposed', label: 'Paste transposed' },
+  formatPainter: { id: 'formatPainter', label: 'Format painter' },
   clear: { id: 'clear', label: 'Clear contents', accelerator: { key: 'Delete' }, viaKeyTable: true },
   selectAll: { id: 'selectAll', label: 'Select all', accelerator: { key: 'a', ctrl: true }, viaKeyTable: true },
   fillDown: { id: 'fillDown', label: 'Fill down', accelerator: { key: 'd', ctrl: true } },
@@ -545,6 +564,9 @@ export const MENUS: readonly MenuDefinition[] = [
       'cut',
       'copy',
       'paste',
+      'pasteValues',
+      'pasteFormats',
+      'pasteTransposed',
       SEPARATOR,
       'clear',
       'selectAll',
@@ -612,7 +634,8 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'conditionalFormat',
       SEPARATOR,
-      'clearFormat'
+      'clearFormat',
+      'formatPainter'
     ]
   },
   {

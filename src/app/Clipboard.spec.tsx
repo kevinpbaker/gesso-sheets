@@ -265,13 +265,29 @@ describe('clipboard and fill', () => {
       expect(h.document.sheet.value(1, 0)).toBe(20);
     });
 
-    it('cuts, which copies and then empties', async () => {
+    /**
+     * A cut is marked, not emptied: the cells stay until the cut is
+     * pasted, and then they move — as they do in Excel, where a cut
+     * that is never pasted changes nothing.
+     */
+    it('cuts, which copies and empties only when it is pasted', async () => {
       await press('ArrowDown', { shift: true });
       await press('x', { ctrl: true });
 
       expect(h.copied()).toBe('2\n=A1*10');
+      expect(h.document.sheet.input(0, 0)).toBe('2');
+
+      // To C2: Home keeps the row the selection was steering.
+      await press('Home');
+      await press('ArrowRight');
+      await press('ArrowRight');
+      await paste(h.copied());
       expect(h.document.sheet.input(0, 0)).toBe('');
       expect(h.document.sheet.input(1, 0)).toBe('');
+      expect(h.document.sheet.input(1, 2)).toBe('2');
+      // The formula moved with the cell it read, so it reads it still.
+      expect(h.document.sheet.input(2, 2)).toBe('=C2*10');
+      expect(h.document.sheet.value(2, 2)).toBe(20);
     });
 
     it('undoes a paste in one press', async () => {

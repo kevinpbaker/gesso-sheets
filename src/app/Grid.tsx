@@ -63,6 +63,8 @@ import {
   PLAIN_PAINT,
   Sheet,
   type SheetExplain,
+  type SheetMarked,
+  type SheetPasteMode,
   type SheetRowFit,
   type SheetMerge,
   type SheetChart,
@@ -734,9 +736,77 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * keystroke in a formula naming two cells writes to two subjects
    * and not to every row on the screen.
    */
+  /**
+   * The block last copied or cut, while Ctrl+V would still paste it:
+   * a dashed outline that moves, so it can be seen what a paste is
+   * about to do. On the sheet it was copied from, and only there.
+   */
+  let marked: SheetMarked | null = null;
+  /** How far along the dashes have crawled; stepped by a timer while there is an outline. */
+  let marchPhase = 0;
+  let marching: ReturnType<typeof setInterval> | null = null;
+  const DASH = 5;
+  const GAP = 3;
+
+  /** Dashes along one edge, from `start` for `length`, as rectangles on the row. */
+  const dashes = (
+    into: DecorationShape[],
+    along: 'x' | 'y',
+    start: number,
+    length: number,
+    at: number,
+    offset: number
+  ): void => {
+    const period = DASH + GAP;
+    for (let from = -((offset + marchPhase) % period); from < length; from += period) {
+      const a = Math.max(0, from);
+      const b = Math.min(length, from + DASH);
+      if (b <= a) {
+        continue;
+      }
+      into.push(
+        along === 'x'
+          ? { kind: 'fill', x: start + a, y: at, width: b - a, height: OUTLINE, radius: 0, color: 'primary', after: 'children' }
+          : { kind: 'fill', x: at, y: start + a, width: OUTLINE, height: b - a, radius: 0, color: 'primary', after: 'children' }
+      );
+    }
+  };
+
+  const marqueeSegments = (rect: SheetMarked, row: number, into: DecorationShape[]): void => {
+    const left = GUTTER_WIDTH + sheetWindow.offsetOf(rect.firstColumn);
+    const right = GUTTER_WIDTH + sheetWindow.offsetOf(rect.lastColumn) + sheetWindow.widthOf(rect.lastColumn);
+    const height = heightNow(row);
+    if (height === 0 || right <= left) {
+      return;
+    }
+    // The sides run on down from row to row, so their dashes are laid
+    // out from where the row starts on the sheet, not from its top.
+    const top = sheetWindow.rowOffsetOf(row);
+    dashes(into, 'y', 0, height, left, top);
+    dashes(into, 'y', 0, height, right - OUTLINE, top);
+    if (row === rect.firstRow) {
+      dashes(into, 'x', left, right - left, 0, 0);
+    }
+    if (row === rect.lastRow) {
+      dashes(into, 'x', left, right - left, height - OUTLINE, 0);
+    }
+  };
+
   const paintOutlines = (draft: string | null): void => {
     const references = draft === null ? [] : colouredReferences(draft);
     const rows = new Map<number, DecorationShape[]>();
+    if (marked !== null) {
+      // Only the rows the window has, so a whole column copied costs
+      // thirty rows of dashes and not ten thousand.
+      const range = sheetWindow.range$.value;
+      const first = Math.max(marked.firstRow, Math.min(range.firstRow, frozen.value.rows > 0 ? 0 : range.firstRow));
+      const last = Math.min(marked.lastRow, range.lastRow);
+      for (let row = first; row <= last; row++) {
+        const shapes: DecorationShape[] = [];
+        marqueeSegments(marked, row, shapes);
+        rows.set(row, shapes);
+      }
+    }
     for (const reference of references) {
       const firstRow = Math.min(reference.range.start.row, reference.range.end.row);
       const lastRow = Math.max(reference.range.start.row, reference.range.end.row);
@@ -761,6 +831,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   };
 
   ctx.effect(edit.draft, paintOutlines);
+  const repaintOutlines = (): void => paintOutlines(edit.draftNow());
 
   const buildCell = (
     row: number,
@@ -888,6 +959,25 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       role: 'cell',
       onClick: (event: UiPointerEvent) => selectByPointer(row, column, event.modifiers.shift)
     });
+  };
+
+  /** How the next paste event lands; see Ctrl+Shift+V in `onKey`. */
+  let pasteMode: SheetPasteMode = 'all';
+
+  /**
+   * The format painter, when it is lit, paints what was just selected
+   * by the pointer — a click, a sweep's end, a header — and goes out
+   * unless it was double-clicked on.
+   */
+  const paintIfLit = (): void => {
+    const state = edit.painter.value;
+    if (state === 'off') {
+      return;
+    }
+    sheet.send.paintFormats();
+    if (state === 'once') {
+      edit.setPainter('off');
+    }
   };
 
   /** The cell the fill handle hangs off: the selection's far corner. */
@@ -1188,6 +1278,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       focus.focus(gridNode);
     }
   };
+  /** A header click, which is also somewhere the painter paints. */
+  const clickHeader = (hit: HeaderHit, extend: boolean): void => {
+    selectHeader(hit, extend);
+    paintIfLit();
+  };
   /** A drag across the letters or the numbers, from where it started. */
   let headerSweep: { kind: 'column' | 'row'; from: number } | null = null;
 
@@ -1285,6 +1380,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (gridNode !== null) {
       focus.focus(gridNode);
     }
+    paintIfLit();
   };
 
   const cell = (row: number, column: number): UiElement => {
@@ -1572,6 +1668,16 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       if (event.key === 'Escape' && edit.dismiss()) {
         event.preventDefault();
         event.stopPropagation();
+        return;
+      }
+      // Ctrl+Shift+V is the browser's paste as plain text, and the paste
+      // event it sends a moment later lands as values.
+      pasteMode = (event.key === 'v' || event.key === 'V') && (event.modifiers.ctrl || event.modifiers.meta) && event.modifiers.shift ? 'values' : 'all';
+      if (event.key === 'Escape' && (edit.painter.value !== 'off' || sheet.view.clipboard.value.marked !== null)) {
+        event.preventDefault();
+        event.stopPropagation();
+        edit.setPainter('off');
+        sheet.send.unmark();
         return;
       }
       if (event.key === 'ContextMenu' || (event.key === 'F10' && event.modifiers.shift)) {
@@ -2465,7 +2571,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       onClick: (event: UiPointerEvent) => {
         const hit = headerOfNode(event.target);
         if (hit !== null) {
-          selectHeader(hit, event.modifiers.shift);
+          clickHeader(hit, event.modifiers.shift);
         }
       },
       // Sweeping a selection out with the pointer.
@@ -2552,6 +2658,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
         }
       },
       onPanEnd: () => {
+        if (sweeping || headerSweep !== null) {
+          paintIfLit();
+        }
         sweeping = false;
         pickingFrom = null;
         headerSweep = null;
@@ -2560,7 +2669,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // engine offered this the paste was dropped: `paste` had nothing
       // editable to insert into and returned false.
       onPaste: (event: UiPasteEvent) => {
-        edit.pasteText(event.text);
+        edit.pasteText(event.text, pasteMode);
+        pasteMode = 'all';
         event.preventDefault();
       },
       scrollX,
@@ -2803,6 +2913,37 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     );
   };
   ctx.effect(sheetWindow.range$, askForWindow);
+
+  /**
+   * The copied block's outline, following the clipboard view: drawn
+   * over the sheet it came from, and marching while it is up. The
+   * timer runs only while there is an outline to move.
+   */
+  ctx.effect(combineLatest([sheet.view.clipboard, sheet.view.sheets]), ([clipboard, tabs]) => {
+    const next = clipboard.marked !== null && clipboard.marked.sheet === tabs.active ? clipboard.marked : null;
+    marked = next;
+    if (next !== null && marching === null) {
+      marching = setInterval(() => {
+        marchPhase = (marchPhase + 1) % (DASH + GAP);
+        repaintOutlines();
+      }, 110);
+    } else if (next === null && marching !== null) {
+      clearInterval(marching);
+      marching = null;
+    }
+    repaintOutlines();
+  });
+  ctx.onUnmount(() => {
+    if (marching !== null) {
+      clearInterval(marching);
+    }
+  });
+  // New rows scrolled in need their share of the outline.
+  ctx.effect(sheetWindow.range$, () => {
+    if (marked !== null) {
+      repaintOutlines();
+    }
+  });
   // A tab change is a new window over the same range, and the range
   // did not move — so `range$` says nothing and this has to ask.
   ctx.effect(sheet.view.sheets, () => askForWindow(sheetWindow.range$.value));

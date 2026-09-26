@@ -205,7 +205,25 @@ export interface SheetExplain {
 export interface SheetClipboard {
   readonly text: string;
   readonly serial: number;
+  /**
+   * The block last copied or cut, while it is still what Ctrl+V would
+   * paste: drawn with a moving dashed outline until it is pasted (a
+   * cut), Escape is pressed, or the sheet is edited. Null otherwise.
+   */
+  readonly marked: SheetMarked | null;
 }
+
+export interface SheetMarked {
+  readonly sheet: number;
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly firstColumn: number;
+  readonly lastColumn: number;
+  readonly cut: boolean;
+}
+
+/** What Paste special pastes; see `SheetRanges.pasteCopied`. */
+export type SheetPasteMode = 'all' | 'values' | 'formats' | 'transposed';
 
 /**
  * Files on their way in and out.
@@ -645,7 +663,9 @@ export interface SheetCommands {
   undo(): void;
   redo(): void;
   /**
-   * Puts the selection on the clipboard, and empties it when cutting.
+   * Puts the selection on the clipboard. A cut is only marked: the
+   * cells move when it is pasted, and the references into them move
+   * with them.
    *
    * The text comes back on the `clipboard` view key rather than as a
    * return value, because a command has none.
@@ -659,7 +679,18 @@ export interface SheetCommands {
    * rectangular, and whether the formulas in it should move are all
    * questions only this side can answer.
    */
-  paste(text: string): void;
+  paste(text: string, mode?: SheetPasteMode): void;
+  /**
+   * Pastes what this sheet last copied, in one of Paste special's ways,
+   * without the system clipboard — which a menu cannot read.
+   */
+  pasteSpecial(mode: SheetPasteMode): void;
+  /** Escape over a marked copy: the outline goes, and a cut is called off. */
+  unmark(): void;
+  /** The format painter picks up the selection's formats, without touching the clipboard. */
+  pickFormats(): void;
+  /** And puts them on the selection, repeated across it when it is larger. */
+  paintFormats(): void;
   /** Empties every cell in the selection. */
   clearRange(): void;
   /** Extends the selection over a cell, repeating it with its formulas moved. */
@@ -1047,7 +1078,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   editor: { row: 0, column: 0, input: '', explain: null },
   names: { entries: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, iterating: false },
-  clipboard: { text: '', serial: 0 },
+  clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },
   document: { id: '', name: '', file: null, edited: false, elsewhere: false },
   stats: NO_STATS,

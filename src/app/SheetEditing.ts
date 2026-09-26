@@ -3,7 +3,7 @@ import { combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs'
 import { internalState, type ChannelReplica, type ComponentContext } from 'gesso-framework';
 
 import type { CommandId } from './SheetCommands';
-import type { SheetCommands, SheetNames, SheetSelection, SheetView } from './SheetContract';
+import type { SheetCommands, SheetNames, SheetPasteMode, SheetSelection, SheetView } from './SheetContract';
 import { stampText, type SheetAction } from './SheetKeys';
 
 export interface SheetEditing {
@@ -22,7 +22,7 @@ export interface SheetEditing {
   /** Moves the far corner of the selection, keeping the anchor. */
   extendTo(row: number, column: number): void;
   /** Text arrived from the clipboard with the grid holding focus. */
-  pasteText(text: string): void;
+  pasteText(text: string, mode?: SheetPasteMode): void;
   write(text: string): void;
   commit(rows: number, columns: number): void;
   cancel(): void;
@@ -30,6 +30,13 @@ export interface SheetEditing {
   openCell(): void;
   /** Where the open edit was started, for deciding what takes focus. */
   readonly startedIn: () => 'grid' | 'bar' | null;
+  /**
+   * The format painter: off, lit for the next thing clicked, or lit
+   * until Escape. Here because the toolbar lights it and the grid is
+   * where the next click lands.
+   */
+  readonly painter: Observable<'off' | 'once' | 'held'> & { readonly value: 'off' | 'once' | 'held' };
+  setPainter(state: 'off' | 'once' | 'held'): void;
   moveTo(row: number, column: number): void;
   /**
    * A rectangle as the selection, with the active cell given: what a
@@ -179,6 +186,7 @@ export function editing(
     sheet.send.setSelection(next.row, next.column, next.anchorRow, next.anchorColumn);
   };
 
+  const painter = internalState<'off' | 'once' | 'held'>('off');
   const selectRect = (row: number, column: number, anchorRow: number, anchorColumn: number): void => {
     tabFrom = null;
     const { rowCount, columnCount } = extent();
@@ -396,9 +404,13 @@ export function editing(
     openCell: () => openCell('grid'),
     startedIn: () => startedIn,
     extendTo,
-    pasteText: text => sheet.send.paste(text),
+    pasteText: (text, mode) => sheet.send.paste(text, mode),
     moveTo,
     selectRect,
+    painter,
+    setPainter: state => {
+      painter.value = state;
+    },
     focusSheet: () => focusSheet(),
     provideFocus: run => {
       focusSheet = run;

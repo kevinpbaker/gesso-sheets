@@ -40,6 +40,8 @@ interface ToolbarItemBase {
   readonly pressed?: Observable<boolean>;
   readonly enabled?: Observable<boolean>;
   readonly onRun: () => void;
+  /** What a double-click does, for the one button where it means more than twice. */
+  readonly onDoubleRun?: () => void;
   /** A gap before this item, for the groups people read by. */
   readonly startsGroup?: boolean;
 }
@@ -186,6 +188,7 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, c
         at.next(index);
         item.onRun();
       }}
+      onDoubleClick={() => item.onDoubleRun?.()}
       label={item.label ?? item.text}
       paddingLeft={9}
       paddingRight={9}

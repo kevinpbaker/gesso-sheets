@@ -130,6 +130,18 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     },
     { id: 'alignCenter', icon: ICONS.alignCenter, ...runs('alignCenter'), pressed: on(p => p.align === 'center') },
     { id: 'alignRight', icon: ICONS.alignRight, ...runs('alignRight'), pressed: on(p => p.align === 'end') },
+    {
+      id: 'formatPainter',
+      icon: ICONS.painter,
+      ...runs('formatPainter'),
+      pressed: edit.painter.pipe(map(state => state !== 'off')),
+      // Two clicks keep it lit until Escape, for painting several places.
+      onDoubleRun: () => {
+        sheet.send.pickFormats();
+        edit.setPainter('held');
+      },
+      tip: 'Format painter (double-click to keep it on)'
+    },
     { id: 'wrap', text: 'Wrap', ...runs('wrap'), pressed: on(p => p.wrap) },
     { id: 'currency', icon: ICONS.currency, ...runs('formatCurrency'), startsGroup: true },
     { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
@@ -354,6 +366,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'clear':
         sheet.send.clearRange();
+        break;
+      case 'pasteValues':
+        sheet.send.pasteSpecial('values');
+        break;
+      case 'pasteFormats':
+        sheet.send.pasteSpecial('formats');
+        break;
+      case 'pasteTransposed':
+        sheet.send.pasteSpecial('transposed');
+        break;
+      // Lit for the next thing clicked; pressed again, put out.
+      case 'formatPainter':
+        if (edit.painter.value === 'off') {
+          sheet.send.pickFormats();
+          edit.setPainter('once');
+        } else {
+          edit.setPainter('off');
+        }
         break;
       case 'selectAll':
         edit.apply({ kind: 'selectAll' });
