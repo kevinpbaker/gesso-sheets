@@ -6,12 +6,12 @@ import {
   type ChannelReplica,
   ShellService,
   type ComponentContext,
-  type ShellFile,
   type ShellFileResult,
   type ShellFileType,
   type ShellRecentFile
 } from 'gesso-framework';
 
+import { base64OfBytes } from './base64';
 import type { SheetCommands, SheetView } from './SheetContract';
 
 /**
@@ -38,6 +38,12 @@ export const WORKBOOK: ShellFileType = {
   description: 'Gessosheet workbook',
   mediaType: 'application/json',
   extensions: ['.gsheet']
+};
+
+export const XLSX: ShellFileType = {
+  description: 'Excel workbook',
+  mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  extensions: ['.xlsx']
 };
 
 export const CSV: ShellFileType = {
@@ -138,14 +144,14 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
       return;
     }
     for (const file of result.files) {
-      push ||= isWorkbook(file);
-      sheet.send.openFile(file.name, new TextDecoder().decode(file.bytes), file.handle);
+      push ||= isWorkbook(file.name);
+      sendFile(sheet, file.name, file.bytes, file.handle);
     }
   };
 
   return {
     newDocument: () => shell.openUrl('/d/new'),
-    open: () => void shell.openFiles({ accept: [WORKBOOK, CSV], multiple: true }).then(deliver),
+    open: () => void shell.openFiles({ accept: [WORKBOOK, XLSX, CSV], multiple: true }).then(deliver),
     reopen: handle => void shell.reopenFile(handle).then(deliver),
     save: asNew => sheet.send.saveDocument(asNew),
     exportCsv: () => sheet.send.exportCsv(),
@@ -157,8 +163,32 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
   };
 }
 
-function isWorkbook(file: ShellFile): boolean {
-  return /\.(gsheet|json)$/i.test(file.name);
+/** Whether a file opens as a document of its own, rather than as a sheet in this one. */
+function isWorkbook(name: string): boolean {
+  return /\.(gsheet|json|xlsx)$/i.test(name);
+}
+
+/**
+ * A file's bytes, sent to whichever command reads its kind.
+ *
+ * An `.xlsx` crosses as its bytes — it is a zip, and decoding it as
+ * text here would destroy it — and everything else as UTF-8 text,
+ * decoded once on this side, which is where the file arrived. For a
+ * drop and a pick alike: the two differ only in whether there is a
+ * handle to remember.
+ */
+export function sendFile(
+  sheet: ChannelReplica<SheetView, SheetCommands>,
+  name: string,
+  bytes: ArrayBuffer | undefined,
+  handle: number | null
+): void {
+  const raw = new Uint8Array(bytes ?? new ArrayBuffer(0));
+  if (/\.xlsx$/i.test(name)) {
+    sheet.send.importXlsx(name, base64OfBytes(raw));
+    return;
+  }
+  sheet.send.openFile(name, new TextDecoder().decode(raw), handle);
 }
 
 /** Why, as the end of a sentence. */

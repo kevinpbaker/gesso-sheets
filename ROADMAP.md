@@ -1159,9 +1159,66 @@ turn a ping-pong neither thread could leave. Two files dropped at once
 found it. A viewport now answers for the sheet that is showing, and
 switching is `activateSheet`'s alone.
 
+### Phase 17 — `.xlsx` import — **done**
+
+The phase Phase 16 named: an Excel workbook opened as a document of
+its own, and nothing written back. Reading is a zip, a handful of XML
+parts and a mapping, and it is tractable for the reason given there —
+a reader may drop what it does not understand.
+
+**Kept:** cells, formulas, number formats, bold, italic, underline,
+font size and colour, fills, borders, alignment and wrap, column
+widths, hidden rows and columns, frozen panes, merges and defined
+names. **Dropped, deliberately:** charts, pivot tables, conditional
+formats, validations, comments, images, and theme and indexed colours,
+each of which this sheet would show wrongly rather than not at all.
+
+**Exit:** a workbook written by another spreadsheet opens with its
+formulas calculating, across sheets and through names. **Met.** The
+fixture is `src/sheet/fixtures/orders.xlsx`, written by LibreOffice's
+own Excel filter from `scripts/xlsx-fixtures.py`, so the reader is
+tested against a producer and not against its author's idea of the
+format. In node it opens as two sheets and calculates $141.23 through a
+`SUM`, $11.30 through a defined name and again through `Rates!B1`, and
+shows `2026-09-24` and `007` as they were. In Chrome, the same file
+dropped on the window opened as its own document at its own route and
+drew its merged title, fills and formats.
+
+Four things worth carrying forward.
+
+**A formula that cannot run keeps its value, and says so.** The
+fixture's due dates are `=DATEVALUE(...)`, and this sheet has no
+DATEVALUE. Written as a formula it would show `#NAME?`; kept as the
+serial LibreOffice calculated it shows the date, and the status line
+says four formulas became values. A formula that silently turned into
+a number is a sheet that stops updating without saying so.
+
+**An `.xlsx` becomes a snapshot**, the shape a `.gsheet` already has,
+and opens by Phase 16's path. Nothing downstream knows it was ever an
+Excel file — which is also why Save afterwards writes a `.gsheet` and
+asks where: there is no writer, and a Save that silently changed the
+format of the file it was opened from would be worse than one that
+asks.
+
+**The reader carries its own XML and zip.** The application worker is
+not a window, so it has no `DOMParser`; the XML reader is a small one,
+safe because it expands no entity it did not define, and the zip reader
+takes its inflate from the caller so that `src/sheet` still imports
+nothing. A sheet of 100,000 cells and 10,000 formulas reads in about a
+quarter of a second.
+
+**A file crosses as base64.** A command carries plain data and an
+`ArrayBuffer` is not, so the bytes travel a third larger than they are.
+That is the cost of the barrier for a thing the size of a file, paid
+once per open, and it is written down here rather than hidden.
+
+Not measured: a file Excel itself wrote. Excel's shared formulas,
+`_xlfn.` prefixes and inline strings are specced from the format's own
+shapes, but no Excel was available to write one.
+
 ---
 
-## Still not in it, after all sixteen
+## Still not in it, after all seventeen
 
 Pivot tables, macros and scripting, collaborative editing, `.xlsx`
 export, rich text runs *within* a single cell (formatting is

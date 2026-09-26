@@ -63,6 +63,9 @@ import { snapshotOf, applySnapshot, parseSnapshot, type SheetSnapshot } from './
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
 import { exportCsv, importCsv } from './SheetCsv';
+import { platformInflate, reportOfXlsx, snapshotOfXlsx } from './SheetXlsx';
+import { bytesOfBase64 } from './base64';
+import { openXlsx, XlsxError } from '../sheet/Xlsx';
 import {
   clearRect,
   copyRect,
@@ -514,7 +517,7 @@ export class SheetService {
     if (!/\.(csv|tsv|txt)$/i.test(fileName)) {
       this.transferSubject.next({
         ...this.transferSubject.value,
-        report: `${fileName} was not opened: only CSV files can be opened so far.`
+        report: `${fileName} was not opened: this opens workbooks (.gsheet and .xlsx) and CSV files.`
       });
       return;
     }
@@ -1564,6 +1567,40 @@ export class SheetService {
       this.edited = false;
       this.publishDocument();
       this.report(`Opened ${fileName}.`);
+    });
+  }
+
+  /**
+   * Opens an Excel workbook as a document of its own.
+   *
+   * A document with no file, and that is deliberate: this application
+   * reads `.xlsx` and does not write it, so a Save afterwards asks
+   * where to put a `.gsheet` rather than overwriting the workbook it
+   * came from with a different format. The bytes cross as base64,
+   * because a command carries plain data and a buffer is not.
+   */
+  importXlsx(fileName: string, base64: string): void {
+    this.enqueue(async () => {
+      const { rowCount, columnCount } = this.geometrySubject.value;
+      let book;
+      try {
+        book = await openXlsx(bytesOfBase64(base64), platformInflate, { rows: rowCount, columns: columnCount });
+      } catch (error) {
+        const why = error instanceof XlsxError ? error.message : 'it could not be read.';
+        this.report(`${fileName} was not opened: ${why.charAt(0).toLowerCase()}${why.slice(1)}`);
+        return;
+      }
+      const entry: DocumentEntry = {
+        id: this.library?.newId() ?? 'xlsx',
+        name: baseName(fileName),
+        used: this.now(),
+        file: null
+      };
+      await this.swapTo(entry, snapshotOfXlsx(book, columnCount));
+      this.persist();
+      this.edited = false;
+      this.publishDocument();
+      this.report(reportOfXlsx(fileName, book));
     });
   }
 

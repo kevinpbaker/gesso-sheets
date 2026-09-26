@@ -515,6 +515,11 @@ export interface SheetCommands {
   openDocument(id: string): void;
   /** Opens what a file held — a workbook as a document, a CSV as a sheet. */
   openFile(fileName: string, text: string, handle: number | null): void;
+  /**
+   * Opens an Excel workbook as a document of its own, from its bytes as
+   * base64 — a command carries plain data, and a buffer is not.
+   */
+  importXlsx(fileName: string, base64: string): void;
   /** Builds the workbook for the shell to save; `asNew` is Save As. */
   saveDocument(asNew: boolean): void;
   /** Where the shell put a download, so a workbook can remember its file. */

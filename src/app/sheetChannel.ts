@@ -47,6 +47,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       exportCsv: () => service.exportCsv(),
       openDocument: id => service.openDocument(id),
       openFile: (fileName, text, handle) => service.openFile(fileName, text, handle),
+      importXlsx: (fileName, base64) => service.importXlsx(fileName, base64),
       saveDocument: asNew => service.saveDocument(asNew),
       fileSaved: (kind, name, handle, via) => service.fileSaved(kind, name, handle, via),
       reportFile: text => service.reportFile(text),

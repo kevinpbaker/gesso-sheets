@@ -93,7 +93,7 @@ describe('opening a CSV', () => {
     const { document, service } = harness();
     service.importCsv('photo.png', '\u0089PNG');
     expect(document.sheetCount).toBe(1);
-    expect(transfer(service).report).toBe('photo.png was not opened: only CSV files can be opened so far.');
+    expect(transfer(service).report).toBe('photo.png was not opened: this opens workbooks (.gsheet and .xlsx) and CSV files.');
   });
 
   it('stops saying what it opened once somebody starts working', () => {

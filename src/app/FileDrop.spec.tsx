@@ -84,6 +84,6 @@ describe('a file dropped on the window', () => {
     h = await mount();
     await drop([{ name: 'photo.png', mediaType: 'image/png', size: 4, lastModified: 0, bytes: new ArrayBuffer(4) }]);
     expect(h.document.sheetCount).toBe(1);
-    expect(h.ui.getByText('photo.png was not opened: only CSV files can be opened so far.')).toBeDefined();
+    expect(h.ui.getByText('photo.png was not opened: this opens workbooks (.gsheet and .xlsx) and CSV files.')).toBeDefined();
   });
 });

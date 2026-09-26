@@ -4,7 +4,7 @@ import { type ComponentContext, type Inputs } from 'gesso-framework';
 import { Grid } from './Grid';
 import { Sheet } from './SheetContract';
 import { editing } from './SheetEditing';
-import { fileActions } from './Files';
+import { fileActions, sendFile } from './Files';
 import { SheetTabs } from './SheetTabs';
 import { StatusBar } from './StatusBar';
 import { TopBar } from './TopBar';
@@ -50,18 +50,17 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
    * cell — and the file lands on a sheet of its own either way, so
    * where it was let go says nothing about where it goes.
    *
-   * Decoded here, once, as UTF-8, which is what every exporter written
-   * this century produces and what a BOM would announce anyway. What
-   * the text *is* is the application worker's question; see
-   * `SheetService.importCsv`, which also turns down a file it cannot
+   * Sent by kind through `sendFile`, the same path a picked file
+   * takes: a workbook or an Excel file opens as a document of its own,
+   * and anything else as a sheet in this one. What each file *is* is
+   * the application worker's question, and it turns down one it cannot
    * read and says so.
    */
   const drop = dropTarget({
     accepts: EXTERNAL_FILES,
     onDrop: payload => {
-      const decoder = new TextDecoder();
       for (const file of payload.data as readonly UiDroppedFile[]) {
-        sheet.send.importCsv(file.name, file.bytes === undefined ? '' : decoder.decode(file.bytes));
+        sendFile(sheet, file.name, file.bytes, null);
       }
       return 'copy';
     },
