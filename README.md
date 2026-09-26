@@ -1,18 +1,193 @@
+<div align="center">
+
 # gessosheet
 
-A Gesso application. The interface is built, laid out, painted and
-hit-tested in a render worker; the page's own thread creates the canvas,
-forwards input and does nothing else.
+**A million-cell spreadsheet that keeps recalculating while your browser is frozen solid.**
+
+Built on [Gesso](https://github.com/kevinpbaker/gesso), a UI framework that lays out, paints and hit-tests the whole interface in a worker, and lets the page's own thread do nothing at all.
+
+TypeScript · Canvas · three threads · zero DOM under the sheet · a frame budget that fails the build
+
+[Sixty seconds](#sixty-seconds) · [What it does](#what-it-does-today) · [The numbers](#the-numbers) · [How](#how-it-works) · [Not yet](#what-it-is-not-yet) · [Under the hood](#under-the-hood)
+
+</div>
+
+---
+
+Everyone has felt a browser spreadsheet die. Type a formula, watch the
+cursor stop, wait. The DOM is the wrong place to put a hundred thousand
+cells, and every web spreadsheet knows it, which is why the serious ones
+draw on a canvas and still run the whole thing on the one thread the
+browser also uses for everything else.
+
+This one does not. The grid is painted by a **render worker**. The
+formula engine runs in an **application worker**. The main thread
+creates a canvas, forwards input, and is otherwise idle — so idle that
+the page carries a button to prove it:
+
+> **Block the main thread for 5 s.** The page freezes. Hover does
+> nothing, the tab will not close, DevTools stops answering. Behind the
+> freeze the application worker finishes recalculating 200,000
+> dependent cells, and the render worker keeps laying out and drawing
+> on its own clock. When the main thread comes back, the sheet is
+> already up to date.
+
+That is the claim, and the rest of this repository exists to make it
+checkable by a stranger with a browser.
+
+## Sixty seconds
 
 ```bash
-pnpm install    # or npm install
+pnpm install
 pnpm dev
 ```
 
-Then `pnpm build` for a production bundle, `pnpm preview` to serve it,
-and `pnpm typecheck` to check the types without building.
+Open the address Vite prints. You are looking at a three-sheet workbook
+of a quarter's orders: `VLOOKUP` across sheets, `SUMIF`, `INDEX/MATCH`,
+`NETWORKDAYS`, a `=SUM(Revenue)` through a named range, a colour scale
+down the revenue column, and a review column whose dropdown refuses a
+word it does not know. Type into it. Everything you see is a formula
+reading a formula.
 
-## The two pages
+Then add `/proof` to the url. The black strip along the top is the
+instrument panel, and it is the only DOM on the page, on the main
+thread on purpose — a claim that a thread is idle cannot be made from
+inside it. Three things to try:
+
+1. **Scroll.** A pulse in the strip beats with the main thread's own
+   `requestAnimationFrame`. The frame readout beside it is the render
+   worker's: median cost, worst gap, and how many cells were measured
+   this frame. Scroll a screenful and the count is a screenful. Scroll
+   ten thousand rows and the count is still a screenful.
+2. **Recalculate 200,000 cells** (toolbar, Data menu, or F9) while you
+   are still scrolling. The frame readout does not move.
+3. **Block the main thread.** Watch the pulse stop and the sheet not.
+
+`pnpm proof` does all three in headless Chrome with real wheel events
+and real clicks, reads back the same frames the strip shows, and fails
+the build if any of six budgets is missed. The one that matters most is
+machine-independent: *a frame while 200,000 cells recalculate may cost
+no more than 4 ms over a frame while idle.*
+
+## What it does today
+
+A spreadsheet somebody would keep a budget in, not a demo of a grid.
+
+- **The engine.** A parser, a dependency graph and an incremental
+  recalculator on their own thread. Nearly ninety functions across
+  logic, maths, statistics, text, lookup, dates and conditional
+  aggregates: `SUMIFS`, `XLOOKUP`, `INDEX/MATCH`, `TEXTJOIN`,
+  `EOMONTH`, `STDEV`, `PERCENTILE`, `IFERROR`, and the `">10"` criteria
+  grammar they share. Dates are serials with a format, as in Excel.
+  Errors explain themselves: land on a `#REF!` and a line under the
+  cell says which cell went where.
+- **Editing.** Undo and redo. Cut, copy and paste as a rectangle,
+  including to and from other applications as TSV. Fill down and
+  right. Find and replace across the sheet. Go to a typed address.
+- **The formula editor.** Autocomplete with the signature and the
+  current argument highlighted. References coloured in the text and
+  outlined on the grid as you type. Click or drag a range into a
+  formula mid-typing. F4 cycles `A1 → $A$1 → A$1 → $A1`. Matching
+  brackets light up.
+- **Structure.** Insert and delete rows and columns, and every formula
+  that pointed at them is rewritten — exactly the ones that did, by a
+  spec that says `toBe` and not `toBeLessThan`. Sort a range. Hide,
+  freeze, merge, autofit, filter.
+- **Formatting.** Number, currency, percent and date formats. Bold,
+  italic, alignment, fills, per-edge borders. Conditional formats,
+  including colour scales, resolved for the visible window only, so a
+  rule over a million cells costs the same scroll as no rule. Data
+  validation with a dropdown when the rule is a list.
+- **Workbooks.** Many sheets, with tabs to add, rename, reorder,
+  duplicate and colour. `Sheet2!A1` and `'Q3 Budget'!A1:B9` in the
+  parser. Named ranges from the name box or `Insert ▸ Name`. A formula
+  on one sheet reading 50,000 cells on another publishes nothing while
+  that sheet is out of view.
+- **Persistence.** The workbook is saved in the browser as you type
+  and is there when you come back.
+- **Keyboard.** Every menu, every dialog and the whole toolbar are
+  reachable without a pointer, and the specs for the chrome contain no
+  pointer event to prove it. Ctrl+/ opens the sheet of shortcuts.
+
+## The numbers
+
+Measured on one Linux machine under software rendering. What matters is
+the shape: the two rows are the same row.
+
+|                                             | median frame | worst  | cells measured |
+| ------------------------------------------- | ------------ | ------ | -------------- |
+| scrolling an idle sheet                     | 1.9 ms       | 7.4 ms | 604            |
+| scrolling while 200,000 cells recalculate   | 2.0 ms       | 5.5 ms | 233            |
+
+The million-cell sheet (10,000 × 100) scrolls at 60 fps on both axes
+with every visible value arriving from the other worker, at a 9,000
+px/s fling, with no blank cell in any frame. The band that keeps it
+clean, and why it belongs on the fetch side rather than the mount side,
+is in [`PHASE0.md`](PHASE0.md).
+
+The suite is 1,469 specs, most of them running the engine headless in
+node. A handful are budget specs that count: patches per
+scroll, formulas rewritten per insert, cells published for a
+cross-sheet reference. They assert the number, not an upper bound.
+
+## How it works
+
+| Thread            | Owns                                                                           |
+| ----------------- | ------------------------------------------------------------------------------ |
+| Main (the shell)  | the canvas, input forwarding, the editing proxy for IME, the clipboard, `/proof`'s strip |
+| Application worker | the cell store, the parser, the dependency graph, recalculation, persistence   |
+| Render worker     | the grid, the selection, the cell editor, the menus, everything painted        |
+
+The render worker never learns about a cell that is not on screen. It
+sends the application worker a viewport, and the application worker
+publishes that window plus an overscan band, as already-formatted
+display strings, as a map keyed by row and column — because Phase 0
+measured a row-major array at eighty times the bytes over Gesso's
+structural differ. Formats travel on a separate key from values so that
+editing one cell does not walk the format map. A conditional format is
+resolved at the window on publish and folded into the palette index
+already on the wire.
+
+The three-way split is what the block button demonstrates. The page
+freezes because `requestAnimationFrame` exists on the main thread
+alone, so the render worker's frames spread to a timer's cadence and
+no input arrives. What does not happen is the part people expect: the
+sheet does not stop computing, and it does not stop drawing.
+
+The longer story, with the exit criterion for each of fourteen phases
+and what running it in a real browser found that the suite could not,
+is [`ROADMAP.md`](ROADMAP.md).
+
+## What it is not yet
+
+Charts and import/export of `.xlsx` are the next two phases. Pivot
+tables, macros, collaborative editing, rich text within a single cell,
+and touch-sized targets are not planned for this round. It installs
+Gesso from packed tarballs in `vendor/` rather than from a registry
+for now; see [the last section](#why-vendor-exists-and-how-to-remove-it).
+
+---
+
+## Under the hood
+
+Everything below is for someone working on the code.
+
+```bash
+pnpm dev          # the spreadsheet, with hot replacement of the screen
+pnpm build        # a production bundle
+pnpm preview      # serve it
+pnpm typecheck    # tsc, no emit
+pnpm test         # vitest, headless
+pnpm proof        # build, serve, drive in headless Chrome, check the budgets
+pnpm icons        # re-lift the Heroicons paths this app uses
+```
+
+`src/sheet` is the engine and imports nothing from the framework, which
+`boundaries.spec.ts` enforces. `src/app` is the contract, the
+application worker, the grid, the editor and the chrome. `src/shell` is
+the proof strip.
+
+### The two pages
 
 `/` is the spreadsheet. That is the whole of it: a grid, a menu bar, a
 toolbar and a formula bar, and nothing on the screen that is about the
@@ -47,7 +222,7 @@ work that way — it is DOM on the main thread, which is the entire
 reason it is believable — so the shell reads the url for itself too,
 through `src/route.ts`, the one module both threads share.
 
-## The three files
+### The three files
 
 | File            | What it is                                               |
 | --------------- | -------------------------------------------------------- |
@@ -94,7 +269,7 @@ compiles onto the element factories and produces the identical tree, so
 `Row({ gap: 8 }, Text({ text: 'Ready' }))` is the same thing written the
 other way.
 
-## Icons
+### Icons
 
 [Heroicons](https://heroicons.com/) is this project's icon set — the
 24×24 outline half of it. It is MIT licensed, and the licence travels
@@ -117,7 +292,7 @@ the lifted data against the installed package, so an upgrade that skips
 `pnpm icons` fails the build rather than quietly drawing last year's
 glyph.
 
-## Reporting errors from a production build
+### Reporting errors from a production build
 
 The overlay is a development tool and a production build carries no
 reference to it. What a shipped application wants instead is its own
@@ -137,7 +312,7 @@ one handler did not run, a `renderer` error means the surface stopped
 being updated, and a `channel` error means the data behind an intact
 view has stopped arriving.
 
-## Where to go next
+### Where to go next
 
 - `App.tsx` is commented with what each part of it is doing.
 - `gesso-components` has the controls: inputs, overlays, structure,
@@ -145,7 +320,7 @@ view has stopped arriving.
 - Every prop takes a value or an Observable of that value. That is the
   whole binding model, and it is why the component body runs once.
 
-## Why `vendor/` exists, and how to remove it
+### Why `vendor/` exists, and how to remove it
 
 This project was scaffolded with `--local`, so it installs Gesso from
 a checkout rather than from the registry: the packages were packed

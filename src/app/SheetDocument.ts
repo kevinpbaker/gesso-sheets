@@ -2,6 +2,7 @@ import { parseTypedDate } from '../sheet/Dates';
 import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format';
 import { Formats } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
+import type { Chart } from '../sheet/Chart';
 import type { RangeRef } from '../sheet/A1';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
@@ -19,7 +20,7 @@ import { shiftIndex, type Shift } from '../sheet/Shift';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit | ChartsEdit;
 
 /**
  * Where an edit was made, which every kind of edit has to say.
@@ -67,6 +68,24 @@ interface RulesEdit extends OnASheet {
   readonly column: number;
   readonly before: { readonly conditional: readonly ConditionalRule[]; readonly validations: readonly Validation[] };
   readonly after: { readonly conditional: readonly ConditionalRule[]; readonly validations: readonly Validation[] };
+}
+
+/**
+ * The charts of a sheet, before and after.
+ *
+ * The list whole, on the same rule the names and the rules go by: a
+ * sheet holds a handful of charts, each is a title and eight numbers,
+ * and an edit that carries the list whole cannot get its own inverse
+ * wrong. The row and column are the chart's own range corner, so
+ * undoing an insert puts the selection back on the cells it was
+ * drawn from.
+ */
+interface ChartsEdit extends OnASheet {
+  readonly kind: 'charts';
+  readonly row: number;
+  readonly column: number;
+  readonly before: readonly Chart[];
+  readonly after: readonly Chart[];
 }
 
 interface TextEdit extends OnASheet {
@@ -221,6 +240,14 @@ interface Page {
    */
   conditional: ConditionalRule[];
   validations: Validation[];
+  /**
+   * The charts floating over this sheet.
+   *
+   * Per sheet like everything else drawn over the cells. A chart
+   * reads a range on *its own* sheet, so a chart that followed the
+   * workbook would be a picture of cells nobody was looking at.
+   */
+  charts: Chart[];
 }
 
 function newPage(sheet: Sheet): Page {
@@ -235,7 +262,8 @@ function newPage(sheet: Sheet): Page {
     frozenColumns: 0,
     selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
     conditional: [],
-    validations: []
+    validations: [],
+    charts: []
   };
 }
 
@@ -615,6 +643,8 @@ export class SheetDocument {
         this.restoreNames(edit.before);
       } else if (edit.kind === 'rules') {
         this.restoreRules(edit.before);
+      } else if (edit.kind === 'charts') {
+        this.restoreCharts(edit.before);
       } else {
         this.applyFormat(edit.row, edit.column, edit.before);
       }
@@ -648,6 +678,8 @@ export class SheetDocument {
         this.restoreNames(edit.after);
       } else if (edit.kind === 'rules') {
         this.restoreRules(edit.after);
+      } else if (edit.kind === 'charts') {
+        this.restoreCharts(edit.after);
       } else {
         this.applyFormat(edit.row, edit.column, edit.after);
       }
@@ -776,6 +808,98 @@ export class SheetDocument {
       page.conditional.length = 0;
       page.validations.length = 0;
     }, this.page.selection.row, this.page.selection.column);
+  }
+
+  // ---------------------------------------------------------------------
+  // Charts
+  // ---------------------------------------------------------------------
+
+  get charts(): readonly Chart[] {
+    return this.page.charts;
+  }
+
+  /**
+   * The next id, counted across the whole workbook and never reused.
+   *
+   * Across the workbook rather than per sheet because a chart can be
+   * carried to another one by a duplicate, and two charts with the
+   * same id on one page would be one chart as far as selection and
+   * dragging are concerned. Counted from what exists rather than kept
+   * in a field, so a load does not have to restore a counter and a
+   * file written by hand cannot produce a collision on the first
+   * insert.
+   */
+  private nextChartId(): number {
+    let highest = 0;
+    for (const page of this.pages) {
+      for (const chart of page.charts) {
+        highest = Math.max(highest, chart.id);
+      }
+    }
+    return highest + 1;
+  }
+
+  /** Adds a chart over a range and returns its id. */
+  addChart(chart: Omit<Chart, 'id'>): number {
+    const id = this.nextChartId();
+    this.changeCharts(
+      page => page.charts.push({ ...chart, id }),
+      chart.range.start.row,
+      chart.range.start.column
+    );
+    return id;
+  }
+
+  /**
+   * Rewrites one chart, leaving the rest alone.
+   *
+   * Every change to a chart comes through here — a move, a resize, a
+   * retitle, a different kind — so there is one place that records an
+   * undo step and one shape of edit to take back.
+   */
+  changeChart(id: number, change: (chart: Chart) => Chart): boolean {
+    const at = this.page.charts.findIndex(chart => chart.id === id);
+    if (at < 0) {
+      return false;
+    }
+    const chart = this.page.charts[at];
+    const next = change(chart);
+    this.changeCharts(page => (page.charts[at] = next), next.range.start.row, next.range.start.column);
+    return true;
+  }
+
+  removeChart(id: number): boolean {
+    const at = this.page.charts.findIndex(chart => chart.id === id);
+    if (at < 0) {
+      return false;
+    }
+    const { row, column } = this.page.charts[at].range.start;
+    this.changeCharts(page => page.charts.splice(at, 1), row, column);
+    return true;
+  }
+
+  chart(id: number): Chart | null {
+    return this.page.charts.find(entry => entry.id === id) ?? null;
+  }
+
+  private changeCharts(change: (page: Page) => void, row: number, column: number): void {
+    const page = this.page;
+    const before = [...page.charts];
+    change(page);
+    this.record({
+      kind: 'charts',
+      sheet: this.activeSheet,
+      row,
+      column,
+      before,
+      after: [...page.charts]
+    });
+  }
+
+  private restoreCharts(held: readonly Chart[]): void {
+    const page = this.page;
+    page.charts.length = 0;
+    page.charts.push(...held);
   }
 
   /** The validation over a cell, or null. The first one wins. */
@@ -999,7 +1123,13 @@ export class SheetDocument {
       hiddenRows: new Set(from.hiddenRows),
       filteredRows: new Set(from.filteredRows),
       frozenRows: from.frozenRows,
-      frozenColumns: from.frozenColumns
+      frozenColumns: from.frozenColumns,
+      // Copied with fresh ids, because an id is unique across the
+      // workbook and two charts sharing one would be one chart as far
+      // as selecting and dragging are concerned. The range inside
+      // each is unqualified, so it points at the copy's own cells —
+      // which is what duplicating a sheet with a chart on it means.
+      charts: from.charts.map((chart, offset) => ({ ...chart, id: this.nextChartId() + offset }))
     });
     this.forgetHistory();
     this.activeSheet = at;

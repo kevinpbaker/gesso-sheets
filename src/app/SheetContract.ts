@@ -1,6 +1,8 @@
 import { channel } from 'gesso-framework';
 import type { ColourScale, ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
 import type { ValidationRule } from '../sheet/Validation';
+import type { ChartKind } from '../sheet/Chart';
+import type { Series } from '../sheet/Series';
 
 import { NO_BORDERS, type CellPaint } from '../sheet/Format';
 import { NO_STATS, type SheetStats } from './Statistics';
@@ -341,6 +343,65 @@ export interface SheetConditionalRule {
 
 export type SheetValidationRule = ValidationRule;
 
+/**
+ * A chart on the sheet: what it is, and where it floats.
+ *
+ * The placement is in the sheet's own pixels, so the render worker
+ * subtracts the scroll and draws. The *range* travels as text rather
+ * than as a `RangeRef` because it is here to be shown — under the
+ * title, and in whatever names the chart in a list — and the render
+ * worker has no business resolving a reference.
+ */
+export interface SheetChart {
+  readonly id: number;
+  readonly kind: ChartKind;
+  readonly title: string;
+  readonly range: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly legend: boolean;
+}
+
+export interface SheetCharts {
+  readonly entries: readonly SheetChart[];
+  /** The selected chart's id, or zero when none is. */
+  readonly selected: number;
+}
+
+/**
+ * The numbers behind the charts, at the resolution they can draw.
+ *
+ * **Its own key, and that is the whole of why there are two.** What a
+ * chart *is* changes when somebody drags it; what a chart *shows*
+ * changes when a cell it reads is edited, which on a recalculating
+ * sheet is every frame. One key carrying both would republish four
+ * hundred points because a title was renamed, and republish a title
+ * because a number moved — and the differ would send every byte of it
+ * either way, since a list of points is not a structure it can look
+ * inside.
+ *
+ * Keyed by the chart's id as a string, because that is what a record
+ * key is once it has crossed a `postMessage`.
+ */
+export interface SheetSeriesView {
+  readonly charts: Readonly<Record<string, SheetChartSeries>>;
+}
+
+export interface SheetChartSeries {
+  readonly categories: readonly string[];
+  readonly series: readonly Series[];
+  /**
+   * How many points were read before thinning, so a chart can say so.
+   *
+   * The honest label for a downsampled line, and the number the phase
+   * is measured on: `read` in the thousands beside a `points` length
+   * bounded by the chart's width is the exit criterion, visible.
+   */
+  readonly read: number;
+}
+
 export interface SheetCommands {
   /**
    * The range the render worker has mounted, on the sheet it is
@@ -366,6 +427,30 @@ export interface SheetCommands {
   removeValidation(at: number): void;
   /** Takes every rule off the sheet, which is the only bulk one. */
   clearRules(): void;
+  /**
+   * Puts a chart over the selection, and selects it.
+   *
+   * The range is the selection's, like every other command that acts
+   * on one: the render worker says what kind of chart, and where the
+   * cells are is already a thing both sides agree on.
+   */
+  insertChart(kind: ChartKind): void;
+  /** Which chart the handles are drawn around, or zero for none. */
+  selectChart(id: number): void;
+  /**
+   * Where a chart sits and how big it is, in the sheet's own pixels.
+   *
+   * One command for both, because a resize from a corner handle moves
+   * the origin as well as the size, and two commands would publish a
+   * frame in which the chart had the new size at the old position.
+   * The drag itself stays on the render thread and this arrives when
+   * the pointer is let go, which is the same trade a column resize
+   * makes.
+   */
+  placeChart(id: number, x: number, y: number, width: number, height: number): void;
+  setChartKind(id: number, kind: ChartKind): void;
+  setChartTitle(id: number, title: string): void;
+  removeChart(id: number): void;
   /** Shows a sheet, without waiting for its viewport to arrive. */
   activateSheet(sheet: number): void;
   /** Adds a sheet at the end and shows it. */
@@ -668,6 +753,10 @@ export interface SheetView {
    */
   readonly activeFormat: SheetActiveFormat;
   readonly autofit: SheetAutofit;
+  /** The charts floating over this sheet; see `SheetCharts`. */
+  readonly charts: SheetCharts;
+  /** What those charts draw; see `SheetSeriesView` for why it is apart. */
+  readonly series: SheetSeriesView;
 }
 
 /** What the controls read to draw themselves. */
@@ -749,5 +838,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   palette: { entries: [PLAIN_PAINT] },
   validation: { firstRow: 0, lastRow: -1, cells: {}, refused: '', list: [] },
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
-  autofit: { serial: 0, columns: [] }
+  autofit: { serial: 0, columns: [] },
+  charts: { entries: [], selected: 0 },
+  series: { charts: {} }
 });

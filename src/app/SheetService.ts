@@ -1,6 +1,16 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
-import { relativeRef } from '../sheet/A1';
+import { formatRange, relativeRef } from '../sheet/A1';
+import {
+  DEFAULT_CHART_HEIGHT,
+  DEFAULT_CHART_WIDTH,
+  MIN_CHART_HEIGHT,
+  MIN_CHART_WIDTH,
+  type Chart,
+  type ChartKind
+} from '../sheet/Chart';
+import { headersIn, orientationOf, seriesFrom } from '../sheet/Series';
+import type { CellValue } from '../sheet/Values';
 import { addressOf, explainCell } from '../sheet/Explain';
 import { nameProblemText } from '../sheet/Names';
 import { aggregateOf } from './Aggregate';
@@ -30,7 +40,10 @@ import {
   type SheetStatus,
   type SheetTabs,
   type SheetValidation,
+  type SheetChartSeries,
+  type SheetCharts,
   type SheetConditionalRule,
+  type SheetSeriesView,
   type SheetValidationRule,
   type SheetWindow
 } from './SheetContract';
@@ -114,6 +127,8 @@ export class SheetService {
   readonly palette: Observable<SheetPalette>;
   readonly activeFormat: Observable<SheetActiveFormat>;
   readonly autofit: Observable<SheetAutofit>;
+  readonly charts: Observable<SheetCharts>;
+  readonly chartSeries: Observable<SheetSeriesView>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -163,6 +178,19 @@ export class SheetService {
   });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
   private autofitSerial = 0;
+  private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0 });
+  private readonly seriesSubject = new BehaviorSubject<SheetSeriesView>({ charts: {} });
+  /**
+   * Which chart has the handles round it.
+   *
+   * On the service rather than in the document, because selecting a
+   * chart is not an edit: it does not belong on the undo stack and it
+   * does not belong in the file. The same argument the cell selection
+   * loses — that one *is* in the file, because reopening a sheet on
+   * the cell you left is worth a line of JSON — and a chart does not
+   * win it, because there is no such thing as the chart you left.
+   */
+  private selectedChart = 0;
   /**
    * The cells the current search matched, as keys, in reading order.
    *
@@ -254,6 +282,8 @@ export class SheetService {
     this.palette = this.paletteSubject;
     this.activeFormat = this.activeFormatSubject;
     this.autofit = this.autofitSubject;
+    this.charts = this.chartsSubject;
+    this.chartSeries = this.seriesSubject;
     this.publishStats();
     this.publishActiveFormat();
   }
@@ -489,6 +519,12 @@ export class SheetService {
     // Each sheet has its own rules, so the painter is bound to the
     // one in view rather than to the document.
     this.painter.setRules(this.document.conditional);
+    // And its own charts, which the last sheet's selection does not
+    // survive: an id from another page would draw handles round
+    // nothing.
+    this.selectedChart = 0;
+    this.publishCharts();
+    this.publishSeries();
     this.publishTabs();
     this.publishWindow();
     this.publishFormats();
@@ -521,6 +557,7 @@ export class SheetService {
     this.publishValidation();
     this.publishEditor();
     this.publishStatus();
+    this.redrawCharts();
     this.persist();
     this.pump();
   }
@@ -1359,6 +1396,181 @@ export class SheetService {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // Charts
+  // ---------------------------------------------------------------------
+
+  /**
+   * A chart over the selection, at a default size beside it.
+   *
+   * Placed to the right of the range it reads rather than on top of
+   * it, which is what every spreadsheet does and is the only position
+   * that does not hide the numbers the chart is of.
+   */
+  insertChart(kind: ChartKind): void {
+    const rect = rectOf(this.document.selection);
+    const geometry = this.geometrySubject.value;
+    const right = offsetOfColumn(geometry, rect.lastColumn + 1) + 16;
+    const top = rect.firstRow * geometry.rowHeight;
+    const id = this.document.addChart({
+      kind,
+      title: '',
+      range: {
+        start: relativeRef(rect.firstRow, rect.firstColumn),
+        end: relativeRef(rect.lastRow, rect.lastColumn)
+      },
+      place: { x: right, y: top, width: DEFAULT_CHART_WIDTH, height: DEFAULT_CHART_HEIGHT },
+      legend: true
+    });
+    this.selectedChart = id;
+    this.publishCharts();
+    this.publishSeries();
+    this.persist();
+    this.publishStatus();
+  }
+
+  selectChart(id: number): void {
+    if (this.selectedChart === id) {
+      return;
+    }
+    this.selectedChart = id;
+    this.publishCharts();
+  }
+
+  placeChart(id: number, x: number, y: number, width: number, height: number): void {
+    const place = {
+      x: Math.max(0, Math.round(x)),
+      y: Math.max(0, Math.round(y)),
+      width: Math.max(MIN_CHART_WIDTH, Math.round(width)),
+      height: Math.max(MIN_CHART_HEIGHT, Math.round(height))
+    };
+    if (!this.document.changeChart(id, chart => ({ ...chart, place }))) {
+      return;
+    }
+    this.publishCharts();
+    // A chart that changed width can draw more points, or fewer, and
+    // the series it is sent is cut to its width. This is the only
+    // place a *move* has to republish data, and it is why the two
+    // keys are worth having: a drag that only moved it republishes
+    // the placement and finds the series structurally equal.
+    this.publishSeries();
+    this.persist();
+    this.publishStatus();
+  }
+
+  setChartKind(id: number, kind: ChartKind): void {
+    if (!this.document.changeChart(id, chart => ({ ...chart, kind }))) {
+      return;
+    }
+    this.publishCharts();
+    this.persist();
+    this.publishStatus();
+  }
+
+  setChartTitle(id: number, title: string): void {
+    if (!this.document.changeChart(id, chart => ({ ...chart, title }))) {
+      return;
+    }
+    this.publishCharts();
+    this.persist();
+    this.publishStatus();
+  }
+
+  removeChart(id: number): void {
+    if (!this.document.removeChart(id)) {
+      return;
+    }
+    if (this.selectedChart === id) {
+      this.selectedChart = 0;
+    }
+    this.publishCharts();
+    this.publishSeries();
+    this.persist();
+    this.publishStatus();
+  }
+
+  private publishCharts(): void {
+    this.chartsSubject.next({
+      entries: this.document.charts.map(chart => ({
+        id: chart.id,
+        kind: chart.kind,
+        title: chart.title,
+        range: formatRange(chart.range),
+        x: chart.place.x,
+        y: chart.place.y,
+        width: chart.place.width,
+        height: chart.place.height,
+        legend: chart.legend
+      })),
+      selected: this.selectedChart
+    });
+  }
+
+  /**
+   * What every chart on this sheet draws, cut to what it can draw.
+   *
+   * **This is where the phase's exit criterion is actually met.** The
+   * limit handed to `seriesFrom` is the chart's own width in pixels,
+   * so a chart four hundred pixels wide is sent at most four hundred
+   * points however many cells its range covers — and the cells are
+   * read here, on the thread that has them, rather than crossing.
+   *
+   * The whole set is rebuilt rather than the one chart that changed.
+   * A sheet holds a handful of charts, each bounded by its own width,
+   * so the work is bounded by pixels on screen twice over; and the
+   * differ compares what comes out, so a rebuild that produced the
+   * same numbers puts nothing on the wire.
+   */
+  private publishSeries(): void {
+    const charts = this.document.charts;
+    if (charts.length === 0) {
+      // Structurally equal to the last empty one, so this costs a
+      // comparison and no patch on every sheet that has no charts —
+      // which is every sheet, on the page `pnpm proof` measures.
+      this.seriesSubject.next({ charts: {} });
+      return;
+    }
+    const built: Record<string, SheetChartSeries> = {};
+    for (const chart of charts) {
+      built[String(chart.id)] = this.seriesFor(chart);
+    }
+    this.seriesSubject.next({ charts: built });
+  }
+
+  private seriesFor(chart: Chart): SheetChartSeries {
+    const rect = {
+      firstRow: Math.min(chart.range.start.row, chart.range.end.row),
+      lastRow: Math.max(chart.range.start.row, chart.range.end.row),
+      firstColumn: Math.min(chart.range.start.column, chart.range.end.column),
+      lastColumn: Math.max(chart.range.start.column, chart.range.end.column)
+    };
+    const grid: CellValue[][] = [];
+    for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+      const line: CellValue[] = [];
+      for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+        line.push(this.document.sheet.value(row, column));
+      }
+      grid.push(line);
+    }
+    const rows = rect.lastRow - rect.firstRow + 1;
+    const columns = rect.lastColumn - rect.firstColumn + 1;
+    const { byColumn } = orientationOf(rows, columns);
+    const lines = byColumn ? grid : transposed(grid, rows, columns);
+    const headers = headersIn(lines[0] ?? [], lines[1]);
+    const labels = (lines[headers ? 1 : 0] ?? []).some(value => typeof value === 'string');
+    const read = seriesFrom(grid, {
+      byColumn,
+      headers,
+      labels,
+      // The chart's own width, which is the most points a line drawn
+      // in it can be told apart at. A pie has no width to speak of
+      // and reads one series, so it is cut the same way and never
+      // notices.
+      limit: chart.place.width
+    });
+    return { categories: read.categories, series: read.series, read: read.read };
+  }
+
   /** The snapshot as it stands, for a spec or a worker shutting down. */
   snapshot(): SheetSnapshot {
     return snapshotOf(this.document, this.geometrySubject.value.rowCount);
@@ -1392,6 +1604,20 @@ export class SheetService {
     }
   }
 
+  /**
+   * The series again, but only when there is a chart to draw them.
+   *
+   * The guard is the whole reason this is a method. A chart's range
+   * is read cell by cell on every publish, and a sheet with no charts
+   * must not pay a single read for the feature — which is what the
+   * page `pnpm proof` measures, and what its budgets would notice.
+   */
+  private redrawCharts(): void {
+    if (this.document.charts.length > 0) {
+      this.publishSeries();
+    }
+  }
+
   private afterEdit(): void {
     // The rules read the cells, so a changed cell can change what a
     // scale spreads between.
@@ -1402,12 +1628,17 @@ export class SheetService {
     this.publishEditor();
     this.publishStatus();
     this.publishStats();
+    this.redrawCharts();
     this.persist();
     this.pump();
   }
 
   private afterHistory(): void {
     this.selectionSubject.next(this.document.selection);
+    // Undo can take back the insert of a chart as well as the cells
+    // one reads, so both keys go out rather than only the series.
+    this.publishCharts();
+    this.publishSeries();
     // An undone column insert puts the widths back where they were,
     // and the geometry is where the render worker reads them.
     this.publishGeometry();
@@ -1454,6 +1685,10 @@ export class SheetService {
     this.repaintIfRuled();
     this.publishStatus();
     this.publishStats();
+    // A formula settling changes what a chart of it draws, and a
+    // chart is the one thing on screen that can be looking at cells
+    // the window is not.
+    this.redrawCharts();
     if (result.done) {
       this.pumping = false;
       return;
@@ -1770,3 +2005,33 @@ function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat 
  * answer when you add more.
  */
 const AUTOFIT_SAMPLES = 12;
+
+/**
+ * How far along the sheet a column starts, in its own pixels.
+ *
+ * The render worker asks `UiVirtualSheet` for this and gets it from a
+ * running total it already keeps; this side has only the list, and a
+ * chart is placed once rather than per frame. Columns past the end of
+ * the list take the default width, which is what the grid draws them
+ * at.
+ */
+function offsetOfColumn(geometry: SheetGeometry, column: number): number {
+  let offset = 0;
+  for (let at = 0; at < column; at++) {
+    offset += geometry.columnWidths[at] ?? geometry.columnWidth;
+  }
+  return offset;
+}
+
+/** A grid of values with its rows and columns swapped. */
+function transposed(grid: readonly (readonly CellValue[])[], rows: number, columns: number): CellValue[][] {
+  const out: CellValue[][] = [];
+  for (let column = 0; column < columns; column++) {
+    const line: CellValue[] = [];
+    for (let row = 0; row < rows; row++) {
+      line.push(grid[row]?.[column] ?? null);
+    }
+    out.push(line);
+  }
+  return out;
+}

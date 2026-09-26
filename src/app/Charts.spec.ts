@@ -1,0 +1,208 @@
+import { describe, expect, it } from 'vitest';
+
+import type { SheetCharts, SheetSeriesView } from './SheetContract';
+import { SheetDocument } from './SheetDocument';
+import { SheetService, type Schedule } from './SheetService';
+
+/**
+ * Charts, through the service that publishes them — Phase 15.
+ *
+ * **The exit criterion lives here.** `Series.spec.ts` asserts that the
+ * thinning never returns more points than it was asked for; this
+ * asserts that the number it is asked for is the chart's own width,
+ * end to end from a range of fifty thousand cells to what crosses the
+ * barrier. A chart four hundred pixels wide publishes at most four
+ * hundred points.
+ *
+ * The other half is the two keys. What a chart *is* and what a chart
+ * *shows* change at different rates, and the reason they are separate
+ * is that either one sharing the other's key would put the whole of
+ * itself on the wire every time the other moved.
+ */
+function harness(rows = 0) {
+  const queue: (() => void)[] = [];
+  const schedule: Schedule = run => queue.push(run);
+  const document = new SheetDocument();
+  for (let row = 0; row < rows; row++) {
+    document.setCell(row, 0, String(Math.sin(row / 400) * 100));
+  }
+  document.sheet.recalculate();
+  const service = new SheetService(document, { schedule, rowCount: 60_000, columnCount: 20 });
+  const drain = (): void => {
+    while (queue.length > 0) {
+      queue.shift()?.();
+    }
+  };
+  const charts = (): SheetCharts => {
+    let held: SheetCharts = { entries: [], selected: 0 };
+    service.charts.subscribe(value => (held = value)).unsubscribe();
+    return held;
+  };
+  const series = (): SheetSeriesView => {
+    let held: SheetSeriesView = { charts: {} };
+    service.chartSeries.subscribe(value => (held = value)).unsubscribe();
+    return held;
+  };
+  const only = () => series().charts[String(charts().entries[0].id)];
+  return { document, service, drain, charts, series, only };
+}
+
+describe('putting a chart on a sheet', () => {
+  it('reads the selection and lands beside it, not over it', () => {
+    const h = harness(20);
+    h.service.setSelection(0, 0, 5, 1);
+
+    h.service.insertChart('line');
+
+    const [chart] = h.charts().entries;
+    expect(chart.range).toBe('A1:B6');
+    expect(chart.kind).toBe('line');
+    // Past the right-hand edge of column B, so the numbers stay
+    // readable next to the picture of them.
+    expect(chart.x).toBeGreaterThan(0);
+  });
+
+  it('selects what it just inserted', () => {
+    const h = harness(20);
+    h.service.insertChart('column');
+    expect(h.charts().selected).toBe(h.charts().entries[0].id);
+  });
+
+  it('gives each chart an id nothing else has', () => {
+    const h = harness(20);
+    h.service.setSelection(0, 0, 3, 0);
+    h.service.insertChart('line');
+    h.service.insertChart('pie');
+
+    const ids = h.charts().entries.map(entry => entry.id);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it('takes one back with undo, and puts it back with redo', () => {
+    const h = harness(20);
+    h.service.insertChart('line');
+    expect(h.charts().entries).toHaveLength(1);
+
+    h.service.undo();
+    expect(h.charts().entries).toHaveLength(0);
+
+    h.service.redo();
+    expect(h.charts().entries).toHaveLength(1);
+  });
+
+  it('forgets the selected chart when another sheet is shown', () => {
+    const h = harness(20);
+    h.service.insertChart('line');
+    h.service.addSheet();
+    expect(h.charts().selected).toBe(0);
+    expect(h.charts().entries).toHaveLength(0);
+  });
+});
+
+describe('what a chart is sent to draw', () => {
+  /** The phase's exit criterion, end to end. */
+  it('sends at most as many points as the chart is wide', () => {
+    const h = harness(50_000);
+    h.service.setSelection(0, 0, 49_999, 0);
+    h.service.insertChart('line');
+    h.service.placeChart(h.charts().entries[0].id, 200, 40, 400, 300);
+
+    const drawn = h.only();
+
+    expect(drawn.series[0].points.length).toBeLessThanOrEqual(400);
+    expect(drawn.read).toBe(50_000);
+  });
+
+  it('sends more points to a wider chart and fewer to a narrower one', () => {
+    const h = harness(50_000);
+    h.service.setSelection(0, 0, 49_999, 0);
+    h.service.insertChart('line');
+    const id = h.charts().entries[0].id;
+
+    h.service.placeChart(id, 0, 0, 800, 300);
+    const wide = h.only().series[0].points.length;
+    h.service.placeChart(id, 0, 0, 200, 300);
+    const narrow = h.only().series[0].points.length;
+
+    expect(wide).toBeLessThanOrEqual(800);
+    expect(narrow).toBeLessThanOrEqual(200);
+    expect(narrow).toBeLessThan(wide);
+  });
+
+  /**
+   * The thinning is not sampling, and the difference is visible from
+   * out here: the peaks of the sine still reach the top.
+   */
+  it('keeps the shape of what it thinned', () => {
+    const h = harness(50_000);
+    h.service.setSelection(0, 0, 49_999, 0);
+    h.service.insertChart('line');
+
+    const highest = Math.max(...h.only().series[0].points.map(point => point.y));
+    expect(highest).toBeGreaterThan(99);
+  });
+
+  it('redraws when a cell the chart reads is edited', () => {
+    const h = harness(20);
+    h.service.setSelection(0, 0, 19, 0);
+    h.service.insertChart('line');
+    const before = h.only().series[0].points[0].y;
+
+    h.service.setCell(0, 0, '4321');
+    h.drain();
+
+    expect(h.only().series[0].points[0].y).not.toBe(before);
+    expect(h.only().series[0].points[0].y).toBe(4321);
+  });
+
+  it('redraws when a formula the chart reads settles', () => {
+    const h = harness(20);
+    h.service.setCell(0, 1, '=A1*10');
+    h.drain();
+    h.service.setSelection(0, 1, 19, 1);
+    h.service.insertChart('line');
+
+    h.service.setCell(0, 0, '5');
+    h.drain();
+
+    expect(h.only().series[0].points[0].y).toBe(50);
+  });
+
+  it('has nothing to send once the chart is gone', () => {
+    const h = harness(20);
+    h.service.insertChart('line');
+    h.service.removeChart(h.charts().entries[0].id);
+
+    expect(h.series().charts).toEqual({});
+    expect(h.charts().selected).toBe(0);
+  });
+});
+
+/**
+ * The cost of the feature to a sheet that does not use it.
+ *
+ * A chart's range is read cell by cell on every publish, and the
+ * guard that stops a sheet with no charts paying for that is the only
+ * reason `pnpm proof` can still measure what it measures.
+ */
+describe('a sheet with no charts on it', () => {
+  it('does not publish a series while two hundred formulas settle', () => {
+    const h = harness(0);
+    let published = 0;
+    const watching = h.service.chartSeries.subscribe(() => published++);
+
+    for (let row = 0; row < 200; row++) {
+      h.service.setCell(row, 0, `=${row}+1`);
+    }
+    h.drain();
+    watching.unsubscribe();
+
+    // One, which is the value a `BehaviorSubject` hands over on
+    // subscription, and not one more. The guard in `redrawCharts` is
+    // what does it: without it every edit and every recalculation
+    // slice would call `next` with a fresh empty object, and a
+    // `BehaviorSubject` emits whatever it is given — the differ is
+    // further down the wire than this.
+    expect(published).toBe(1);
+  });
+});

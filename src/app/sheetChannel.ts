@@ -28,7 +28,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       formats: service.formats,
       palette: service.palette,
       activeFormat: service.activeFormat,
-      autofit: service.autofit
+      autofit: service.autofit,
+      charts: service.charts,
+      series: service.chartSeries
     },
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
@@ -38,6 +40,12 @@ export function sheetChannel(service: SheetService): ServedChannel {
       addValidation: (rule, strict, message) => service.addValidation(rule, strict, message),
       removeValidation: at => service.removeValidation(at),
       clearRules: () => service.clearRules(),
+      insertChart: kind => service.insertChart(kind),
+      selectChart: id => service.selectChart(id),
+      placeChart: (id, x, y, width, height) => service.placeChart(id, x, y, width, height),
+      setChartKind: (id, kind) => service.setChartKind(id, kind),
+      setChartTitle: (id, title) => service.setChartTitle(id, title),
+      removeChart: id => service.removeChart(id),
       activateSheet: sheet => service.activateSheet(sheet),
       addSheet: () => service.addSheet(),
       renameSheet: (sheet, name) => service.renameSheet(sheet, name),
