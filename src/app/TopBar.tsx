@@ -15,6 +15,7 @@ import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
+import { ChartBar } from './ChartBar';
 import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
 import { Sheet } from './SheetContract';
@@ -142,6 +143,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    */
   const ruling = internalState(false);
   const rulesTab = internalState<RulesTab>('format');
+  /** Whether the chart bar is open; see `ruling` for why it is its own. */
+  const charting = internalState(false);
   const shortcutsOpen = internalState(false);
   /**
    * The line under the bar: what the name box is waiting for, or why
@@ -170,7 +173,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * exact moment, rather than a plausible one.
    */
   let rulesFieldNode: UiNode | null = null;
-  let wanted: 'name' | 'find' | 'rules' | null = null;
+  let chartFieldNode: UiNode | null = null;
+  let wanted: 'name' | 'find' | 'rules' | 'chart' | null = null;
 
   /**
    * Focus a field and select what is in it.
@@ -201,23 +205,32 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * waiting for a node that had already arrived. Ctrl+F opened a bar
    * and left the person typing into the sheet behind it.
    */
-  const askFor = (which: 'name' | 'find' | 'rules', open?: () => void): void => {
+  const askFor = (which: 'name' | 'find' | 'rules' | 'chart', open?: () => void): void => {
     wanted = which;
     open?.();
-    const node = which === 'name' ? nameBoxNode : which === 'find' ? findFieldNode : rulesFieldNode;
+    const node =
+      which === 'name'
+        ? nameBoxNode
+        : which === 'find'
+          ? findFieldNode
+          : which === 'rules'
+            ? rulesFieldNode
+            : chartFieldNode;
     if (wanted === which && node !== null) {
       wanted = null;
       take(node);
     }
   };
 
-  const arrived = (which: 'name' | 'find' | 'rules') => (node: UiNode | null) => {
+  const arrived = (which: 'name' | 'find' | 'rules' | 'chart') => (node: UiNode | null) => {
     if (which === 'name') {
       nameBoxNode = node;
     } else if (which === 'find') {
       findFieldNode = node;
-    } else {
+    } else if (which === 'rules') {
       rulesFieldNode = node;
+    } else {
+      chartFieldNode = node;
     }
     if (node !== null && wanted === which) {
       wanted = null;
@@ -335,6 +348,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           rulesTab.value = id === 'conditionalFormat' ? 'format' : 'validation';
           ruling.value = true;
         });
+        return;
+      case 'insertChart':
+        askFor('chart', () => (charting.value = true));
         return;
       case 'clearRules':
         sheet.send.clearRules();
@@ -627,6 +643,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       pasteHint.value = false;
       return true;
     }
+    if (charting.value) {
+      // A chart keeps its handles when the bar closes; Escape here is
+      // about the bar, and clicking the grid is what lets a chart go.
+      charting.value = false;
+      return true;
+    }
     if (ruling.value) {
       ruling.value = false;
       return true;
@@ -712,6 +734,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   ];
 
   /**
+   * The chart bar, built once and switched in — for the reason the
+   * find bar and the rules bar are.
+   */
+  const chartBar = [
+    <box key="chartrule" width={percent(100)} height={1} backgroundColor="border" />,
+    <ChartBar key="chart" editing={edit} onClose={() => (charting.value = false)} ref={arrived('chart')} />
+  ];
+
+  /**
    * What the formula bar shows: the draft while a cell is open, and
    * what the application worker says the cell holds otherwise.
    *
@@ -789,7 +820,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
               wanted === null &&
               claimed !== nameBoxNode &&
               claimed !== findFieldNode &&
-              claimed !== rulesFieldNode
+              claimed !== rulesFieldNode &&
+              claimed !== chartFieldNode
             ) {
               edit.focusSheet();
             }
@@ -832,6 +864,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         />
       </row>
       {ruling.pipe(map(open => (open ? rulesBar : [])))}
+      {charting.pipe(map(open => (open ? chartBar : [])))}
       {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />

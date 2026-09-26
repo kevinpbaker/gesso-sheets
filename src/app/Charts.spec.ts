@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { relativeRef } from '../sheet/A1';
 import type { SheetCharts, SheetSeriesView } from './SheetContract';
+import { applySnapshot, parseSnapshot, snapshotOf } from './SheetFile';
 import { SheetDocument } from './SheetDocument';
 import { SheetService, type Schedule } from './SheetService';
 
@@ -204,5 +206,94 @@ describe('a sheet with no charts on it', () => {
     // `BehaviorSubject` emits whatever it is given — the differ is
     // further down the wire than this.
     expect(published).toBe(1);
+  });
+});
+
+/**
+ * A chart is part of the document, so it is part of the file.
+ *
+ * The reading is deliberately suspicious: a file is outside the
+ * program, and a chart with a kind this build does not know would be
+ * drawn as something else if it were let through.
+ */
+describe('a chart that is written down', () => {
+  it('comes back as the chart it was', () => {
+    const before = new SheetDocument();
+    before.setCell(0, 0, '5');
+    before.addChart({
+      kind: 'column',
+      title: 'Takings',
+      range: { start: relativeRef(0, 0), end: relativeRef(9, 1) },
+      place: { x: 300, y: 40, width: 520, height: 260 },
+      legend: false
+    });
+
+    const after = new SheetDocument();
+    applySnapshot(after, snapshotOf(before));
+
+    expect(after.charts).toHaveLength(1);
+    expect(after.charts[0].kind).toBe('column');
+    expect(after.charts[0].title).toBe('Takings');
+    expect(after.charts[0].place).toEqual({ x: 300, y: 40, width: 520, height: 260 });
+    expect(after.charts[0].legend).toBe(false);
+    expect(after.charts[0].range.end.row).toBe(9);
+  });
+
+  it('reads a file written before charts existed as a sheet with none', () => {
+    const read = parseSnapshot(
+      JSON.stringify({ version: 2, cells: [{ row: 0, column: 0, input: '1' }] }),
+      10
+    );
+    expect(read?.sheets[0].charts).toEqual([]);
+  });
+
+  it('drops a chart whose kind this build does not know', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        charts: [
+          { kind: 'sunburst', range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, place: { x: 0, y: 0, width: 200, height: 200 } },
+          { kind: 'pie', range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, place: { x: 0, y: 0, width: 200, height: 200 } }
+        ]
+      }),
+      10
+    );
+    expect(read?.sheets[0].charts.map(chart => chart.kind)).toEqual(['pie']);
+  });
+
+  it('drops a chart with no range or no size rather than drawing nothing', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        charts: [
+          { kind: 'pie', place: { x: 0, y: 0, width: 200, height: 200 } },
+          { kind: 'pie', range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } } }
+        ]
+      }),
+      10
+    );
+    expect(read?.sheets[0].charts).toEqual([]);
+  });
+
+  /**
+   * Two charts sharing an id would be one chart as far as selecting
+   * and dragging are concerned, and a file can repeat a number.
+   */
+  it('renumbers the ids it reads rather than trusting them', () => {
+    const read = parseSnapshot(
+      JSON.stringify({
+        version: 2,
+        cells: [],
+        charts: [
+          { id: 7, kind: 'pie', range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, place: { x: 0, y: 0, width: 200, height: 200 } },
+          { id: 7, kind: 'line', range: { start: { row: 0, column: 0 }, end: { row: 1, column: 1 } }, place: { x: 0, y: 0, width: 200, height: 200 } }
+        ]
+      }),
+      10
+    );
+    const ids = read?.sheets[0].charts.map(chart => chart.id) ?? [];
+    expect(new Set(ids).size).toBe(2);
   });
 });

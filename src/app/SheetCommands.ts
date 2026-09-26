@@ -65,6 +65,7 @@ export type CommandId =
   | 'deleteRows'
   | 'deleteColumns'
   | 'defineName'
+  | 'insertChart'
   | 'borderAll'
   | 'borderOutline'
   | 'borderTop'
@@ -287,6 +288,13 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     accelerator: { key: 'r', ctrl: true, shift: true, shifted: 'R' }
   },
   dataValidation: { id: 'dataValidation', label: 'Data validation…' },
+  /**
+   * The chart bar, which inserts one and then edits the one it made.
+   *
+   * No accelerator. Every two-key combination worth having is taken,
+   * and a chart is not something anybody makes twice a minute.
+   */
+  insertChart: { id: 'insertChart', label: 'Chart…' },
   clearRules: { id: 'clearRules', label: 'Clear rules from this sheet' },
 
   /**
@@ -511,6 +519,8 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'deleteRows',
       'deleteColumns',
+      SEPARATOR,
+      'insertChart',
       SEPARATOR,
       'defineName'
     ]

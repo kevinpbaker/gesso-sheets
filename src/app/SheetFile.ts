@@ -3,6 +3,7 @@ import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } 
 import type { Validation, ValidationRule } from '../sheet/Validation';
 import { nameProblem } from '../sheet/Names';
 import type { MergeRect } from '../sheet/Merges';
+import { MIN_CHART_HEIGHT, MIN_CHART_WIDTH, type Chart, type ChartKind, type ChartPlacement } from '../sheet/Chart';
 import {
   DEFAULT_FORMAT,
   GENERAL,
@@ -107,6 +108,16 @@ export interface StoredSheet {
    */
   readonly conditional: readonly ConditionalRule[];
   readonly validations: readonly Validation[];
+  /**
+   * The charts floating over this sheet.
+   *
+   * Absent in a file written before they existed, which reads as no
+   * charts — so no version bump, on the rule the merges, the names
+   * and the rules were added under: the field's absence already means
+   * the right thing, and a version is for a change that would be read
+   * *wrongly* rather than not at all.
+   */
+  readonly charts: readonly Chart[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   readonly hiddenRows: readonly number[];
@@ -183,6 +194,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       merges: page.merges.all.filter(rect => rect.lastRow < rowCount),
       conditional: [...page.conditional],
       validations: [...page.validations],
+      charts: [...page.charts],
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
@@ -239,6 +251,8 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     page.conditional.push(...stored.conditional);
     page.validations.length = 0;
     page.validations.push(...stored.validations);
+    page.charts.length = 0;
+    page.charts.push(...stored.charts);
     page.frozenRows = stored.frozenRows;
     page.frozenColumns = stored.frozenColumns;
     page.hiddenRows.clear();
@@ -386,6 +400,7 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     merges: mergesFrom(source.merges),
     conditional: rulesFrom(source.conditional),
     validations: validationsFrom(source.validations),
+    charts: chartsFrom(source.charts),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     hiddenRows: Array.isArray(source.hiddenRows)
@@ -650,6 +665,67 @@ function rangeFrom(stored: unknown): RangeRef | null {
   return start === null || end === null
     ? null
     : { start: relativeRef(start.row, start.column), end: relativeRef(end.row, end.column) };
+}
+
+/**
+ * The charts of a stored sheet, keeping the ones that make sense.
+ *
+ * A chart with no range, no size or a kind this build does not know
+ * is dropped rather than drawn as something else, on the rule the
+ * rest of this file goes by: a file is outside the program, and the
+ * cost of keeping a broken entry is a picture of the wrong cells.
+ *
+ * An id is not trusted either. It is a number a file could repeat,
+ * and two charts sharing one would be one chart as far as selection
+ * and dragging are concerned — so they are renumbered from one as
+ * they are read, which is also what makes a hand-written file work.
+ */
+function chartsFrom(stored: unknown): Chart[] {
+  if (!Array.isArray(stored)) {
+    return [];
+  }
+  const kinds: readonly ChartKind[] = ['line', 'area', 'column', 'bar', 'stacked', 'pie', 'scatter'];
+  const charts: Chart[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const held = entry as {
+      kind?: unknown;
+      title?: unknown;
+      range?: unknown;
+      place?: unknown;
+      legend?: unknown;
+    };
+    const range = rangeFrom(held.range);
+    const place = placeFrom(held.place);
+    if (range === null || place === null || !kinds.includes(held.kind as ChartKind)) {
+      continue;
+    }
+    charts.push({
+      id: charts.length + 1,
+      kind: held.kind as ChartKind,
+      title: typeof held.title === 'string' ? held.title : '',
+      range,
+      place,
+      legend: held.legend !== false
+    });
+  }
+  return charts;
+}
+
+function placeFrom(stored: unknown): ChartPlacement | null {
+  if (typeof stored !== 'object' || stored === null) {
+    return null;
+  }
+  const held = stored as { x?: unknown; y?: unknown; width?: unknown; height?: unknown };
+  const at = (value: unknown, least: number): number | null =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.max(least, Math.round(value)) : null;
+  const x = at(held.x, 0);
+  const y = at(held.y, 0);
+  const width = at(held.width, MIN_CHART_WIDTH);
+  const height = at(held.height, MIN_CHART_HEIGHT);
+  return x === null || y === null || width === null || height === null ? null : { x, y, width, height };
 }
 
 function testFrom(stored: unknown): ConditionalTest | null {

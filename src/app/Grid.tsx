@@ -35,6 +35,7 @@ import {
 } from 'gesso-framework';
 
 import { columnName, relativeRef } from '../sheet/A1';
+import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer';
 import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
 import type { Span } from '../sheet/Tokenizer';
 
@@ -57,7 +58,10 @@ import {
   Sheet,
   type SheetExplain,
   type SheetMerge,
+  type SheetChart,
+  type SheetCharts,
   type SheetSelection,
+  type SheetSeriesView,
   type SheetWindow
 } from './SheetContract';
 import { colouredReferences, formulaSpans } from './FormulaColours';
@@ -1490,6 +1494,17 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
   let filling = false;
   let fillTo: { row: number; column: number } | null = null;
   let sweeping = false;
+  /**
+   * The chart being dragged, as a live rectangle.
+   *
+   * On this thread for the length of the drag, like a column resize:
+   * the application worker learns where a chart ended up and not
+   * where it passed through, so a move is frame-rate here and one
+   * command at the end.
+   */
+  let chartDrag: ChartDrag | null = null;
+  let chartFrom: { x: number; y: number; width: number; height: number; pointerX: number; pointerY: number } | null =
+    null;
 
   /**
    * The cell under a pointer event, or null before the first layout.
@@ -1692,8 +1707,116 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     );
   };
 
+  const charts = internalState<SheetCharts>({ entries: [], selected: 0 });
+  const series = internalState<SheetSeriesView>({ charts: {} });
+  /** How many rows the sheet has, for the anchor search to bound itself. */
+  const rowCount = internalState(0);
+  /**
+   * Which charts hang off which row, rebuilt when either could have
+   * moved.
+   *
+   * A map rather than a scan per row: a render walks thirty rows and
+   * scanning the chart list in each of them is thirty times the work
+   * to answer a question that changes when somebody drags something.
+   */
+  const anchored = new Map<number, SheetChart[]>();
+
+  /**
+   * The row a sheet-pixel offset falls in.
+   *
+   * A binary search over `rowOffsetOf`, which is monotonic and
+   * already accounts for hidden rows and the heights that differ.
+   * Twenty probes for a sheet of a million rows, and it runs when the
+   * charts move rather than per frame.
+   */
+  const rowAtOffset = (y: number): number => {
+    if (sheetWindow === undefined) {
+      return 0;
+    }
+    let low = 0;
+    let high = Math.max(0, rowCount.value - 1);
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (sheetWindow.rowOffsetOf(middle) <= y) {
+        low = middle;
+      } else {
+        high = middle - 1;
+      }
+    }
+    return low;
+  };
+
+  const rebuildAnchors = (): void => {
+    anchored.clear();
+    for (const chart of charts.value.entries) {
+      const row = rowAtOffset(chart.y);
+      const held = anchored.get(row);
+      if (held === undefined) {
+        anchored.set(row, [chart]);
+      } else {
+        held.push(chart);
+      }
+    }
+  };
+
+  const chartHandlers = {
+    select: (id: number) => sheet.send.selectChart(id),
+    begin: (id: number, corner: Corner | null, x: number, y: number) => {
+      const chart = charts.value.entries.find(entry => entry.id === id);
+      if (chart === undefined) {
+        return;
+      }
+      chartFrom = { x: chart.x, y: chart.y, width: chart.width, height: chart.height, pointerX: x, pointerY: y };
+      chartDrag = { id, corner, x: chart.x, y: chart.y, width: chart.width, height: chart.height };
+    },
+    move: (x: number, y: number) => {
+      if (chartDrag === null || chartFrom === null) {
+        return;
+      }
+      const next = dragged(chartFrom, chartDrag.corner, x - chartFrom.pointerX, y - chartFrom.pointerY);
+      chartDrag = { ...chartDrag, ...next };
+      sheetWindow?.invalidate();
+    },
+    end: () => {
+      if (chartDrag === null) {
+        return;
+      }
+      const { id, x, y, width, height } = chartDrag;
+      chartDrag = null;
+      chartFrom = null;
+      sheet.send.placeChart(id, x, y, width, height);
+    }
+  };
+
+  /**
+   * The charts anchored to a row, as its children.
+   *
+   * A chart hangs off the row it *starts* in, so it travels with the
+   * scroll and its node is never rebuilt by one. `extendRange` below
+   * keeps that row mounted while any part of the chart is on screen,
+   * which is the same hook a merge reaching up out of the window
+   * uses.
+   */
+  const chartsOn = (row: number): UiElement[] => {
+    const here = anchored.get(row);
+    if (here === undefined || sheetWindow === undefined) {
+      return [];
+    }
+    const offset = sheetWindow.rowOffsetOf(row);
+    return here.map(chart =>
+      chartElement({
+        chart,
+        data: series.value.charts[String(chart.id)] ?? null,
+        selected: charts.value.selected === chart.id,
+        rowOffset: offset,
+        drag: chartDrag,
+        on: chartHandlers
+      })
+    );
+  };
+
   const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
-    const line: UiElement[] = [rowHeader(row)];
+    const line: UiElement[] = [rowHeader(row), ...chartsOn(row)];
     // The frozen columns first, which is the order the window's own
     // leading spacer is placed against: everything that stays put,
     // then the gap, then the columns that scrolled into view.
@@ -1759,7 +1882,18 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
      * merge is drawn and then covered up by the very cells it is
      * supposed to be hiding.
      */
-    const spans = merges.value.some(rect => rect.firstRow === row && rect.lastRow > row);
+    /**
+     * A row holding something taller than itself is lifted.
+     *
+     * True of a vertical merge's anchor, and true of a chart for the
+     * same reason and with the same consequence: the row below is
+     * painted after this one, so without a stacking context the thing
+     * reaching down out of this row is drawn and then covered up by
+     * the rows it reaches over. A chart came out twenty-four pixels
+     * tall in a browser, which is exactly the height of one row.
+     */
+    const spans =
+      anchored.has(row) || merges.value.some(rect => rect.firstRow === row && rect.lastRow > row);
     return Row(
       {
         role: 'row',
@@ -1946,6 +2080,25 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       extendRange: (range: SheetRange) => {
         let firstRow = range.firstRow;
         let firstColumn = range.firstColumn;
+        /**
+         * A chart is drawn by the row it starts in, so a window that
+         * starts below that row has nothing to draw it and the chart
+         * vanishes while most of it is still on screen — which is the
+         * merge problem exactly, and takes the same answer.
+         *
+         * Bounded by the chart's own height: a three-hundred-pixel
+         * chart reaches back about twelve rows, and a sheet holds a
+         * handful of charts.
+         */
+        for (const [row, here] of anchored) {
+          if (row >= firstRow) {
+            continue;
+          }
+          const reaches = here.some(chart => rowAtOffset(chart.y + chart.height) >= range.firstRow);
+          if (reaches) {
+            firstRow = Math.min(firstRow, row);
+          }
+        }
         for (const rect of merges.value) {
           const inRows = rect.lastRow >= range.firstRow && rect.firstRow <= range.lastRow;
           const inColumns = rect.lastColumn >= range.firstColumn && rect.firstColumn <= range.lastColumn;
@@ -1977,6 +2130,11 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // under the pointer to hear about it, and past the edge of the
       // viewport none is.
       onPanStart: (event: UiPointerEvent) => {
+        // A press that reached the grid is a press that missed every
+        // chart, which is how a chart stops being selected.
+        if (charts.value.selected !== 0) {
+          sheet.send.selectChart(0);
+        }
         const at = cellUnder(event);
         if (at === null) {
           return;
@@ -2089,6 +2247,10 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     if (geometry.frozenRows !== frozen.value.rows || geometry.frozenColumns !== frozen.value.columns) {
       frozen.value = { rows: geometry.frozenRows, columns: geometry.frozenColumns };
     }
+    if (geometry.rowCount !== rowCount.value) {
+      rowCount.value = geometry.rowCount;
+      rebuildAnchors();
+    }
     if (geometry.merges !== merges.value) {
       merges.value = geometry.merges;
       // A merge changes which cells are drawn and how wide, and that
@@ -2098,6 +2260,27 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     standings.releaseAll();
       sheetWindow.invalidate();
     }
+  });
+
+  /**
+   * The charts, and what they draw.
+   *
+   * Two effects because they are two keys, and the anchors are
+   * rebuilt from the first: a chart that moved may have moved into
+   * another row, and until the map says so it would go on being
+   * drawn by the row it left.
+   */
+  ctx.effect(sheet.view.charts, value => {
+    charts.value = value;
+    rebuildAnchors();
+    sheetWindow?.invalidate();
+  });
+  ctx.effect(sheet.view.series, value => {
+    series.value = value;
+    // The rectangle did not move, so nothing has to be rebuilt: the
+    // chart's `paint` inputs carry this object and the engine
+    // repaints because it changed.
+    sheetWindow?.invalidate();
   });
 
   /**
