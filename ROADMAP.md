@@ -1976,10 +1976,14 @@ first run ending in a colon, because across POI's files the name was
 not the file's own author as often as it was. The other is the
 wrapper round a threaded comment (*"[Threaded comment] Your version of
 Excel…"*), cut down to the comment and its replies. All 61 comments
-in the 24 POI files that have them read clean. Notes are **not**
-written back into an exported `.xlsx` yet: Excel will not show a
-comment without a VML drawing beside it, which is its own part to
-write.
+in the 24 POI files that have them read clean. They are written back
+into an exported `.xlsx` as Excel's comments: the comments part,
+and the VML drawing Excel will not show a comment without — one
+hidden shape per note, anchored beside its cell. That shape is the
+part the reader never needed and so no round trip could have missed.
+A workbook exported with two notes, one of them two lines and an
+ampersand, opens in LibreOffice with both. The author is empty, as a
+note here has none, and LibreOffice calls that *Unknown Author*.
 
 The note shows to the right of its cell, for the cell under the
 pointer, or else for the selected cell, so the keyboard reaches it.

@@ -127,7 +127,8 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
       rows,
       merges: page.merges.all.filter(rect => rect.lastRow < rowCount),
       frozenRows: page.frozenRows,
-      frozenColumns: page.frozenColumns
+      frozenColumns: page.frozenColumns,
+      notes: page.notes.all().filter(note => note.row < rowCount)
     });
   }
 

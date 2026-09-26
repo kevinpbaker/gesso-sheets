@@ -60,6 +60,8 @@ export interface XlsxOutSheet {
   readonly merges: readonly MergeRect[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
+  /** The notes on the sheet's cells, written as Excel's comments. */
+  readonly notes?: readonly { readonly row: number; readonly column: number; readonly text: string }[];
 }
 
 export interface XlsxOutName {
@@ -103,7 +105,7 @@ export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
       .map(name => name.name.toUpperCase())
   );
   const parts: { name: string; text: string }[] = [
-    { name: '[Content_Types].xml', text: contentTypes(sheets.length) },
+    { name: '[Content_Types].xml', text: contentTypes(sheets.length, sheets.map(sheet => (sheet.notes?.length ?? 0) > 0)) },
     {
       name: '_rels/.rels',
       text: xml(
@@ -124,7 +126,13 @@ export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
     },
     { name: 'xl/styles.xml', text: styles }
   ];
-  sheets.forEach((sheet, at) => parts.push({ name: `xl/worksheets/sheet${at + 1}.xml`, text: worksheetOf(sheet, ranged) }));
+  sheets.forEach((sheet, at) => {
+    const noted = (sheet.notes?.length ?? 0) > 0;
+    parts.push({ name: `xl/worksheets/sheet${at + 1}.xml`, text: worksheetOf(sheet, ranged, noted) });
+    if (noted) {
+      parts.push(...notesOf(sheet.notes ?? [], at + 1));
+    }
+  });
   return parts;
 }
 
@@ -146,7 +154,7 @@ function escape(text: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function contentTypes(sheets: number): string {
+function contentTypes(sheets: number, noted: readonly boolean[] = []): string {
   const overrides = [
     `<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>`,
     `<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>`
@@ -155,9 +163,17 @@ function contentTypes(sheets: number): string {
     overrides.push(
       `<Override PartName="/xl/worksheets/sheet${at}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`
     );
+    if (noted[at - 1] === true) {
+      overrides.push(
+        `<Override PartName="/xl/comments${at}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.comments+xml"/>`
+      );
+    }
   }
+  const vml = noted.some(Boolean)
+    ? `<Default Extension="vml" ContentType="application/vnd.openxmlformats-officedocument.vmlDrawing"/>`
+    : '';
   return xml(
-    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${overrides.join('')}</Types>`
+    `<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${vml}${overrides.join('')}</Types>`
   );
 }
 
@@ -339,7 +355,7 @@ function borderOf(format: CellFormat | undefined): string {
 
 const address = (row: number, column: number): string => `${columnName(column)}${row + 1}`;
 
-function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>): string {
+function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>, noted = false): string {
   const byRow = new Map<number, XlsxOutCell[]>();
   let lastRow = 0;
   let lastColumn = 0;
@@ -392,6 +408,9 @@ function worksheetOf(sheet: XlsxOutSheet, ranged: ReadonlySet<string>): string {
       (columns === '' ? '' : `<cols>${columns}</cols>`) +
       `<sheetData>${data}</sheetData>` +
       (merges === '' ? '' : `<mergeCells count="${sheet.merges.length}">${merges}</mergeCells>`) +
+      // The comments' drawing: Excel shows a comment only through the
+      // shape this names; see `notesOf`.
+      (noted ? `<legacyDrawing r:id="rId2"/>` : '') +
       `</worksheet>`
   );
 }
@@ -584,4 +603,61 @@ function operandEnd(tokens: readonly Token[], first: number): number {
     }
   }
   return at;
+}
+
+/**
+ * A sheet's notes as Excel's comments: the comments part, the drawing
+ * Excel will not show a comment without, and the relationships from
+ * the worksheet to both.
+ *
+ * The drawing is VML, Office's pre-2007 vector format, and it is not
+ * optional: a comments part on its own is read by Excel and never
+ * shown, and some versions say the file needs repairing. One hidden
+ * shape per note, anchored beside its cell, is what Excel itself
+ * writes for a note nobody has moved. The comments have no author —
+ * a note here does not record one — so the author list is one empty
+ * name, which Excel shows as no name at all.
+ */
+function notesOf(notes: readonly { row: number; column: number; text: string }[], sheet: number): { name: string; text: string }[] {
+  const comments = notes
+    .map(
+      note =>
+        `<comment ref="${address(note.row, note.column)}" authorId="0"><text><t xml:space="preserve">${escape(note.text)}</t></text></comment>`
+    )
+    .join('');
+  const shapes = notes
+    .map((note, at) => {
+      const anchor = [note.column + 1, 15, Math.max(0, note.row - 1), 10, note.column + 3, 15, note.row + 3, 4].join(', ');
+      return (
+        `<v:shape id="_x0000_s${sheet * 1024 + at + 1}" type="#_x0000_t202" style="position:absolute;margin-left:80pt;margin-top:2pt;width:108pt;height:60pt;z-index:${at + 1};visibility:hidden" fillcolor="#ffffe1" o:insetmode="auto">` +
+        `<v:fill color2="#ffffe1"/><v:shadow on="t" color="black" obscured="t"/><v:path o:connecttype="none"/>` +
+        `<v:textbox style="mso-direction-alt:auto"><div style="text-align:left"></div></v:textbox>` +
+        `<x:ClientData ObjectType="Note"><x:MoveWithCells/><x:SizeWithCells/><x:Anchor>${anchor}</x:Anchor><x:AutoFill>False</x:AutoFill>` +
+        `<x:Row>${note.row}</x:Row><x:Column>${note.column}</x:Column></x:ClientData></v:shape>`
+      );
+    })
+    .join('');
+  return [
+    {
+      name: `xl/comments${sheet}.xml`,
+      text: xml(`<comments xmlns="${MAIN}"><authors><author></author></authors><commentList>${comments}</commentList></comments>`)
+    },
+    {
+      name: `xl/drawings/vmlDrawing${sheet}.vml`,
+      text:
+        `<xml xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">` +
+        `<o:shapelayout v:ext="edit"><o:idmap v:ext="edit" data="${sheet}"/></o:shapelayout>` +
+        `<v:shapetype id="_x0000_t202" coordsize="21600,21600" o:spt="202" path="m,l,21600r21600,l21600,xe"><v:stroke joinstyle="miter"/><v:path gradientshapeok="t" o:connecttype="rect"/></v:shapetype>` +
+        `${shapes}</xml>`
+    },
+    {
+      name: `xl/worksheets/_rels/sheet${sheet}.xml.rels`,
+      text: xml(
+        `<Relationships xmlns="${PACKAGE_RELATIONSHIPS}">` +
+          `<Relationship Id="rId1" Type="${RELATIONSHIPS}/comments" Target="../comments${sheet}.xml"/>` +
+          `<Relationship Id="rId2" Type="${RELATIONSHIPS}/vmlDrawing" Target="../drawings/vmlDrawing${sheet}.vml"/>` +
+          `</Relationships>`
+      )
+    }
+  ];
 }

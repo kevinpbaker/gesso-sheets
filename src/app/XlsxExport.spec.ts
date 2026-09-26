@@ -168,3 +168,45 @@ describe('a formula as Excel writes it', () => {
     expect(excelFormula('=@A1:A9*2', false)).toBe('A1:A9*2');
   });
 });
+
+/**
+ * Notes out as Excel's comments — after Phase 22, which read them in.
+ *
+ * Out and back through the reader, which was tested against files
+ * Excel wrote; and the parts Excel needs before it will show one, which
+ * the reader does not need and so could not catch the lack of.
+ */
+describe('notes in an exported workbook', () => {
+  function noted(): SheetDocument {
+    const document = new SheetDocument();
+    document.setCell(0, 0, 'Region');
+    document.setNote(0, 0, 'Where the order shipped from');
+    document.setNote(4, 2, 'Two lines\nof note, & an ampersand <tag>');
+    document.addSheet('Plain');
+    return document;
+  }
+
+  it('come back as the notes they were', async () => {
+    const back = await roundTrip(noted());
+    back.activate(0);
+    expect(back.noteAt(0, 0)).toBe('Where the order shipped from');
+    expect(back.noteAt(4, 2)).toBe('Two lines\nof note, & an ampersand <tag>');
+    back.activate(1);
+    expect(back.notes.size).toBe(0);
+  });
+
+  it('carry the drawing Excel shows a comment through, and say so in the content types', () => {
+    const parts = xlsxParts(xlsxOfDocument(noted(), ROWS).book);
+    const named = (name: string) => parts.find(part => part.name === name)?.text ?? '';
+
+    expect(named('xl/comments1.xml')).toContain('<comment ref="C5" authorId="0">');
+    expect(named('xl/drawings/vmlDrawing1.vml').match(/<v:shape /g)?.length).toBe(2);
+    expect(named('xl/worksheets/_rels/sheet1.xml.rels')).toContain('Target="../drawings/vmlDrawing1.vml"');
+    expect(named('xl/worksheets/sheet1.xml')).toContain('<legacyDrawing r:id="rId2"/>');
+    expect(named('[Content_Types].xml')).toContain('/xl/comments1.xml');
+    expect(named('[Content_Types].xml')).toContain('Extension="vml"');
+    // The sheet with no notes has none of it.
+    expect(parts.some(part => part.name === 'xl/comments2.xml')).toBe(false);
+    expect(named('xl/worksheets/sheet2.xml')).not.toContain('legacyDrawing');
+  });
+});
