@@ -1153,6 +1153,15 @@ stays text through an edit and a reload; on the way out, a text value
 another program would run gets OWASP's apostrophe, and a negative
 number, which is not text, does not.
 
+**A read that fails is not an empty file.** Found after the phase, by
+opening one workbook in two tabs: a sync access handle is exclusive
+across the origin, a tab refused one read "nothing stored", and the
+service saved a fresh, empty workbook over the real one. The index
+did the same with its list. Both now wait for a held file and throw on
+one they cannot read, and nothing is opened or saved over it; a
+document is claimed with a Web Lock, and a second tab shows it without
+keeping it.
+
 Found on the way and fixed with it: a viewport naming a sheet that is
 not showing used to *switch* to it, which made two tab changes in one
 turn a ping-pong neither thread could leave. Two files dropped at once
@@ -1170,8 +1179,11 @@ a reader may drop what it does not understand.
 font size and colour, fills, borders, alignment and wrap, column
 widths, hidden rows and columns, frozen panes, merges and defined
 names. **Dropped, deliberately:** charts, pivot tables, conditional
-formats, validations, comments, images, and theme and indexed colours,
-each of which this sheet would show wrongly rather than not at all.
+formats, validations, comments and images, each of which this sheet
+would show wrongly rather than not at all. Theme and indexed colours
+were on this list at first and came off it: Excel writes nearly every
+colour a person picks as a theme slot and a tint, so a workbook from
+Excel lost most of its colour until they were read.
 
 **Exit:** a workbook written by another spreadsheet opens with its
 formulas calculating, across sheets and through names. **Met.** The
