@@ -12,9 +12,10 @@ import type { SheetSnapshot, StoredFormat, StoredSheet } from './SheetFile';
  * — a fresh workbook swapped in, a library entry, a route. An `.xlsx`
  * turned into one arrives by that path and nothing downstream can tell
  * it was ever anything else, which is also what makes Save afterwards
- * a `.gsheet`: there is no `.xlsx` writer, and a Save that silently
- * wrote a different format from the one opened would be worse than
- * one that asks where to put a new file.
+ * a `.gsheet`: a Save that silently wrote a different format from the
+ * one opened would be worse than one that asks where to put a new
+ * file. Writing an `.xlsx` is an export, File ▸ Download as Excel
+ * workbook — see `SheetXlsxOut`.
  */
 
 export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapshot {

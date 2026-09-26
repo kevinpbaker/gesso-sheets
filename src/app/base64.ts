@@ -8,7 +8,7 @@
  */
 
 /** Bytes from the base64 a command carried them in. */
-export function bytesOfBase64(text: string): Uint8Array {
+export function bytesOfBase64(text: string): Uint8Array<ArrayBuffer> {
   const binary = atob(text);
   const bytes = new Uint8Array(binary.length);
   for (let at = 0; at < binary.length; at++) {

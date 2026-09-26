@@ -26,6 +26,7 @@ export type CommandId =
   | 'saveDocument'
   | 'saveDocumentAs'
   | 'downloadCsv'
+  | 'downloadXlsx'
   | 'undo'
   | 'redo'
   | 'cut'
@@ -213,6 +214,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   saveDocument: { id: 'saveDocument', label: 'Save', accelerator: { key: 's', ctrl: true } },
   saveDocumentAs: { id: 'saveDocumentAs', label: 'Save as…', accelerator: { key: 's', ctrl: true, shift: true } },
   downloadCsv: { id: 'downloadCsv', label: 'Download sheet as CSV' },
+  downloadXlsx: { id: 'downloadXlsx', label: 'Download as Excel workbook' },
   undo: { id: 'undo', label: 'Undo', accelerator: { key: 'z', ctrl: true }, viaKeyTable: true },
   redo: { id: 'redo', label: 'Redo', accelerator: { key: 'y', ctrl: true }, viaKeyTable: true },
   cut: { id: 'cut', label: 'Cut', accelerator: { key: 'x', ctrl: true }, viaKeyTable: true },
@@ -530,7 +532,7 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'file',
     label: 'File',
     mnemonic: 'f',
-    entries: ['newDocument', 'openFile', 'openRecent', SEPARATOR, 'saveDocument', 'saveDocumentAs', SEPARATOR, 'downloadCsv']
+    entries: ['newDocument', 'openFile', 'openRecent', SEPARATOR, 'saveDocument', 'saveDocumentAs', SEPARATOR, 'downloadXlsx', 'downloadCsv']
   },
   {
     id: 'edit',

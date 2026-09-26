@@ -403,6 +403,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'downloadCsv':
         files.exportCsv();
         break;
+      case 'downloadXlsx':
+        files.exportXlsx();
+        break;
       /**
        * `Insert ▸ Name`, which is the name box with a sentence under
        * it.

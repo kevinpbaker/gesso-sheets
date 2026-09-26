@@ -252,7 +252,7 @@ export interface SheetTransfer {
 export interface SheetDownload {
   readonly serial: number;
   /** What it is, which decides what the picker offers and what a save means. */
-  readonly kind: 'workbook' | 'csv';
+  readonly kind: 'workbook' | 'csv' | 'xlsx';
   /**
    * The shell's handle to write to, for a Save; null for a Save As or
    * an export, which ask the shell where.
@@ -262,6 +262,11 @@ export interface SheetDownload {
   readonly name: string;
   readonly mediaType: string;
   readonly text: string;
+  /**
+   * The file's bytes, for one that is not text — an `.xlsx` is a zip —
+   * as base64, because a command and a view carry plain data.
+   */
+  readonly base64?: string;
 }
 
 /**
@@ -556,6 +561,8 @@ export interface SheetCommands {
   importCsv(fileName: string, text: string): void;
   /** Builds the sheet in view as a CSV, and publishes it on `transfer`. */
   exportCsv(): void;
+  /** Builds the workbook as an `.xlsx`, and publishes it on `transfer`. */
+  exportXlsx(): void;
   /**
    * Shows a document: `''` for the last one used, `'new'` for a blank
    * one, or an id from the route. Opening the one already open does
@@ -572,7 +579,7 @@ export interface SheetCommands {
   /** Builds the workbook for the shell to save; `asNew` is Save As. */
   saveDocument(asNew: boolean): void;
   /** Where the shell put a download, so a workbook can remember its file. */
-  fileSaved(kind: 'workbook' | 'csv', name: string, handle: number | null, via: 'file' | 'download'): void;
+  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download'): void;
   /** A sentence about a file that did not go where it was sent, for the status line. */
   reportFile(text: string): void;
   /**

@@ -67,7 +67,9 @@ import type { SheetRepository } from './SheetRepository';
 import { exportCsv, importCsv } from './SheetCsv';
 import { guessOf, placeOf } from './alignment';
 import { platformInflate, reportOfXlsx, snapshotOfXlsx } from './SheetXlsx';
-import { bytesOfBase64 } from './base64';
+import { base64OfBytes, bytesOfBase64 } from './base64';
+import { platformDeflate, xlsxOfDocument } from './SheetXlsxOut';
+import { writeXlsx } from '../sheet/XlsxWrite';
 import { openXlsx, XlsxError } from '../sheet/Xlsx';
 import {
   clearRect,
@@ -121,6 +123,11 @@ export interface SheetServiceOptions {
 const NO_DOCUMENT: SheetDocumentView = { id: '', name: '', file: null, edited: false, elsewhere: false };
 
 /** `Q3 sales.gsheet` is called `Q3 sales`. */
+/** `a`, `a and b`, `a, b and c`. */
+function listOf(items: readonly string[]): string {
+  return items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
+
 function baseName(fileName: string): string {
   const base = fileName.replace(/\.[^.]*$/, '').trim();
   return base === '' ? 'Untitled' : base;
@@ -550,6 +557,35 @@ export class SheetService {
     }
     this.transferSubject.next({ ...this.transferSubject.value, report: opened.report });
   }
+
+  /**
+   * The whole workbook as an `.xlsx`, built here and handed to the
+   * render worker as base64 for the shell to write.
+   *
+   * Asynchronous because the platform's deflate is, and queued like a
+   * save so that it writes the workbook as it stood when it was asked.
+   */
+  exportXlsx(): void {
+    const { rowCount } = this.geometrySubject.value;
+    const { book, leftOut } = xlsxOfDocument(this.document, rowCount);
+    this.xlsxLeftOut =
+      leftOut.length === 0 ? '' : ` Its ${listOf(leftOut)} are not in it: an .xlsx from here carries cells, formats and layout.`;
+    const name = `${this.entry?.name ?? 'Untitled'}.xlsx`;
+    this.enqueue(async () => {
+      const bytes = await writeXlsx(book, platformDeflate);
+      this.publishDownload({
+        kind: 'xlsx',
+        name,
+        mediaType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        text: '',
+        base64: base64OfBytes(bytes),
+        handle: null
+      });
+    });
+  }
+
+  /** What the last `.xlsx` left out, said when it is saved. */
+  private xlsxLeftOut = '';
 
   exportCsv(): void {
     this.publishDownload({
@@ -1826,10 +1862,12 @@ export class SheetService {
    * asks where again, which is the honest answer in a browser that
    * cannot write to a file it did not open.
    */
-  fileSaved(kind: 'workbook' | 'csv', name: string, handle: number | null, via: 'file' | 'download'): void {
+  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download'): void {
     const verb = via === 'file' ? 'Saved' : 'Downloaded';
-    if (kind === 'csv') {
-      this.report(`${verb} ${name}.`);
+    // An export is a copy: the document goes on being the one it was,
+    // saved where it was saved, and edited if it was.
+    if (kind === 'csv' || kind === 'xlsx') {
+      this.report(`${verb} ${name}.${kind === 'xlsx' ? this.xlsxLeftOut : ''}`);
       return;
     }
     this.enqueue(async () => {

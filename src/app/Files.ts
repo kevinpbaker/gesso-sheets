@@ -11,7 +11,7 @@ import {
   type ShellRecentFile
 } from 'gesso-framework';
 
-import { base64OfBytes } from './base64';
+import { base64OfBytes, bytesOfBase64 } from './base64';
 import type { SheetCommands, SheetView } from './SheetContract';
 
 /**
@@ -63,6 +63,8 @@ export interface FileActions {
   save(asNew: boolean): void;
   /** The sheet in view, as a CSV. */
   exportCsv(): void;
+  /** The workbook, as an Excel file. */
+  exportXlsx(): void;
   /** What the shell remembers, refreshed by `refreshRecent`. */
   readonly recent: Observable<readonly ShellRecentFile[]> & { readonly value: readonly ShellRecentFile[] };
   refreshRecent(): void;
@@ -122,8 +124,9 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
       .saveFile({
         name: download.name,
         text: download.text,
+        ...(download.base64 === undefined ? {} : { bytes: bytesOfBase64(download.base64) }),
         mediaType: download.mediaType,
-        accept: [download.kind === 'workbook' ? WORKBOOK : CSV],
+        accept: [download.kind === 'workbook' ? WORKBOOK : download.kind === 'xlsx' ? XLSX : CSV],
         ...(download.handle === null ? {} : { handle: download.handle })
       })
       .then(result => {
@@ -155,6 +158,7 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
     reopen: handle => void shell.reopenFile(handle).then(deliver),
     save: asNew => sheet.send.saveDocument(asNew),
     exportCsv: () => sheet.send.exportCsv(),
+    exportXlsx: () => sheet.send.exportXlsx(),
     recent,
     refreshRecent: () =>
       void shell.recentFiles().then(result => {
