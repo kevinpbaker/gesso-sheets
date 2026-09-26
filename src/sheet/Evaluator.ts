@@ -1,6 +1,6 @@
 import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
 import type { Ast, BinaryOperator } from './Ast';
-import { FUNCTIONS, isSheetFunction, liveContext, type Argument, type FunctionContext } from './Functions';
+import { FUNCTIONS, isSheetFunction, LIFTED, liveContext, type Argument, type FunctionContext } from './Functions';
 import { arrayOrValue, isArray, type ArrayValue } from './FunctionKit';
 import {
   compareValues,
@@ -81,6 +81,11 @@ export interface EvaluationContext {
   rowState?(sheet: number, row: number): 'hidden' | 'filtered' | null;
   /** Whether a cell's formula calls `SUBTOTAL`, which a `SUBTOTAL` skips. */
   isSubtotal?(key: number): boolean;
+  /**
+   * How far the array in a cell spills, for `A1#`: null when the cell
+   * holds no array that spilled. Absent, nothing spills.
+   */
+  spillAt?(key: number): { readonly rows: number; readonly columns: number } | null;
 }
 
 /** A test for the cells a read should leave out; see `evaluateSubtotal`. */
@@ -190,6 +195,14 @@ export function evaluateArray(node: Ast, context: EvaluationContext): CellValue 
       if (node.name === 'IF') {
         return arrayIf(node.args, context);
       }
+      if (node.name === 'ANCHORARRAY') {
+        const range = spillRange(node.args, context);
+        if (isError(range)) {
+          return range;
+        }
+        const read = readRange(range, context);
+        return arrayOrValue(read.rows, read.columns, read.values);
+      }
       // A computed reference is as much a range as a written one.
       if (node.name === 'OFFSET' || node.name === 'INDIRECT') {
         const range = node.name === 'OFFSET' ? offsetRange(node.args, context) : indirectRange(node.args, context);
@@ -209,11 +222,48 @@ export function evaluateArray(node: Ast, context: EvaluationContext): CellValue 
           return read.rows * read.columns === 0 ? null : arrayOrValue(read.rows, read.columns, read.values);
         }
       }
+      if (LIFTED.has(node.name)) {
+        return liftedCall(node.name, node.args, context);
+      }
       return call(node.name, node.args, context);
     }
     default:
       return evaluate(node, context);
   }
+}
+
+/**
+ * A function of single values, handed an array: run once per cell.
+ *
+ * The shapes follow the operators' rule — a single value goes with
+ * every cell, a row with every row, a column with every column — so
+ * `=ROUND(A1:A9, B1:B9)` rounds each value to its own places and
+ * `=ROUND(A1:A9, 2)` all of them to two. Handed no array at all, it is
+ * the one call it always was.
+ */
+function liftedCall(name: string, args: readonly Ast[], context: EvaluationContext): CellValue | ArrayValue {
+  const evaluated = args.map(arg => argumentOf(arg, context));
+  const wide = (arg: Argument): arg is Extract<Argument, { kind: 'range' }> =>
+    arg.kind === 'range' && arg.rows * arg.columns > 1;
+  if (!evaluated.some(wide)) {
+    const result = FUNCTIONS[name](evaluated, context.functions ?? liveContext());
+    return result;
+  }
+  const shapes = evaluated.map(arg => (wide(arg) ? { kind: 'array' as const, rows: arg.rows, columns: arg.columns, values: arg.values } : null));
+  const rows = Math.max(...shapes.map(shape => shape?.rows ?? 1));
+  const columns = Math.max(...shapes.map(shape => shape?.columns ?? 1));
+  const values: CellValue[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const one = evaluated.map((arg, at): Argument => {
+        const shape = shapes[at];
+        return shape === null ? arg : { kind: 'value', value: elementOf(shape, row, column) };
+      });
+      const result = FUNCTIONS[name](one, context.functions ?? liveContext());
+      values.push(isArray(result) ? (result.values[0] ?? null) : result);
+    }
+  }
+  return { kind: 'array', rows, columns, values };
 }
 
 /** `@`: one value where a range or an array might be, by implicit intersection. */
@@ -434,6 +484,10 @@ function call(name: string, args: readonly Ast[], context: EvaluationContext): C
       return evaluatePosition(args, context, 'column');
     case 'SUBTOTAL':
       return evaluateSubtotal(args, context);
+    case 'ANCHORARRAY': {
+      const range = spillRange(args, context);
+      return isError(range) ? range : (readRange(range, context).values[0] ?? null);
+    }
     default:
       break;
   }
@@ -720,6 +774,24 @@ function offsetRange(args: readonly Ast[], context: EvaluationContext): RangeRef
     start: { ...start, row, column, rowAbsolute: true, columnAbsolute: true },
     end: { ...start, row: row + height - 1, column: column + width - 1, rowAbsolute: true, columnAbsolute: true }
   };
+}
+
+/**
+ * `A1#`: the rectangle A1's array fills, from A1. `#REF!` for a cell
+ * that holds no array, or one that did not spill, as in Excel.
+ */
+function spillRange(args: readonly Ast[], context: EvaluationContext): RangeRef | CellError {
+  const anchor = args[0];
+  if (args.length !== 1 || anchor?.kind !== 'ref') {
+    return VALUE;
+  }
+  const key = keyFor(anchor.ref, context);
+  const spill = key === null ? null : (context.spillAt?.(key) ?? null);
+  if (spill === null) {
+    return REF;
+  }
+  const start = { ...anchor.ref, rowAbsolute: true, columnAbsolute: true };
+  return { start, end: { ...start, row: start.row + spill.rows - 1, column: start.column + spill.columns - 1 } };
 }
 
 /** `A1`, `A1:B9` or a column letter pair, as a rectangle. */

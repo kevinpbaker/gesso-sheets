@@ -178,7 +178,15 @@ class Parser {
       // refusal to accept what was typed.
       return { kind: 'call', name: upper, args: [] };
     }
-    return this.maybeRange(on(ref, sheet), sheet);
+    const at = on(ref, sheet);
+    // `A1#` is Excel 365's spill reference, which its files write as
+    // `_xlfn.ANCHORARRAY(A1)`; it is kept as that call, so everything
+    // that walks a formula's references finds A1 in it.
+    if (this.isOperator('#')) {
+      this.at++;
+      return { kind: 'call', name: 'ANCHORARRAY', args: [{ kind: 'ref', ref: at }] };
+    }
+    return this.maybeRange(at, sheet);
   }
 
   /**

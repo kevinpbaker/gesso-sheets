@@ -210,7 +210,24 @@ export const SPECIAL_FORMS: ReadonlySet<string> = new Set([
   'OFFSET',
   'ROW',
   'COLUMN',
-  'SUBTOTAL'
+  'SUBTOTAL',
+  'ANCHORARRAY'
+]);
+
+/**
+ * Functions every one of whose arguments is one value, which Excel 365
+ * therefore runs once per cell when it is handed an array or a range:
+ * `=ABS(A1:A9)` is nine absolute values, spilling, and `=LEN(B2:B20)`
+ * nineteen lengths. A function that takes a range as a range — `SUM`,
+ * `INDEX`, `COUNTIF` — is not here, and is handed the range whole.
+ */
+export const LIFTED: ReadonlySet<string> = new Set([
+  'ABS', 'CEILING', 'CHAR', 'CLEAN', 'CODE', 'DATE', 'DATEDIF', 'DATEVALUE', 'DAY', 'DAYS', 'EDATE', 'EOMONTH',
+  'EVEN', 'EXACT', 'EXP', 'FACT', 'FIND', 'FLOOR', 'HOUR', 'IFERROR', 'IFNA', 'INT', 'ISBLANK', 'ISERR', 'ISERROR',
+  'ISEVEN', 'ISLOGICAL', 'ISNA', 'ISNONTEXT', 'ISNUMBER', 'ISODD', 'ISTEXT', 'LEFT', 'LEN', 'LN', 'LOG', 'LOG10',
+  'LOWER', 'MID', 'MINUTE', 'MOD', 'MONTH', 'MROUND', 'N', 'NOT', 'ODD', 'POWER', 'PROPER', 'QUOTIENT', 'REPLACE',
+  'REPT', 'RIGHT', 'ROUND', 'ROUNDDOWN', 'ROUNDUP', 'SEARCH', 'SECOND', 'SIGN', 'SQRT', 'SUBSTITUTE', 'T', 'TEXT',
+  'TIME', 'TIMEVALUE', 'TRIM', 'TRUNC', 'UPPER', 'VALUE', 'WEEKDAY', 'WEEKNUM', 'YEAR'
 ]);
 
 /** Whether the sheet knows a name at all, however it is implemented. */

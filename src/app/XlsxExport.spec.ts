@@ -157,6 +157,11 @@ describe('a formula as Excel writes it', () => {
     expect(excelFormula('="XLOOKUP(" & A1', false)).toBe('"XLOOKUP(" & A1');
   });
 
+  it('writes A1# as the call Excel’s files spell it with', () => {
+    expect(excelFormula('=SUM(C1#)', false)).toBe('SUM(_xlfn.ANCHORARRAY(C1))');
+    expect(excelFormula("=SUM('My Data'!B2#)", false)).toBe("SUM(_xlfn.ANCHORARRAY('My Data'!B2))");
+  });
+
   it('writes @ as SINGLE in an array formula, and leaves it out of a plain one', () => {
     expect(excelFormula('=@A1:A9*B1:B9', true)).toBe('_xlfn.SINGLE(A1:A9)*B1:B9');
     expect(excelFormula('=@(A1:A9)*2', true)).toBe('_xlfn.SINGLE((A1:A9))*2');

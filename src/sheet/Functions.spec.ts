@@ -448,6 +448,8 @@ describe('SUBTOTAL over subtotals', () => {
  */
 table('arrays', [
   ['TRANSPOSE(A1:A5)', '10'],
+  // A cell that holds no array has no spill to name.
+  ['ANCHORARRAY(A1)', '#REF!'],
   ['INDEX(TRANSPOSE(A1:A5), 1, 3)', '30'],
   ['SEQUENCE(3)', '1'],
   ['INDEX(SEQUENCE(3, 2, 10, 5), 2, 2)', '25'],

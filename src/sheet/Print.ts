@@ -37,6 +37,9 @@ export function printFormula(node: Ast): string {
     case 'range':
       return printRange(node.range);
     case 'call':
+      if (node.name === 'ANCHORARRAY' && node.args.length === 1 && node.args[0].kind === 'ref') {
+        return `${printFormula(node.args[0])}#`;
+      }
       return `${node.name}(${node.args.map(printFormula).join(',')})`;
     case 'unary':
       // Unary minus binds tighter than every binary operator, so any

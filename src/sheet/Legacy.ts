@@ -1,3 +1,4 @@
+import { LIFTED } from './Functions';
 import { tokenize, type Token } from './Tokenizer';
 
 /**
@@ -55,6 +56,9 @@ export function withIntersections(input: string, names: ReadonlySet<string>): st
       call !== undefined &&
       call !== null &&
       call !== 'IF' &&
+      // A function of one value runs once per cell over a range now, so
+      // one written when it took one value from it has to say so.
+      !LIFTED.has(call) &&
       (before?.kind === 'open' || before?.kind === 'comma') &&
       (after?.kind === 'comma' || after?.kind === 'close');
     if (!whole && !(before?.kind === 'operator' && (before as { value: string }).value === '@')) {

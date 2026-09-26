@@ -1390,9 +1390,21 @@ within its step and not to the last digit, and cannot: the answer
 depends on how many times the file was recalculated before it was
 saved, which the file does not say.
 
-Not yet: `A1#` for "the whole spill", and a function lifted over an
-array (`ABS(A1:A9)` takes one value, where Excel 365 spills nine). The
-formula bar over a spilled cell came in Phase 21.
+The rest came later, and the formula bar over a spilled cell in Phase
+21. `A1#` is the whole of what A1's array spills, following it as it
+grows or shrinks, and `#REF!` over a cell with no array or a blocked
+one; it is kept as Excel's own file spelling, `ANCHORARRAY(A1)`, so
+every walk over a formula's references finds A1 in it, and printed
+back as `A1#` — so it moves with an inserted row, reads in from an
+`.xlsx` and goes back out as `_xlfn.ANCHORARRAY`. A function of one
+value handed a range or an array runs once per cell and spills, as in
+Excel 365 — `=ABS(A1:A9)`, `=ROUND(A1:A9, B1:B9)`, `=LEN(B2:B20)`,
+`=IFERROR(A1:A9/B1:B9, 0)` — by the operators' rule for shapes; which
+functions those are is one list, `LIFTED`, and an older file's
+formula whose whole argument was a range to one of them is given its
+`@`, since it meant one value. And an array that would run past the
+edge of the sheet says `#SPILL!` at *this* sheet's edge, ten thousand
+rows down, rather than filling rows nobody can scroll to.
 
 ---
 

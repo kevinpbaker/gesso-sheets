@@ -143,6 +143,14 @@ export class Workbook {
   iteration: { readonly count: number; readonly delta: number } | null = null;
 
   /**
+   * How far a sheet goes, which is as far as an array may spill: one
+   * that would run off the edge says `#SPILL!`, as in Excel, rather
+   * than filling rows nobody can scroll to. Excel's own limits when the
+   * application has not said.
+   */
+  extent: { readonly rows: number; readonly columns: number } | null = null;
+
+  /**
    * The clock and the dice the volatile functions read.
    *
    * Fields rather than direct calls to `Date` and `Math.random` so
@@ -1042,7 +1050,9 @@ export class Workbook {
     const column = columnOf(key);
     const previous = this.spills.get(key);
     const keys: number[] = [];
-    let blocked = !inBounds(row + result.rows - 1, column + result.columns - 1);
+    let blocked =
+      !inBounds(row + result.rows - 1, column + result.columns - 1) ||
+      (this.extent !== null && (row + result.rows > this.extent.rows || column + result.columns > this.extent.columns));
     if (!blocked) {
       for (let r = 0; r < result.rows; r++) {
         for (let c = 0; c < result.columns; c++) {
@@ -1184,7 +1194,13 @@ export class Workbook {
       onSheet: sheet,
       at: key === undefined ? undefined : { row: rowOf(key), column: columnOf(key) },
       rowState: this.rowState ?? undefined,
-      isSubtotal: (cell: number) => this.subtotals.has(cell)
+      isSubtotal: (cell: number) => this.subtotals.has(cell),
+      spillAt: (cell: number) => {
+        const spill = this.spills.get(cell);
+        return spill === undefined || spill.values === null
+          ? null
+          : { rows: spill.keys.length / spill.columns, columns: spill.columns };
+      }
     };
   }
 

@@ -339,6 +339,7 @@ export class SheetService {
     const columnCount = options.columnCount ?? 100;
     this.repository = options.repository;
     document.columnWidths = Array.from({ length: columnCount }, () => COLUMN_WIDTH);
+    document.book.extent = { rows: options.rowCount ?? 10_000, columns: columnCount };
     this.geometrySubject = new BehaviorSubject<SheetGeometry>({
       rowCount: options.rowCount ?? 10_000,
       columnCount,
@@ -2166,6 +2167,7 @@ export class SheetService {
     this.restored = false;
     const document = new SheetDocument();
     document.columnWidths = this.defaultWidths();
+    document.book.extent = { rows: this.geometrySubject.value.rowCount, columns: this.geometrySubject.value.columnCount };
     this.document = document;
     this.repository = this.library?.repository(entry.id) ?? this.repository;
     this.refusal = '';

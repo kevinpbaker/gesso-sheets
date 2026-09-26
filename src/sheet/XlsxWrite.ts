@@ -524,6 +524,16 @@ export function excelFormula(input: string, array: boolean): string {
       }
       continue;
     }
+    // `A1#` is written as the call Excel's files use for it.
+    if (token.kind === 'operator' && token.value === '#') {
+      let first = at - 1;
+      if (tokens[first - 1]?.kind === 'sheet') {
+        first--;
+      }
+      edits.push({ at: tokens[first].start, to: tokens[first].start, text: '_xlfn.ANCHORARRAY(' });
+      edits.push({ at: token.start, to: token.end, text: ')' });
+      continue;
+    }
     if (token.kind === 'operator' && token.value === '@') {
       if (!array) {
         edits.push({ at: token.start, to: token.end, text: '' });

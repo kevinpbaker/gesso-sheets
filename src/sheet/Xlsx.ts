@@ -934,7 +934,10 @@ function formulaOf(
  * off; `_xlfn.SINGLE(…)` is how Excel 365 writes `@(…)` into a file.
  */
 function clean(text: string): string {
-  return text.replace(/_xlfn\.SINGLE\(/gi, '@(').replace(/_xl(?:fn|ws|pm)\./g, '');
+  return text
+    .replace(/_xlfn\.SINGLE\(/gi, '@(')
+    .replace(/_xlfn\.ANCHORARRAY\(((?:'(?:[^']|'')+'|[A-Za-z0-9_.]+)!)?(\$?[A-Z]+\$?\d+)\)/gi, '$1$2#')
+    .replace(/_xl(?:fn|ws|pm)\./g, '');
 }
 
 function inside(area: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number }, row: number, column: number): boolean {

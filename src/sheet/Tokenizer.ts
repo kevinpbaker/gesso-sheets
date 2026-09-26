@@ -142,6 +142,12 @@ export function tokenize(source: string): Token[] {
       }
       tokens.push({ kind: 'word', value: source.slice(at, end), start: at, end });
       at = end;
+      // `A1#`: the whole of what A1's array spills. An error literal is
+      // never written against a word, so a `#` here is this.
+      if (source[at] === '#' && ERROR_LITERALS.find(code => source.startsWith(code, at)) === undefined) {
+        tokens.push({ kind: 'operator', value: '#', start: at, end: at + 1 });
+        at++;
+      }
       continue;
     }
 

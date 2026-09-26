@@ -174,6 +174,7 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   },
 
   // Arrays, which spill into the cells beside and below
+  ANCHORARRAY: { args: ['cell'], summary: 'Everything the array in a cell spills; written A1#.' },
   TRANSPOSE: { args: ['array'], summary: 'Rows as columns, and columns as rows.' },
   SEQUENCE: { args: ['rows', '[columns]', '[start]', '[step]'], summary: 'Numbers counting up, as many as asked for.' },
   FILTER: { args: ['array', 'keep', '[if none]'], summary: 'The rows where the test is true.' },

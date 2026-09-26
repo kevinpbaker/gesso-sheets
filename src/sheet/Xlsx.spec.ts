@@ -284,6 +284,13 @@ describe('the shapes Excel writes', () => {
     expect(read.valuesKept).toBe(1);
   });
 
+  it('reads Excel’s spill reference back as A1#', () => {
+    const read = book(`<sheetData><row r="1">
+      <c r="A1"><f>SUM(_xlfn.ANCHORARRAY(C1))+SUM(_xlfn.ANCHORARRAY('My Data'!B2))</f><v>0</v></c>
+    </row></sheetData>`);
+    expect(inputs(read)).toEqual([[0, 0, "=SUM(C1#)+SUM('My Data'!B2#)"]]);
+  });
+
   it('says a password-protected file is one, rather than not a workbook', async () => {
     const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');

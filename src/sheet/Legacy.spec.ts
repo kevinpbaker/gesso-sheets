@@ -17,6 +17,11 @@ describe('a formula from an older file', () => {
     ['=IF(A1:A9, 1, 2)', '=IF(@A1:A9, 1, 2)'],
     ['=OFFSET(A1, 0, 0, 3, 1)', '=@OFFSET(A1, 0, 0, 3, 1)'],
     ['=SUM(A1:A9*2)', '=SUM(@A1:A9*2)'],
+    // A function of one value runs across a range now; one written when
+    // it took one value from it says so.
+    ['=ABS(A1:A9)', '=ABS(@A1:A9)'],
+    ['=ROUND(A1:A9, 2)', '=ROUND(@A1:A9, 2)'],
+    ['=IFERROR(A1:A9/B1:B9, 0)', '=IFERROR(@A1:A9/@B1:B9, 0)'],
     // A range that is an argument, as a range.
     ['=SUM(A1:A9)', '=SUM(A1:A9)'],
     ['=SUM(A:A)', '=SUM(A:A)'],
