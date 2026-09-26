@@ -1,6 +1,7 @@
 import {
   columnKey,
   columnOf,
+  inBounds,
   keyOn,
   MAX_SHEETS,
   quoteSheetName,
@@ -14,13 +15,14 @@ import { bareWordsOf, callNamesOf, referencesOf, type Ast } from './Ast';
 import { parseTypedDate } from './Dates';
 import { DependencyGraph } from './DependencyGraph';
 import { Names } from './Names';
-import { evaluate, type WorkbookContext } from './Evaluator';
+import { evaluateArray, type WorkbookContext } from './Evaluator';
+import { isArray, type ArrayValue } from './FunctionKit';
 import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
 import { Sheet } from './Sheet';
 import { shiftFormula, shiftIndex, type Shift } from './Shift';
 import { tokenize } from './Tokenizer';
-import { CIRC, formatValue, VALUE, type CellValue } from './Values';
+import { CIRC, formatValue, SPILL, VALUE, type CellValue } from './Values';
 
 interface Cell {
   /** Exactly what was typed, which is what an editor puts back. */
@@ -28,6 +30,20 @@ interface Cell {
   /** The parsed formula, or null for a literal. */
   readonly formula: Ast | null;
   value: CellValue;
+}
+
+/**
+ * A formula whose answer is an array, and the cells it covers.
+ *
+ * The area is where the array *would* go, kept whether or not it got
+ * there: a spill that is blocked has to be tried again when whatever
+ * is in its way is cleared, and that is found by asking which areas a
+ * written cell falls in. `values` is null while it is blocked.
+ */
+interface Spill {
+  readonly keys: readonly number[];
+  readonly columns: number;
+  readonly values: readonly CellValue[] | null;
 }
 
 /** A sheet as the workbook knows it: a name, a colour, and how far down it goes. */
@@ -160,6 +176,21 @@ export class Workbook {
 
   /** Fixed for a whole recalculation, so two `NOW()`s agree. */
   private moment: FunctionContext | null = null;
+
+  /**
+   * Formulas that spill, by the key of the cell they are written in.
+   *
+   * The cells an array spills into hold nothing of their own: reading
+   * one reads the array, through `spilled`, and each carries one edge
+   * in the graph — to the formula — so everything that reads a spilled
+   * cell is ordered after the formula that fills it, by the same
+   * topological sort as every other cell. Nothing is stored for them,
+   * so nothing is saved: the formula is the cell, and the rest is its
+   * answer.
+   */
+  private readonly spills = new Map<number, Spill>();
+  /** The cells an array has filled, and which formula filled them. */
+  private readonly spilled = new Map<number, number>();
 
   constructor(names: readonly string[] = ['Sheet1']) {
     for (const name of names) {
@@ -417,6 +448,10 @@ export class Workbook {
    */
   private rewireAll(): void {
     this.graph.clear();
+    // The edges from spilled cells went with the graph; every formula is
+    // dirtied below and spills again.
+    this.spills.clear();
+    this.spilled.clear();
     this.volatile.clear();
     this.dynamic.clear();
     this.subtotals.clear();
@@ -441,6 +476,9 @@ export class Workbook {
       this.clearCell(sheet, row, column);
       return;
     }
+    this.dropSpill(key);
+    this.spilled.delete(key);
+    this.wakeSpillsOver(key);
     const entry = this.sheets[sheet];
     if (entry !== undefined) {
       entry.usedRows = Math.max(entry.usedRows, row + 1);
@@ -459,6 +497,13 @@ export class Workbook {
 
   clearCell(sheet: number, row: number, column: number): void {
     const key = keyOn(sheet, row, column);
+    if (!this.cells.has(key)) {
+      // Nothing is stored in a cell an array spilled into, so clearing
+      // it is clearing nothing — the array is its formula's.
+      return;
+    }
+    this.dropSpill(key);
+    this.wakeSpillsOver(key);
     this.graph.clearPrecedents(key);
     this.cells.delete(key);
     this.dirty.delete(key);
@@ -533,6 +578,10 @@ export class Workbook {
     this.cells.clear();
     this.graph.clear();
     this.dirty.clear();
+    // Every formula is re-read and dirtied below, and each spills again
+    // from where it has moved to.
+    this.spills.clear();
+    this.spilled.clear();
     this.volatile.clear();
     this.dynamic.clear();
     this.subtotals.clear();
@@ -816,7 +865,7 @@ export class Workbook {
     }
     const context = this.contextOn(sheetOf(key), key);
     if (!this.dynamic.has(key)) {
-      cell.value = resultOf(evaluate(cell.formula, context));
+      this.settle(key, cell, evaluateArray(cell.formula, context));
       return;
     }
 
@@ -830,7 +879,7 @@ export class Workbook {
     const reads = new Set<number>();
     this.recording = reads;
     try {
-      cell.value = resultOf(evaluate(cell.formula, context));
+      this.settle(key, cell, evaluateArray(cell.formula, context));
     } finally {
       this.recording = null;
     }
@@ -841,6 +890,148 @@ export class Workbook {
       this.redone.add(key);
       this.dirty.add(key);
     }
+  }
+
+  /**
+   * A formula's answer, into its cell — and, for an array, into the
+   * cells beside and below it.
+   *
+   * The array goes where it fits or not at all: a cell in the way that
+   * holds anything, or one another array already filled, and the
+   * formula says `#SPILL!` and fills nothing. Whatever reads a cell
+   * whose spilled value changed is dirtied here, since the graph only
+   * learns of those cells from this.
+   */
+  private settle(key: number, cell: Cell, result: CellValue | ArrayValue): void {
+    if (!isArray(result)) {
+      this.dropSpill(key);
+      cell.value = resultOf(result);
+      return;
+    }
+    const sheet = sheetOf(key);
+    const row = rowOf(key);
+    const column = columnOf(key);
+    const previous = this.spills.get(key);
+    const keys: number[] = [];
+    let blocked = !inBounds(row + result.rows - 1, column + result.columns - 1);
+    if (!blocked) {
+      for (let r = 0; r < result.rows; r++) {
+        for (let c = 0; c < result.columns; c++) {
+          const at = keyOn(sheet, row + r, column + c);
+          keys.push(at);
+          if (at !== key && (this.cells.has(at) || (this.spilled.get(at) ?? key) !== key)) {
+            blocked = true;
+          }
+        }
+      }
+    }
+    const values = blocked ? null : result.values.map(resultOf);
+    if (previous !== undefined && sameSpill(previous, keys, result.columns, values)) {
+      cell.value = values === null ? SPILL : (values[0] ?? 0);
+      return;
+    }
+    this.unfill(key, previous);
+    this.spills.set(key, { keys, columns: result.columns, values });
+    if (values !== null) {
+      for (const at of keys) {
+        if (at !== key) {
+          this.spilled.set(at, key);
+          this.graph.setPrecedents(at, [key]);
+        }
+      }
+    }
+    cell.value = values === null ? SPILL : (values[0] ?? 0);
+    this.dirtyReaders(key, [...(previous?.keys ?? []), ...keys]);
+  }
+
+  /** Takes an array's values out of the cells it had filled. */
+  private unfill(key: number, spill: Spill | undefined): void {
+    if (spill === undefined || spill.values === null) {
+      return;
+    }
+    for (const at of spill.keys) {
+      if (this.spilled.get(at) === key) {
+        this.spilled.delete(at);
+        this.graph.clearPrecedents(at);
+      }
+    }
+  }
+
+  /** A formula that no longer spills, or no longer exists, gives its cells back. */
+  private dropSpill(key: number): void {
+    const spill = this.spills.get(key);
+    if (spill === undefined) {
+      return;
+    }
+    this.unfill(key, spill);
+    this.spills.delete(key);
+    this.dirtyReaders(key, spill.keys);
+    // Another array blocked by this one may fit now.
+    for (const at of spill.keys) {
+      if (at !== key) {
+        this.wakeSpillsOver(at);
+      }
+    }
+  }
+
+  /** Everything that reads the cells of an area, dirtied — never the formula itself. */
+  private dirtyReaders(key: number, keys: readonly number[]): void {
+    const around = keys.filter(at => at !== key);
+    if (around.length === 0) {
+      return;
+    }
+    for (const dependent of this.graph.closureOf(around)) {
+      if (dependent !== key && this.cells.has(dependent)) {
+        this.dirty.add(dependent);
+      }
+    }
+    this.plan = null;
+  }
+
+  /**
+   * A cell was written or cleared inside the area of some array, which
+   * is now blocked, or free to spill again.
+   */
+  private wakeSpillsOver(key: number): void {
+    if (this.spills.size === 0) {
+      return;
+    }
+    for (const [anchor, spill] of this.spills) {
+      if (anchor !== key && spill.keys.includes(key) && this.cells.get(anchor)?.formula != null) {
+        this.dirty.add(anchor);
+        this.plan = null;
+      }
+    }
+  }
+
+  /** The value an array put in a cell it spilled into. */
+  private spilledValue(anchor: number, key: number): CellValue {
+    const spill = this.spills.get(anchor);
+    if (spill === undefined || spill.values === null) {
+      return null;
+    }
+    const origin = spill.keys[0];
+    const index = (rowOf(key) - rowOf(origin)) * spill.columns + (columnOf(key) - columnOf(origin));
+    return spill.values[index] ?? null;
+  }
+
+  /**
+   * The cells a formula's array fills, for the screen to show as its
+   * own; null for a cell that is not an array formula's, or one that is
+   * blocked.
+   */
+  spillOf(sheet: number, row: number, column: number): { rows: number; columns: number } | null {
+    const spill = this.spills.get(keyOn(sheet, row, column));
+    if (spill === undefined || spill.values === null) {
+      return null;
+    }
+    return { rows: spill.keys.length / spill.columns, columns: spill.columns };
+  }
+
+  /** The formula whose array fills a cell, if one does. */
+  spilledFrom(sheet: number, row: number, column: number): { row: number; column: number } | null {
+    const anchor = this.spilled.get(keyOn(sheet, row, column));
+    return anchor === undefined ? null : { row: rowOf(anchor), column: columnOf(anchor) };
   }
 
   // ---------------------------------------------------------------------
@@ -888,7 +1079,12 @@ export class Workbook {
     // Recorded only while a dynamic formula is running, which is the
     // one case where what was read is not what the tree said.
     this.recording?.add(key);
-    return this.cells.get(key)?.value ?? null;
+    const cell = this.cells.get(key);
+    if (cell !== undefined) {
+      return cell.value;
+    }
+    const anchor = this.spilled.get(key);
+    return anchor === undefined ? null : this.spilledValue(anchor, key);
   }
 
   /**
@@ -1021,6 +1217,26 @@ export function literalOf(input: string): CellValue {
  * true; it is only a *cell's* value that cannot be nothing once a
  * formula has put something there.
  */
+function sameSpill(spill: Spill, keys: readonly number[], columns: number, values: readonly CellValue[] | null): boolean {
+  if (spill.columns !== columns || spill.keys.length !== keys.length || (spill.values === null) !== (values === null)) {
+    return false;
+  }
+  if (spill.keys.some((key, at) => key !== keys[at])) {
+    return false;
+  }
+  if (spill.values === null || values === null) {
+    return true;
+  }
+  return spill.values.every((value, at) => sameValue(value, values[at]));
+}
+
+function sameValue(a: CellValue, b: CellValue): boolean {
+  if (typeof a === 'object' && a !== null && typeof b === 'object' && b !== null) {
+    return a.code === b.code;
+  }
+  return a === b;
+}
+
 function resultOf(value: CellValue): CellValue {
   return value === null ? 0 : value;
 }

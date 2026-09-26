@@ -243,6 +243,30 @@ describe('the shapes Excel writes', () => {
     expect([...read.sheets[0].rowHeights]).toEqual([[0, 2]]);
   });
 
+  it('reads an array formula once, and leaves the cells it fills to it', () => {
+    const read = book(`<sheetData>
+      <row r="1"><c r="A1"><v>1</v></c><c r="C1"><f t="array" ref="C1:C2">A1:A2*2</f><v>2</v></c></row>
+      <row r="2"><c r="A2"><v>2</v></c><c r="C2"><v>4</v></c></row>
+    </sheetData>`);
+    expect(inputs(read)).toEqual([
+      [0, 0, '1'],
+      [0, 2, '=A1:A2*2'],
+      [1, 0, '2']
+    ]);
+  });
+
+  it('gives a formula from before dynamic arrays the @ it meant, and Excel 365’s @ back', () => {
+    const read = book(`<sheetData>
+      <row r="2"><c r="C2"><f>A1:A9*2</f><v>0</v></c><c r="D2"><f>SUM(A1:A9)</f><v>0</v></c>
+      <c r="E2"><f>_xlfn.SINGLE(A1:A9)*2</f><v>0</v></c></row>
+    </sheetData>`);
+    expect(inputs(read)).toEqual([
+      [1, 2, '=@A1:A9*2'],
+      [1, 3, '=SUM(A1:A9)'],
+      [1, 4, '=@(A1:A9)*2']
+    ]);
+  });
+
   it('says a password-protected file is one, rather than not a workbook', async () => {
     const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');

@@ -32,7 +32,7 @@
  * happens to be empty, and `COUNT` treats them differently.
  */
 
-export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!' | '#N/A' | '#NUM!';
+export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!' | '#N/A' | '#NUM!' | '#SPILL!';
 
 export interface CellError {
   readonly kind: 'error';
@@ -60,6 +60,8 @@ export const CIRC = error('#CIRC!');
 export const NA = error('#N/A');
 
 export const NUM = error('#NUM!');
+/** An array with somewhere in its way: a cell it would spill into holds something. */
+export const SPILL = error('#SPILL!');
 
 /**
  * Takes `unknown` rather than `CellValue` because it is the guard the

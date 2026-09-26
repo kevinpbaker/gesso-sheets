@@ -1,10 +1,12 @@
 import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
 import type { Ast, BinaryOperator } from './Ast';
 import { FUNCTIONS, isSheetFunction, liveContext, type Argument, type FunctionContext } from './Functions';
+import { arrayOrValue, isArray, type ArrayValue } from './FunctionKit';
 import {
   compareValues,
   DIV0,
   isError,
+  NA,
   NAME,
   NUM,
   REF,
@@ -138,24 +140,180 @@ export function evaluate(node: Ast, context: EvaluationContext): CellValue {
       const read = readRange(node.range, context);
       return read.single !== undefined ? read.single : (read.values[0] ?? null);
     }
-    case 'unary': {
-      const operand = evaluate(node.operand, context);
-      // A leading `+` changes nothing, text included: `=+A1` is A1 in
-      // Excel, whatever A1 holds. Only `-` needs a number.
-      if (node.op === '+') {
-        return operand;
+    case 'unary':
+      if (node.op === '@') {
+        return implicit(node.operand, context);
       }
-      const number = toNumber(operand);
-      if (isError(number)) {
-        return number;
-      }
-      return node.op === '-' ? -number : number;
+      return negate(node.op, evaluate(node.operand, context));
+    case 'call': {
+      const result = call(node.name, node.args, context);
+      return isArray(result) ? (result.values[0] ?? null) : result;
     }
-    case 'call':
-      return call(node.name, node.args, context);
     case 'binary':
-      return binary(node.op, node.left, node.right, context);
+      return combine(node.op, evaluate(node.left, context), evaluate(node.right, context));
   }
+}
+
+/**
+ * An expression as a formula's own cell sees it: arrays and all.
+ *
+ * `evaluate` answers one value, which is what a rule, a validation and
+ * every argument that wants a number need. A cell can hold more: a
+ * range, or arithmetic over one — `=B2:D4 + E2:G4` — is an array, and
+ * the cell it is written in spills it across the cells beside it, as
+ * Excel has done since dynamic arrays. `@` asks for the one value
+ * instead, by implicit intersection; it is what a formula from an older
+ * `.xlsx` is given wherever its author meant one value.
+ */
+export function evaluateArray(node: Ast, context: EvaluationContext): CellValue | ArrayValue {
+  switch (node.kind) {
+    case 'range': {
+      const read = readRange(node.range, context);
+      return read.rows * read.columns === 0 ? null : arrayOrValue(read.rows, read.columns, read.values);
+    }
+    case 'unary': {
+      if (node.op === '@') {
+        return implicit(node.operand, context);
+      }
+      const operand = evaluateArray(node.operand, context);
+      return isArray(operand) ? mapArray(operand, value => negate(node.op, value)) : negate(node.op, operand);
+    }
+    case 'binary': {
+      const left = evaluateArray(node.left, context);
+      const right = evaluateArray(node.right, context);
+      if (!isArray(left) && !isArray(right)) {
+        return combine(node.op, left, right);
+      }
+      return lifted(left, right, (a, b) => combine(node.op, a, b));
+    }
+    case 'call': {
+      if (node.name === 'IF') {
+        return arrayIf(node.args, context);
+      }
+      // A computed reference is as much a range as a written one.
+      if (node.name === 'OFFSET' || node.name === 'INDIRECT') {
+        const range = node.name === 'OFFSET' ? offsetRange(node.args, context) : indirectRange(node.args, context);
+        if (range === null) {
+          return REF;
+        }
+        if (isError(range)) {
+          return range;
+        }
+        const read = readRange(range, context);
+        return read.rows * read.columns === 0 ? null : arrayOrValue(read.rows, read.columns, read.values);
+      }
+      if (node.args.length === 0 && !isSheetFunction(node.name)) {
+        const named = context.rangeForName?.(node.name) ?? null;
+        if (named !== null) {
+          const read = readRange(named, context);
+          return read.rows * read.columns === 0 ? null : arrayOrValue(read.rows, read.columns, read.values);
+        }
+      }
+      return call(node.name, node.args, context);
+    }
+    default:
+      return evaluate(node, context);
+  }
+}
+
+/** `@`: one value where a range or an array might be, by implicit intersection. */
+function implicit(node: Ast, context: EvaluationContext): CellValue {
+  if (node.kind === 'range') {
+    const read = readRange(node.range, context);
+    return read.single !== undefined ? read.single : (read.values[0] ?? null);
+  }
+  if (node.kind === 'call' && node.args.length === 0 && !isSheetFunction(node.name)) {
+    const named = context.rangeForName?.(node.name) ?? null;
+    if (named !== null) {
+      const read = readRange(named, context);
+      return read.single !== undefined ? read.single : (read.values[0] ?? null);
+    }
+  }
+  return evaluate(node, context);
+}
+
+function negate(op: '-' | '+' | '@', operand: CellValue): CellValue {
+  // A leading `+` changes nothing, text included: `=+A1` is A1 in
+  // Excel, whatever A1 holds. Only `-` needs a number.
+  if (op !== '-') {
+    return operand;
+  }
+  const number = toNumber(operand);
+  return isError(number) ? number : -number;
+}
+
+function mapArray(array: ArrayValue, each: (value: CellValue) => CellValue): ArrayValue {
+  return { kind: 'array', rows: array.rows, columns: array.columns, values: array.values.map(each) };
+}
+
+/**
+ * Two operands, at least one an array, taken cell by cell.
+ *
+ * Excel's rule for the shapes: a single value goes with every cell, a
+ * single row with every row and a single column with every column; the
+ * result is as large as the larger in each direction, and where the
+ * smaller has nothing to pair it is `#N/A`.
+ */
+function lifted(
+  left: CellValue | ArrayValue,
+  right: CellValue | ArrayValue,
+  each: (a: CellValue, b: CellValue) => CellValue
+): ArrayValue {
+  const rows = Math.max(rowsOf(left), rowsOf(right));
+  const columns = Math.max(columnsOf(left), columnsOf(right));
+  const values: CellValue[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      values.push(each(elementOf(left, row, column), elementOf(right, row, column)));
+    }
+  }
+  return { kind: 'array', rows, columns, values };
+}
+
+const rowsOf = (value: CellValue | ArrayValue): number => (isArray(value) ? value.rows : 1);
+const columnsOf = (value: CellValue | ArrayValue): number => (isArray(value) ? value.columns : 1);
+
+function elementOf(value: CellValue | ArrayValue, row: number, column: number): CellValue {
+  if (!isArray(value)) {
+    return value;
+  }
+  const r = value.rows === 1 ? 0 : row;
+  const c = value.columns === 1 ? 0 : column;
+  return r < value.rows && c < value.columns ? (value.values[r * value.columns + c] ?? null) : NA;
+}
+
+/**
+ * `IF` over an array condition: each cell takes its own branch, which
+ * is what `=IF(B2:B9>100, "big", "small")` means. Over one condition it
+ * is as lazy as it always was, and the branch taken may be an array.
+ */
+function arrayIf(args: readonly Ast[], context: EvaluationContext): CellValue | ArrayValue {
+  if (args.length < 2 || args.length > 3) {
+    return VALUE;
+  }
+  const condition = evaluateArray(args[0], context);
+  if (!isArray(condition)) {
+    const test = toBoolean(condition);
+    if (isError(test)) {
+      return test;
+    }
+    if (test) {
+      return evaluateArray(args[1], context);
+    }
+    return args.length === 3 ? evaluateArray(args[2], context) : false;
+  }
+  const yes = evaluateArray(args[1], context);
+  const no = args.length === 3 ? evaluateArray(args[2], context) : false;
+  const rows = Math.max(condition.rows, rowsOf(yes), rowsOf(no));
+  const columns = Math.max(condition.columns, columnsOf(yes), columnsOf(no));
+  const values: CellValue[] = [];
+  for (let row = 0; row < rows; row++) {
+    for (let column = 0; column < columns; column++) {
+      const test = toBoolean(elementOf(condition, row, column));
+      values.push(isError(test) ? test : test ? elementOf(yes, row, column) : elementOf(no, row, column));
+    }
+  }
+  return { kind: 'array', rows, columns, values };
 }
 
 function readRef(ref: CellRef, context: EvaluationContext): CellValue {
@@ -258,7 +416,7 @@ function usedPartOf(range: RangeRef, sheet: number, context: EvaluationContext):
  * `Functions.ts`, where the reasoning for each is set out; this is
  * only where they are dispatched.
  */
-function call(name: string, args: readonly Ast[], context: EvaluationContext): CellValue {
+function call(name: string, args: readonly Ast[], context: EvaluationContext): CellValue | ArrayValue {
   switch (name) {
     case 'IF':
       return evaluateIf(args, context);
@@ -384,7 +542,8 @@ function evaluateSubtotal(args: readonly Ast[], context: EvaluationContext): Cel
     }
     return argumentOf(arg, context, skip);
   });
-  return FUNCTIONS[name](evaluated, context.functions ?? liveContext());
+  const result = FUNCTIONS[name](evaluated, context.functions ?? liveContext());
+  return isArray(result) ? (result.values[0] ?? null) : result;
 }
 
 /**
@@ -473,6 +632,20 @@ function evaluateSwitch(args: readonly Ast[], context: EvaluationContext): CellV
  * the worst bug a spreadsheet can have, because it is silent.
  */
 function evaluateIndirect(args: readonly Ast[], context: EvaluationContext): CellValue {
+  const range = indirectRange(args, context);
+  if (range === null) {
+    return REF;
+  }
+  if (isError(range)) {
+    return range;
+  }
+  return range.start === range.end
+    ? readRef(range.start, context)
+    : (readRange(range, context).values[0] ?? null);
+}
+
+/** The rectangle an `INDIRECT` names, the error that stopped it, or null for `#REF!`. */
+function indirectRange(args: readonly Ast[], context: EvaluationContext): RangeRef | CellError | null {
   if (args.length !== 1) {
     return VALUE;
   }
@@ -480,13 +653,7 @@ function evaluateIndirect(args: readonly Ast[], context: EvaluationContext): Cel
   if (isError(text)) {
     return text;
   }
-  const range = referenceOf(text.trim());
-  if (range === null) {
-    return REF;
-  }
-  return range.start === range.end
-    ? readRef(range.start, context)
-    : (readRange(range, context).values[0] ?? null);
+  return referenceOf(text.trim());
 }
 
 /**
@@ -631,12 +798,20 @@ function argumentOf(node: Ast, context: EvaluationContext, skip?: Skip): Argumen
     }
     return isError(range) ? { kind: 'value', value: range } : readRange(range, context);
   }
-  return { kind: 'value', value: evaluate(node, context) };
+  /**
+   * Anything else that comes out an array — `A1:A9*B1:B9`, `--(B5:B20)`
+   * — is handed over as one, which is what `SUMPRODUCT` over arithmetic
+   * and `SUM(A1:A3*B1:B3)` need. A formula from an older file that
+   * meant one value there says `@`, and gets one.
+   */
+  const value = evaluateArray(node, context);
+  return isArray(value)
+    ? { kind: 'range', values: value.values, rows: value.rows, columns: value.columns }
+    : { kind: 'value', value };
 }
 
-function binary(op: BinaryOperator, leftNode: Ast, rightNode: Ast, context: EvaluationContext): CellValue {
-  const left = evaluate(leftNode, context);
-  const right = evaluate(rightNode, context);
+/** Two values and an operator: every binary operator's arithmetic and comparison. */
+function combine(op: BinaryOperator, left: CellValue, right: CellValue): CellValue {
   if (isError(left)) {
     return left;
   }

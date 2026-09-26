@@ -60,7 +60,32 @@ export interface FunctionContext {
   random(): number;
 }
 
-export type SheetFunction = (args: readonly Argument[], ctx: FunctionContext) => CellValue;
+/**
+ * A value with rows and columns: what `B2:D4 + E2:G4` is, and what
+ * `TRANSPOSE` and `SEQUENCE` give back.
+ *
+ * Row-major, like a range argument. Only a formula's own cell ever
+ * sees one whole — it spills into the cells beside it; see
+ * `Workbook.evaluateCell`. Everywhere else one value is wanted and the
+ * top-left one is it.
+ */
+export interface ArrayValue {
+  readonly kind: 'array';
+  readonly rows: number;
+  readonly columns: number;
+  readonly values: readonly CellValue[];
+}
+
+export function isArray(value: unknown): value is ArrayValue {
+  return typeof value === 'object' && value !== null && (value as { kind?: unknown }).kind === 'array';
+}
+
+/** An array of one is its one value; anything else is itself. */
+export function arrayOrValue(rows: number, columns: number, values: readonly CellValue[]): CellValue | ArrayValue {
+  return rows === 1 && columns === 1 ? (values[0] ?? null) : { kind: 'array', rows, columns, values };
+}
+
+export type SheetFunction = (args: readonly Argument[], ctx: FunctionContext) => CellValue | ArrayValue;
 
 /**
  * The first error in the arguments, which most functions report

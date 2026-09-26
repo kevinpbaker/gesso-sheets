@@ -1,5 +1,5 @@
 import { criterionOf } from './Criteria';
-import { arity, integerAt, rangeAt, scalar, type Argument, type SheetFunction } from './FunctionKit';
+import { arity, arrayOrValue, integerAt, rangeAt, scalar, type Argument, type ArrayValue, type SheetFunction } from './FunctionKit';
 import { compareValues, isError, NA, VALUE, type CellValue } from './Values';
 
 /**
@@ -294,9 +294,8 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return returned;
     }
     // The result may be wider than the searched column (or taller than
-    // the searched row), and Excel spills the whole row it finds. There
-    // is no spilling here, so the answer is that row's first cell — the
-    // one a formula written in a single cell shows.
+    // the searched row), and the answer is the whole row it finds, which
+    // spills; see `found`.
     const down = searched.columns === 1;
     const matches = down ? returned.rows === searched.values.length : returned.columns === searched.values.length;
     if (!matches) {
@@ -320,7 +319,7 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       if (at === -1) {
         return args.length > 3 ? scalar(args, 3) : NA;
       }
-      return (down ? returned.values[at * returned.columns] : returned.values[at]) ?? null;
+      return found(returned, at, down);
     }
     let at = search === -1 ? lastPositionOf(searched.values, wanted) : positionOf(searched.values, wanted, true);
     if (at === -1 && mode !== 0) {
@@ -329,7 +328,7 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (at === -1) {
       return args.length > 3 ? scalar(args, 3) : NA;
     }
-    return (down ? returned.values[at * returned.columns] : returned.values[at]) ?? null;
+    return found(returned, at, down);
   },
 
   /** The n'th of its arguments, counting from one. */
@@ -395,6 +394,23 @@ function bisected(values: readonly CellValue[], wanted: CellValue, descending: b
   const smaller = descending ? low : high;
   const at = mode === 1 ? larger : mode === -1 ? smaller : -1;
   return at >= 0 && at < values.length ? at : -1;
+}
+
+/**
+ * The row (or column) of the returned range that a lookup landed on:
+ * one value for a range one wide, and an array that spills for a wider
+ * one, as Excel's `XLOOKUP` gives back a whole record.
+ */
+function found(returned: Extract<Argument, { kind: 'range' }>, at: number, down: boolean): CellValue | ArrayValue {
+  if (down) {
+    const row = returned.values.slice(at * returned.columns, (at + 1) * returned.columns);
+    return arrayOrValue(1, row.length, row);
+  }
+  const column: CellValue[] = [];
+  for (let row = 0; row < returned.rows; row++) {
+    column.push(returned.values[row * returned.columns + at] ?? null);
+  }
+  return arrayOrValue(column.length, 1, column);
 }
 
 /** The closest value below or above, for `XLOOKUP`'s fallback modes. */

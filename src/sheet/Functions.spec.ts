@@ -442,6 +442,33 @@ describe('SUBTOTAL over subtotals', () => {
 });
 
 /**
+ * Arrays. A cell shows an array's top-left value and spills the rest;
+ * `INDEX` reaches in for the others, which is also the proof that an
+ * array handed to a function is a range to it.
+ */
+table('arrays', [
+  ['TRANSPOSE(A1:A5)', '10'],
+  ['INDEX(TRANSPOSE(A1:A5), 1, 3)', '30'],
+  ['SEQUENCE(3)', '1'],
+  ['INDEX(SEQUENCE(3, 2, 10, 5), 2, 2)', '25'],
+  ['SEQUENCE(0)', '#VALUE!'],
+  ['FILTER(A1:A5, A1:A5>15)', '20'],
+  ['INDEX(FILTER(A1:A5, A1:A5>15), 3)', '40'],
+  ['FILTER(A1:A5, A1:A5>99, "none")', 'none'],
+  ['FILTER(A1:A5, A1:A5>99)', '#N/A'],
+  ['FILTER(A1:A5, A1:A2>1)', '#VALUE!'],
+  ['SORT(A1:A5)', '5'],
+  ['INDEX(SORT(A1:A5, 1, -1), 1)', '40'],
+  ['INDEX(SORT(A1:B5, 2), 1, 2)', 'East'],
+  ['UNIQUE(B1:B5)', 'North'],
+  // North twice, and west in a different case from nothing else.
+  ['ROWS(UNIQUE(B1:B5))', '4'],
+  ['ROWS(UNIQUE(B1:B5, FALSE, TRUE))', '3'],
+  // A lookup that returns a whole record spills it.
+  ['INDEX(XLOOKUP(30, A1:A5, B1:C5), 1, 2)', '7']
+]);
+
+/**
  * The guard that keeps this file honest.
  *
  * A function added to the library with no case above is a function

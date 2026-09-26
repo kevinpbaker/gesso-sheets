@@ -20,7 +20,8 @@ export type Ast =
   | { readonly kind: 'unary'; readonly op: UnaryOperator; readonly operand: Ast }
   | { readonly kind: 'binary'; readonly op: BinaryOperator; readonly left: Ast; readonly right: Ast };
 
-export type UnaryOperator = '-' | '+';
+/** `@` is implicit intersection: the one value of a range, where Excel 365 writes it. */
+export type UnaryOperator = '-' | '+' | '@';
 
 export type BinaryOperator = '+' | '-' | '*' | '/' | '^' | '&' | '=' | '<>' | '<' | '<=' | '>' | '>=';
 

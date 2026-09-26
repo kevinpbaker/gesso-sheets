@@ -58,10 +58,10 @@ export type Token = Span &
 
 export class FormulaSyntaxError extends Error {}
 
-const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A', '#NUM!'];
+const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A', '#NUM!', '#SPILL!'];
 
 const TWO_CHARACTER_OPERATORS = new Set(['<>', '<=', '>=']);
-const ONE_CHARACTER_OPERATORS = new Set(['+', '-', '*', '/', '^', '&', '=', '<', '>']);
+const ONE_CHARACTER_OPERATORS = new Set(['+', '-', '*', '/', '^', '&', '=', '<', '>', '@']);
 
 export function tokenize(source: string): Token[] {
   const tokens: Token[] = [];

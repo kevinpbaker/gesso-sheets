@@ -173,6 +173,13 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
     summary: 'A range moved, and resized, from a corner.'
   },
 
+  // Arrays, which spill into the cells beside and below
+  TRANSPOSE: { args: ['array'], summary: 'Rows as columns, and columns as rows.' },
+  SEQUENCE: { args: ['rows', '[columns]', '[start]', '[step]'], summary: 'Numbers counting up, as many as asked for.' },
+  FILTER: { args: ['array', 'keep', '[if none]'], summary: 'The rows where the test is true.' },
+  SORT: { args: ['array', '[by column]', '[1 or -1]', '[across]'], summary: 'An array in order.' },
+  UNIQUE: { args: ['array', '[across]', '[only once]'], summary: 'Each different row once.' },
+
   // Dates
   DATEVALUE: { args: ['text'], summary: 'A date typed as text, as a date.' },
   TIMEVALUE: { args: ['text'], summary: 'A time typed as text, as a time.' },

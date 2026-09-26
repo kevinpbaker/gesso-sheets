@@ -127,6 +127,16 @@ export class Sheet {
     return this.book.input(this.index, row, column);
   }
 
+  /** How far a formula's array spills from its cell; see `Workbook.spillOf`. */
+  spillOf(row: number, column: number): { rows: number; columns: number } | null {
+    return this.book.spillOf(this.index, row, column);
+  }
+
+  /** The formula whose array fills a cell, if one does. */
+  spilledFrom(row: number, column: number): { row: number; column: number } | null {
+    return this.book.spilledFrom(this.index, row, column);
+  }
+
   /**
    * The value as general text.
    *

@@ -9,6 +9,7 @@ import {
   type SheetFunction
 } from './FunctionKit';
 import { DAY_MS, serialOfDate } from './Dates';
+import { ARRAY_FUNCTIONS } from './FunctionsArray';
 import { CONDITIONAL_FUNCTIONS } from './FunctionsConditional';
 import { DATE_FUNCTIONS } from './FunctionsDate';
 import { FINANCE_FUNCTIONS } from './FunctionsFinance';
@@ -176,7 +177,8 @@ const TABLE: Record<string, SheetFunction> = {
   ...TEXT_FUNCTIONS,
   ...LOOKUP_FUNCTIONS,
   ...DATE_FUNCTIONS,
-  ...FINANCE_FUNCTIONS
+  ...FINANCE_FUNCTIONS,
+  ...ARRAY_FUNCTIONS
 };
 
 export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = TABLE;

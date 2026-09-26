@@ -92,7 +92,7 @@ class Parser {
 
   private unary(): Ast {
     const token = this.peek();
-    if (token.kind === 'operator' && (token.value === '-' || token.value === '+')) {
+    if (token.kind === 'operator' && (token.value === '-' || token.value === '+' || token.value === '@')) {
       this.at++;
       return { kind: 'unary', op: token.value, operand: this.unary() };
     }

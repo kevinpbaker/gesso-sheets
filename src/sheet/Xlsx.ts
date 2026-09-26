@@ -5,6 +5,7 @@ import { isSheetFunction } from './Functions';
 import type { MergeRect } from './Merges';
 import { parseFormula } from './Parser';
 import { rewriteFormula } from './Rewrite';
+import { withIntersections } from './Legacy';
 import { literalOf } from './Workbook';
 import { child, children, parseXml, type XmlElement } from './Xml';
 import { zipEntries, zipRead, type Inflate } from './Zip';
@@ -178,6 +179,12 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   // A bare name parses as a call with no arguments, so a formula that
   // reads one is runnable when the name is one of these.
   const known = new Set(names.map(each => each.name.toUpperCase()));
+  // A name for one cell is one value already, and needs no `@`.
+  const ranged = new Set(
+    names
+      .filter(each => each.firstRow !== each.lastRow || each.firstColumn !== each.lastColumn)
+      .map(each => each.name.toUpperCase())
+  );
   const pr = child(workbook, 'workbookPr')?.attributes.date1904;
   const date1904 = pr === '1' || pr === 'true';
 
@@ -190,7 +197,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     if (text === null) {
       continue;
     }
-    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, known, date1904);
+    const sheet = worksheet(entry.attributes.name ?? `Sheet${sheets.length + 1}`, parseXml(text), strings, formats, limits, { known, ranged }, date1904);
     valuesKept += sheet.valuesKept;
     cut.rows = Math.max(cut.rows, sheet.cutRows);
     cut.columns = Math.max(cut.columns, sheet.cutColumns);
@@ -645,7 +652,7 @@ function worksheet(
   strings: readonly string[],
   formats: readonly CellFormat[],
   limits: XlsxLimits,
-  known: ReadonlySet<string>,
+  { known, ranged }: { known: ReadonlySet<string>; ranged: ReadonlySet<string> },
   date1904: boolean
 ): ReadSheet {
   const cells: XlsxCell[] = [];
@@ -656,6 +663,8 @@ function worksheet(
   const defaultHeight = Number(child(root, 'sheetFormatPr')?.attributes.defaultRowHeight ?? 15) || 15;
   /** A shared formula's first cell, by its `si`: the formula and where it stood. */
   const shared = new Map<string, { input: string; row: number; column: number }>();
+  /** The areas array formulas cover, whose other cells are the formulas' to fill. */
+  const arrays: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number }[] = [];
   let valuesKept = 0;
   let cutRows = 0;
   let cutColumns = 0;
@@ -704,7 +713,22 @@ function worksheet(
         continue;
       }
       const style = Math.min(Number(cell.attributes.s ?? 0), formats.length - 1);
-      const read = cellInput(cell, at.row, at.column, strings, shared, known);
+      const formulaElement = child(cell, 'f');
+      if (formulaElement?.attributes.t === 'array') {
+        const area = rangeOf(formulaElement.attributes.ref ?? '');
+        if (area !== null) {
+          arrays.push(area);
+        }
+      } else if (formulaElement === null && arrays.some(area => inside(area, at.row, at.column))) {
+        // A cell an array formula spilled into: Excel keeps its value
+        // there, and here the formula fills it again. Kept, it would
+        // be in the way and the formula would say #SPILL!.
+        if (style > 0) {
+          styled.push({ row: at.row, column: at.column, style });
+        }
+        continue;
+      }
+      const read = cellInput(cell, at.row, at.column, strings, shared, known, ranged);
       if (read === null) {
         if (style > 0) {
           styled.push({ row: at.row, column: at.column, style });
@@ -792,7 +816,8 @@ function cellInput(
   column: number,
   strings: readonly string[],
   shared: Map<string, { input: string; row: number; column: number }>,
-  known: ReadonlySet<string>
+  known: ReadonlySet<string>,
+  ranged: ReadonlySet<string>
 ): { input: string; asText: boolean; kept: boolean; cached?: string } | null {
   const type = cell.attributes.t ?? 'n';
   const raw = child(cell, 'v')?.text ?? null;
@@ -800,7 +825,7 @@ function cellInput(
 
   const formula = child(cell, 'f');
   if (formula !== null) {
-    const written = formulaOf(formula, row, column, shared);
+    const written = formulaOf(formula, row, column, shared, ranged);
     if (written !== null && canRun(written, known)) {
       return { input: written, asText: false, kept: false, ...(value === null ? {} : { cached: value.text }) };
     }
@@ -857,7 +882,7 @@ function literal(value: Value): { input: string; asText: boolean } {
   return { input: text, asText: text.startsWith('=') || typeof literalOf(text) !== 'string' };
 }
 
-const KNOWN_ERRORS: ReadonlySet<string> = new Set(['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!']);
+const KNOWN_ERRORS: ReadonlySet<string> = new Set(['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!', '#SPILL!']);
 
 /**
  * A formula as this sheet would write it, or null.
@@ -874,24 +899,37 @@ function formulaOf(
   formula: XmlElement,
   row: number,
   column: number,
-  shared: Map<string, { input: string; row: number; column: number }>
+  shared: Map<string, { input: string; row: number; column: number }>,
+  names: ReadonlySet<string>
 ): string | null {
   const text = formula.text.trim();
   const index = formula.attributes.si;
+  // An array formula — typed with Ctrl+Shift+Enter, or a dynamic one
+  // from Excel 365 — is an array already; anything else was written
+  // when a range where one value is wanted meant one value.
+  const meant = (input: string): string => (formula.attributes.t === 'array' ? input : withIntersections(input, names));
   if (formula.attributes.t === 'shared' && index !== undefined) {
     if (text !== '') {
-      const input = `=${clean(text)}`;
+      const input = meant(`=${clean(text)}`);
       shared.set(index, { input, row, column });
       return input;
     }
     const first = shared.get(index);
     return first === undefined ? null : rewriteFormula(first.input, row - first.row, column - first.column);
   }
-  return text === '' ? null : `=${clean(text)}`;
+  return text === '' ? null : meant(`=${clean(text)}`);
 }
 
+/**
+ * Excel's prefixes for functions newer than the file format, taken
+ * off; `_xlfn.SINGLE(…)` is how Excel 365 writes `@(…)` into a file.
+ */
 function clean(text: string): string {
-  return text.replace(/_xl(?:fn|ws|pm)\./g, '');
+  return text.replace(/_xlfn\.SINGLE\(/gi, '@(').replace(/_xl(?:fn|ws|pm)\./g, '');
+}
+
+function inside(area: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number }, row: number, column: number): boolean {
+  return row >= area.firstRow && row <= area.lastRow && column >= area.firstColumn && column <= area.lastColumn;
 }
 
 /** Whether this sheet can parse a formula and knows every function and name it calls. */
