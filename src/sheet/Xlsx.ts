@@ -964,5 +964,25 @@ function canRun(input: string, known: ReadonlySet<string>): boolean {
         return true;
     }
   };
-  return knowsAll(tree);
+  // A reference into another workbook — `'[Prices.xlsx]Sheet1'!A1` —
+  // parses as a sheet this workbook does not have, and would say
+  // #REF!. The other file is not here to read, so the value Excel last
+  // read from it is the best there is.
+  const external = (node: Ast): boolean => {
+    switch (node.kind) {
+      case 'ref':
+        return node.ref.sheet?.startsWith('[') === true;
+      case 'range':
+        return node.range.start.sheet?.startsWith('[') === true;
+      case 'call':
+        return node.args.some(external);
+      case 'unary':
+        return external(node.operand);
+      case 'binary':
+        return external(node.left) || external(node.right);
+      default:
+        return false;
+    }
+  };
+  return knowsAll(tree) && !external(tree);
 }

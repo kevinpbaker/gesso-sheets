@@ -276,6 +276,14 @@ describe('the shapes Excel writes', () => {
     expect(book('<sheetData/>').iteration).toBeNull();
   });
 
+  it('keeps the value of a formula that reads another workbook', () => {
+    const read = book(`<sheetData><row r="1">
+      <c r="A1"><f>SUM('[Prices.xlsx]Sheet0'!A1:B1)</f><v>30</v></c>
+    </row></sheetData>`);
+    expect(inputs(read)).toEqual([[0, 0, '30']]);
+    expect(read.valuesKept).toBe(1);
+  });
+
   it('says a password-protected file is one, rather than not a workbook', async () => {
     const compound = new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
     await expect(openXlsx(compound, inflate, LIMITS)).rejects.toThrow('password-protected');
