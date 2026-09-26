@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
-import { createComponent, ShellService } from 'gesso-framework';
+import { createComponent, performShellStorage, ShellService, type ShellLocalStore } from 'gesso-framework';
 
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
@@ -32,7 +32,24 @@ afterEach(() => {
   h?.served.dispose();
 });
 
-async function mount(): Promise<void> {
+/**
+ * The browser's `localStorage`, as the shell would answer for it: kept
+ * across mounts, which is what a reload is from here.
+ */
+function memoryStore(): ShellLocalStore {
+  const held = new Map<string, string>();
+  return {
+    get length() {
+      return held.size;
+    },
+    key: at => [...held.keys()][at] ?? null,
+    getItem: key => held.get(key) ?? null,
+    setItem: (key, value) => void held.set(key, value),
+    removeItem: key => void held.delete(key)
+  };
+}
+
+async function mount(store?: ShellLocalStore): Promise<void> {
   const document = new SheetDocument();
   document.setCell(0, 0, '1');
   document.setCell(1, 0, '2');
@@ -43,11 +60,24 @@ async function mount(): Promise<void> {
   document.sheet.recalculate();
   const service = new SheetService(document, { rowCount: 100, columnCount: 10 });
   const served = serveForTest([sheetChannel(service)]);
-  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 900, height: 420 });
   const writes: string[] = [];
-  ui.runtime.services.get(ShellService).setHandler(request => {
-    if (request.type === 'clipboard') {
-      writes.push(request.text);
+  // The shell's answers, in place before the first frame as a real
+  // shell's are: the status bar asks for its stored figures as it
+  // mounts, and a handler installed after that would miss the question.
+  const ui = renderTest(createComponent(SheetApp), {
+    channels: served.registry,
+    width: 900,
+    height: 420,
+    onCreate: runtime => {
+      const shell = runtime.services.get(ShellService);
+      runtime.onShellRequest(request => {
+        if (request.type === 'clipboard') {
+          writes.push(request.text);
+        }
+        if (request.type === 'storage') {
+          shell.settleStorage(request.id, performShellStorage(request, () => store ?? null));
+        }
+      });
     }
   });
   h = { ui, served, service, copied: () => writes[writes.length - 1] ?? '' };
@@ -138,5 +168,30 @@ describe('the status bar’s figures', () => {
 
     expect(h.copied()).toBe('6.14159');
     expect(h.ui.queryByText('Sum copied')).not.toBeNull();
+  });
+
+  /** Phase 27's exit: chosen, reloaded, and still chosen. */
+  it('are kept for the next visit', async () => {
+    const store = memoryStore();
+    await mount(store);
+    await choose('Min');
+    // A choice is written once it has settled, not on every click.
+    await new Promise(resolve => setTimeout(resolve, 350));
+    h.ui.unmount();
+    h.served.dispose();
+
+    await mount(store);
+    await select(0, 0, 3, 0);
+    expect(figure('Min 1')).not.toBeNull();
+    expect(figure('Sum 6.1416')).not.toBeNull();
+  });
+
+  it('come back as the default when what was stored is not a choice', async () => {
+    const store = memoryStore();
+    store.setItem('gessosheet:status-figures', JSON.stringify(['sum', 'nonsense']));
+    await mount(store);
+    await select(0, 0, 3, 0);
+    expect(figure('Sum 6.1416')).not.toBeNull();
+    expect(figure('Count 4')).not.toBeNull();
   });
 });

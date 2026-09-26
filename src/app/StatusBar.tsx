@@ -2,10 +2,10 @@ import { BehaviorSubject, combineLatest, map, type Observable } from 'rxjs';
 
 import { percent, type UiPointerEvent } from 'gesso-core';
 import { Menu, type MenuItem } from 'gesso-components';
-import { createComponent, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
+import { createComponent, internalState, persisted, ShellService, ShellStorage, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { Sheet, zoomStep, type SheetStatus } from './SheetContract';
-import { DEFAULT_FIGURES, FIGURES, figuresOf, type StatFigure } from './Statistics';
+import { DEFAULT_FIGURES, FIGURES, figuresOf, isFigure, type StatFigure } from './Statistics';
 
 /**
  * The line along the bottom: what the selection adds up to, and what
@@ -23,14 +23,24 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
   const shell = ctx.inject(ShellService);
 
   /**
-   * Which figures the readout shows, and what it last copied.
+   * Which figures the readout shows: the person's, and kept for them.
    *
-   * Held here for the session. Excel keeps the choice for the whole
-   * application; this one has nowhere a render worker can keep a
-   * preference yet, and a choice that silently reset on reload would
-   * be worse if it pretended otherwise — so it does not pretend.
+   * In the browser's `localStorage`, through the shell — the render
+   * worker cannot reach it, and `ShellStorage` is the engine's way
+   * round that — because a preference is the one thing that belongs
+   * there: small, the person's rather than the document's, and wanted
+   * before the first frame of the next visit. Excel keeps this choice
+   * for the whole application, and so does this. Where the browser
+   * will not store anything, the choice lasts for the session and the
+   * default comes back, which is all the storage could promise.
    */
-  const chosen = internalState<readonly StatFigure[]>(DEFAULT_FIGURES);
+  const figures = persisted(new ShellStorage(shell, { prefix: 'gessosheet:' }), 'status-figures', {
+    initial: DEFAULT_FIGURES,
+    revive: raw => (Array.isArray(raw) && raw.every(isFigure) ? (raw as StatFigure[]) : null),
+    label: 'status bar figures'
+  });
+  ctx.onUnmount(() => figures.dispose());
+  const chosen = figures.value;
   const copiedNote = internalState('');
   let noteTimer: ReturnType<typeof setTimeout> | null = null;
   const copy = (label: string, text: string): void => {
@@ -98,7 +108,7 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
       menuOpen.next(false);
       const id = value as StatFigure;
       const now = chosen.value;
-      chosen.value = now.includes(id) ? now.filter(figure => figure !== id) : [...now, id];
+      figures.set(now.includes(id) ? now.filter(figure => figure !== id) : [...now, id]);
     }
   });
 

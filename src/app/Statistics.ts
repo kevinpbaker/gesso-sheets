@@ -53,6 +53,11 @@ export const FIGURES: readonly { readonly id: StatFigure; readonly label: string
   { id: 'sum', label: 'Sum' }
 ];
 
+/** Whether a stored value is one of the figures, for reading a preference back. */
+export function isFigure(value: unknown): value is StatFigure {
+  return typeof value === 'string' && FIGURES.some(figure => figure.id === value);
+}
+
 /** What the status bar shows until somebody chooses otherwise: Excel's three. */
 export const DEFAULT_FIGURES: readonly StatFigure[] = ['sum', 'average', 'count'];
 

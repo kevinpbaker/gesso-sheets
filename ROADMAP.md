@@ -2350,7 +2350,7 @@ scrolls rather than sweeps, a long press opens the menu at the finger,
 a handle drag extends the selection — and Gesso's `check:touch` run
 against this application rather than the playground.
 
-### Phase 27 — What it remembers of you
+### Phase 27 — What it remembers of you — **done**
 
 The status bar's chosen figures reset on reload, because the render
 worker cannot reach `localStorage`, and Phase 22 said so rather than
@@ -2367,6 +2367,33 @@ once:
 
 **Exit:** a spec in Gesso for the service across a simulated reload,
 and one here that chooses Min, reloads, and finds Min.
+
+**Met, with less engine than planned and one bug more.** The service
+was already there. `ShellStorage` is `localStorage` reached through the
+shell, and `persisted()` is a value read on start and written back as
+it changes, debounced. Both were in Gesso from its storage work, and
+this phase's plan had not looked. The status bar's figures are now a
+`persisted` value under `gessosheet:status-figures`. When the browser
+will not store anything, it keeps them for the session and the default
+comes back, which is all the storage could promise.
+
+The bug was the engine's, and it answered the engine-first rule the
+moment the reload spec failed. The runtime builds the root in its
+constructor, so a component reading a stored preference as it mounts
+asks before `onShellRequest` can have attached a listener. The request
+was dropped. For a storage request that is a promise that never
+settles, so the preference never came back and nothing said why.
+Gesso's runtime now holds what is asked before a listener attaches, up
+to 256 requests, and hands them over when one does. That is fe51320,
+with a spec that fails without it. `StatusFigures.spec.tsx` chooses
+Min, reloads through a stand-in `localStorage`, and finds Min. It also
+finds the default when what was stored is not a choice.
+
+**Not done: the two other preferences.** What a new document is zoomed
+to, and whether a new sheet shows formulas, were guesses at what the
+next preference would be. Nothing has asked for either. Each would
+also be a preference that changes what a document looks like when it
+opens, without the document saying so. They wait for a reason.
 
 ---
 
