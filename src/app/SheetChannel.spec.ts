@@ -337,6 +337,22 @@ describe('a workbook of several sheets', () => {
     expect(h.port.patchesFor('sheets')).toEqual([]);
   });
 
+  /**
+   * Two sheets added in one turn, and a render worker answering each
+   * tabs patch with a viewport naming the sheet that patch said was
+   * active. When a viewport could switch sheets, the first of those
+   * switched the service back, which sent a tabs patch, which was
+   * answered with a viewport — for ever.
+   */
+  it('takes a viewport over a sheet that is not showing as stale, not as a switch', () => {
+    command(h.port, 'addSheet');
+    command(h.port, 'addSheet');
+    command(h.port, 'setViewport', 1, 0, 29, 0, 4);
+    h.clock.drain();
+    expect(h.document.active).toBe(2);
+    expect(h.port.patchesFor('sheets').length).toBeGreaterThan(0);
+  });
+
   it('prices a tab change at the window, not at the workbook', () => {
     command(h.port, 'addSheet');
     command(h.port, 'setViewport', 1, 0, 29, 0, 4);
@@ -350,6 +366,9 @@ describe('a workbook of several sheets', () => {
     h.clock.drain();
     h.port.clear();
 
+    // What a tab sends: a switch is its own command, and the viewport
+    // that follows it names the sheet it switched to.
+    command(h.port, 'activateSheet', 0);
     command(h.port, 'setViewport', 0, 0, 29, 0, 4);
     h.clock.drain();
 

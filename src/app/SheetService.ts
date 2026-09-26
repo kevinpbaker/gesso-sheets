@@ -319,12 +319,17 @@ export class SheetService {
    */
   setViewport(sheet: number, firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void {
     this.viewport = { firstRow, lastRow, firstColumn, lastColumn };
-    // The sheet arrives with the window, so a scroll and a tab change
-    // are the same message. Published in full when it moved, because
-    // everything below the window is the active sheet's too.
-    if (this.document.activate(sheet)) {
-      this.publishSheet();
-      return;
+    // A viewport over a sheet that is not the one showing is *stale*,
+    // not a request to switch: the render worker names the sheet its
+    // last tabs patch said was active, and that patch can be one
+    // behind. Switching on it was a ping-pong — two sheets added in
+    // one turn, and each side went on answering the other's previous
+    // message, swapping the sheet back and forth for ever. Switching
+    // is `activateSheet`'s, which the tabs and the menu send; this
+    // answers for the sheet that is showing, and the render worker's
+    // next tabs patch brings it into line.
+    if (sheet !== this.document.active) {
+      this.publishTabs();
     }
     this.publishWindow();
     this.publishFormats();

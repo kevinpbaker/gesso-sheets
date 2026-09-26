@@ -449,10 +449,12 @@ export interface SheetCommands {
    * The range the render worker has mounted, on the sheet it is
    * mounted over.
    *
-   * The viewport **names its sheet**, and that is how the application
-   * worker knows which one is showing. The alternative was a sheet
-   * argument on every one of the forty commands below, which says the
-   * same thing forty times and gets it wrong once.
+   * The viewport **names its sheet** — the one the render worker last
+   * heard was showing — so that none of the forty commands below has
+   * to. It does not *choose* the sheet: that is `activateSheet`, and a
+   * viewport over any other sheet is one that crossed a tab change in
+   * flight, answered for the sheet that is showing. Letting it switch
+   * made two quick changes a ping-pong neither side could leave.
    */
   setViewport(sheet: number, firstRow: number, lastRow: number, firstColumn: number, lastColumn: number): void;
   /**
