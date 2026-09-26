@@ -76,7 +76,7 @@ import {
 import { colouredReferences, formulaSpans } from './FormulaColours';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { COMMANDS, commandFor, type CommandId } from './SheetCommands';
-import { keyAction, stampText } from './SheetKeys';
+import { isPrintable, keyAction, stampText } from './SheetKeys';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -1755,6 +1755,26 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * move the caret rather than the selection while a cell is open.
    */
   const onKey = (event: UiKeyboardEvent): void => {
+    /**
+     * A key that beat the editor to the keyboard.
+     *
+     * The first letter opens the cell, and the editor takes focus when
+     * it mounts, a frame later. Keys typed inside that frame still
+     * arrive here, at the grid, and the table below — rightly — leaves
+     * every key of an open cell to its text field, which does not have
+     * the keyboard yet: so they fell between the two and only the first
+     * letter survived. Found in Chrome by typing a word quickly; the
+     * harness draws its frames as it goes and never opens the gap. The
+     * grid holds the draft's other end, so it writes them there.
+     */
+    const chord = event.modifiers.ctrl === true || event.modifiers.meta === true || event.modifiers.alt === true;
+    if (edit.openNow() && event.target === gridNode && !chord && isPrintable(event.key)) {
+      edit.write((edit.draftNow() ?? '') + event.key);
+      typed = edit.draftNow();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     /**
      * Accelerators first, and only with no cell open.
      *

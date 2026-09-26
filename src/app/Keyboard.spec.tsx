@@ -749,4 +749,38 @@ describe('the sheet from the keyboard', () => {
       expect(h.ui.getByRole('cell', { name: '=A1+1' })).toBeDefined();
     });
   });
+
+  /**
+   * Typing faster than a frame — found in Chrome in Phase 19.
+   *
+   * The first key opens the cell, and the editor takes the keyboard
+   * when it mounts, a frame later. Keys pressed inside that frame
+   * arrive at the grid, and were lost: the grid saw an open cell and
+   * left them to a text field that did not have the keyboard yet.
+   */
+  describe('a burst of typing into a selected cell', () => {
+    beforeEach(async () => {
+      h = await mount();
+    });
+
+    it('keeps every key, not only the one that opened the cell', async () => {
+      // No settling between the keys: the editor has not mounted.
+      for (const key of 'hello') {
+        h.ui.fireEvent.press(key);
+      }
+      await h.ui.settle();
+      await type(' there');
+      await press('Enter');
+
+      expect(h.document.sheet.input(0, 0)).toBe('hello there');
+    });
+
+    it('still leaves a chord to its command', async () => {
+      h.ui.fireEvent.press('a');
+      h.ui.fireEvent.press('b', { ctrl: true });
+      await h.ui.settle();
+      await press('Enter');
+      expect(h.document.sheet.input(0, 0)).toBe('a');
+    });
+  });
 });
