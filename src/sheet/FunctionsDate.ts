@@ -1,6 +1,6 @@
 import { dateOfSerial, parseTypedDate, serialOfDate, serialOfTime, timeOfSerial, weekdayOf } from './Dates';
 import { arity, checked, integerAt, numberAt, numbersOf, textAt, type SheetFunction } from './FunctionKit';
-import { isError, VALUE } from './Values';
+import { isError, NUM, VALUE } from './Values';
 
 /**
  * Dates, as arithmetic on the serials `Dates.ts` defines.
@@ -54,7 +54,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return day;
     }
     const serial = serialOfDate(year, month, day);
-    return Number.isFinite(serial) && serial >= 0 ? serial : VALUE;
+    return Number.isFinite(serial) && serial >= 0 ? serial : NUM;
   },
 
   TIME(args) {
@@ -98,7 +98,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return serial;
     }
     if (serial < 0) {
-      return VALUE;
+      return NUM;
     }
     const type = args.length > 1 ? integerAt(args, 1) : 1;
     if (isError(type)) {
@@ -115,7 +115,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       case 3:
         return (sundayOne + 5) % 7;
       default:
-        return VALUE;
+        return NUM;
     }
   },
 
@@ -134,7 +134,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return months;
     }
     if (serial < 0) {
-      return VALUE;
+      return NUM;
     }
     const { year, month, day } = dateOfSerial(serial);
     // The 31st of January plus one month is the 28th of February, not
@@ -165,7 +165,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return months;
     }
     if (serial < 0) {
-      return VALUE;
+      return NUM;
     }
     const { year, month } = dateOfSerial(serial);
     return serialOfDate(year, month + months + 1, 0);
@@ -193,7 +193,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return to;
     }
     if (from < 0 || to < 0) {
-      return VALUE;
+      return NUM;
     }
     const holidays = args.length > 2 ? numbersOf([args[2]]) : [];
     if (isError(holidays)) {
@@ -244,7 +244,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     // Excel's behaviour and catches the commonest misuse: the two
     // arguments in the wrong order.
     if (from > to || from < 0) {
-      return VALUE;
+      return NUM;
     }
     const start = dateOfSerial(from);
     const end = dateOfSerial(to);
@@ -274,7 +274,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
         return Math.floor(to) - serialOfDate(end.year - (notYet ? 1 : 0), start.month, start.day);
       }
       default:
-        return VALUE;
+        return NUM;
     }
   },
 
@@ -349,7 +349,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return days;
     }
     if (start < 0) {
-      return VALUE;
+      return NUM;
     }
     const holidays = args.length > 2 ? numbersOf([args[2]]) : [];
     if (isError(holidays)) {
@@ -389,7 +389,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return type;
     }
     if ((type !== 1 && type !== 2) || serial < 0) {
-      return VALUE;
+      return NUM;
     }
     const day = Math.floor(serial);
     const january = serialOfDate(dateOfSerial(day).year, 1, 1);
@@ -402,7 +402,7 @@ export const DATE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
  * The six that pull one field out of a serial.
  *
  * Written once because they differ only in which field, and a
- * negative serial is `#VALUE!` in all of them: there are no dates
+ * negative serial is `#NUM!` in all of them: there are no dates
  * before the epoch to have a year.
  */
 function part(field: (serial: number) => number): SheetFunction {
@@ -415,6 +415,6 @@ function part(field: (serial: number) => number): SheetFunction {
     if (isError(serial)) {
       return serial;
     }
-    return serial < 0 ? VALUE : field(serial);
+    return serial < 0 ? NUM : field(serial);
   };
 }

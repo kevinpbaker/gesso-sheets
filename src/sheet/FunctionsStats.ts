@@ -1,5 +1,5 @@
 import { checked, integerAt, numberAt, numbersOf, valuesOf, type SheetFunction } from './FunctionKit';
-import { DIV0, isError, NA, VALUE, type CellError } from './Values';
+import { DIV0, isError, NA, NUM, VALUE, type CellError } from './Values';
 
 /**
  * Statistics.
@@ -53,7 +53,7 @@ export const STATS_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return sorted;
     }
     if (sorted.length === 0) {
-      return VALUE;
+      return NUM;
     }
     const middle = Math.floor(sorted.length / 2);
     // An even count has two middles and the median is between them.
@@ -234,7 +234,7 @@ export const STATS_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return fraction;
     }
     if (sorted.length === 0 || fraction < 0 || fraction > 1) {
-      return VALUE;
+      return NUM;
     }
     const at = fraction * (sorted.length - 1);
     const below = Math.floor(at);
@@ -253,7 +253,7 @@ export const STATS_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return quarter;
     }
     if (quarter < 0 || quarter > 4) {
-      return VALUE;
+      return NUM;
     }
     return STATS_FUNCTIONS.PERCENTILE([args[0], { kind: 'value', value: quarter / 4 }], NO_CONTEXT);
   }

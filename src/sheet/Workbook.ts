@@ -135,6 +135,23 @@ export class Workbook {
    */
   private readonly dynamic = new Set<number>();
 
+  /**
+   * Formulas that call `SUBTOTAL`, which answer differently when a row
+   * is hidden or filtered — a change to no cell at all, so no edge in
+   * the graph wakes them; `visibilityChanged` does.
+   */
+  private readonly subtotals = new Set<number>();
+
+  /**
+   * Whether a row of a sheet is hidden by hand, filtered, or neither.
+   *
+   * The document's answer, not the workbook's: which rows show is a
+   * fact about the screen, and the workbook holds cells. The document
+   * installs it; without one every row shows, which is what a
+   * workbook in a spec means.
+   */
+  rowState: ((sheet: number, row: number) => 'hidden' | 'filtered' | null) | null = null;
+
   /** The keys the cell now being evaluated read, when it is dynamic. */
   private recording: Set<number> | null = null;
 
@@ -402,6 +419,7 @@ export class Workbook {
     this.graph.clear();
     this.volatile.clear();
     this.dynamic.clear();
+    this.subtotals.clear();
     this.redone.clear();
     for (const [key, cell] of this.cells) {
       if (cell.formula !== null) {
@@ -517,6 +535,7 @@ export class Workbook {
     this.dirty.clear();
     this.volatile.clear();
     this.dynamic.clear();
+    this.subtotals.clear();
     this.redone.clear();
     this.plan = null;
     for (const [key, cell] of carried) {
@@ -666,11 +685,31 @@ export class Workbook {
     }
     setMembership(this.volatile, key, isVolatile);
     setMembership(this.dynamic, key, isDynamic);
+    setMembership(this.subtotals, key, names.has('SUBTOTAL'));
+  }
+
+  /**
+   * Rows were hidden, shown or filtered, so every `SUBTOTAL` — and
+   * whatever reads one — has to be asked again. Called by the document
+   * after it changes which rows show.
+   */
+  visibilityChanged(): void {
+    if (this.subtotals.size === 0) {
+      return;
+    }
+    for (const key of this.subtotals) {
+      this.dirty.add(key);
+    }
+    for (const dependent of this.graph.closureOf(this.subtotals)) {
+      this.dirty.add(dependent);
+    }
+    this.plan = null;
   }
 
   private forget(key: number): void {
     this.volatile.delete(key);
     this.dynamic.delete(key);
+    this.subtotals.delete(key);
     this.redone.delete(key);
   }
 
@@ -775,7 +814,7 @@ export class Workbook {
     if (cell === undefined || cell.formula === null) {
       return;
     }
-    const context = this.contextOn(sheetOf(key));
+    const context = this.contextOn(sheetOf(key), key);
     if (!this.dynamic.has(key)) {
       cell.value = evaluate(cell.formula, context);
       return;
@@ -816,13 +855,16 @@ export class Workbook {
    * object is three properties and a closure; the alternative is a
    * mutable field that would have to be right at every re-entry.
    */
-  private contextOn(sheet: number) {
+  private contextOn(sheet: number, key?: number) {
     return {
       valueAt: (key: number) => this.valueAt(key),
       functions: this.functions,
       rangeForName: (name: string) => this.names.rangeOf(name),
       book: this.asContext,
-      onSheet: sheet
+      onSheet: sheet,
+      at: key === undefined ? undefined : { row: rowOf(key), column: columnOf(key) },
+      rowState: this.rowState ?? undefined,
+      isSubtotal: (cell: number) => this.subtotals.has(cell)
     };
   }
 

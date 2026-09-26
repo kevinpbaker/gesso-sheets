@@ -1,8 +1,6 @@
 import {
-  arity,
   checked,
   firstError,
-  integerAt,
   numberAt,
   numbersOf,
   valuesOf,
@@ -19,7 +17,7 @@ import { LOOKUP_FUNCTIONS } from './FunctionsLookup';
 import { MATH_FUNCTIONS, roundHalfAway } from './FunctionsMath';
 import { STATS_FUNCTIONS } from './FunctionsStats';
 import { TEXT_FUNCTIONS } from './FunctionsText';
-import { DIV0, isError, toText, VALUE, type CellValue } from './Values';
+import { DIV0, isError, toText, type CellValue } from './Values';
 
 export type { Argument, FunctionContext, SheetFunction };
 
@@ -169,18 +167,6 @@ const AGGREGATES: Readonly<Record<string, SheetFunction>> = {
   }
 };
 
-/**
- * Which function `SUBTOTAL`'s first argument names.
- *
- * 1 to 11, and 101 to 111 for the same functions "ignoring hidden
- * rows" — which here is the same answer, because a function is handed
- * values and not rows, and has no way to know which were hidden. What
- * Excel also does, and this does not, is skip other `SUBTOTAL`s inside
- * the range; a total of subtotals is therefore counted twice here,
- * which is written down so nobody has to find it.
- */
-const SUBTOTALS = ['AVERAGE', 'COUNT', 'COUNTA', 'MAX', 'MIN', 'PRODUCT', 'STDEV', 'STDEVP', 'SUM', 'VAR', 'VARP'];
-
 const TABLE: Record<string, SheetFunction> = {
   ...AGGREGATES,
   ...LOGIC_FUNCTIONS,
@@ -190,22 +176,7 @@ const TABLE: Record<string, SheetFunction> = {
   ...TEXT_FUNCTIONS,
   ...LOOKUP_FUNCTIONS,
   ...DATE_FUNCTIONS,
-  ...FINANCE_FUNCTIONS,
-
-  /** One of eleven aggregates, by number; see `SUBTOTALS`. */
-  SUBTOTAL(args, ctx) {
-    const wrong = arity(args, 2, 255);
-    if (wrong !== null) {
-      return wrong;
-    }
-    const which = integerAt(args, 0);
-    if (isError(which)) {
-      return which;
-    }
-    const name = SUBTOTALS[(which > 100 ? which - 100 : which) - 1];
-    const run = name === undefined ? undefined : TABLE[name];
-    return run === undefined ? VALUE : run(args.slice(1), ctx);
-  }
+  ...FINANCE_FUNCTIONS
 };
 
 export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = TABLE;
@@ -229,7 +200,16 @@ export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = TABLE;
 export const VOLATILE: ReadonlySet<string> = new Set(['RAND', 'RANDBETWEEN', 'NOW', 'TODAY']);
 
 /** The names handled in the evaluator rather than by the table. */
-export const SPECIAL_FORMS: ReadonlySet<string> = new Set(['IF', 'IFS', 'SWITCH', 'INDIRECT', 'OFFSET']);
+export const SPECIAL_FORMS: ReadonlySet<string> = new Set([
+  'IF',
+  'IFS',
+  'SWITCH',
+  'INDIRECT',
+  'OFFSET',
+  'ROW',
+  'COLUMN',
+  'SUBTOTAL'
+]);
 
 /** Whether the sheet knows a name at all, however it is implemented. */
 export function isSheetFunction(name: string): boolean {

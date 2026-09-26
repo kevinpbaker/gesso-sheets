@@ -1,4 +1,4 @@
-import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, type CellRef, type RangeRef } from './A1';
+import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, rowOf, type CellRef, type RangeRef } from './A1';
 import type { Ast, BinaryOperator } from './Ast';
 import { FUNCTIONS, isSheetFunction, liveContext, type Argument, type FunctionContext } from './Functions';
 import {
@@ -61,7 +61,27 @@ export interface EvaluationContext {
    * reference resolves through. Defaults to the first sheet.
    */
   onSheet?: number;
+  /**
+   * The cell whose formula this is, for `ROW()` and `COLUMN()` with no
+   * argument — the only functions whose answer is where they are.
+   * Absent for an expression that is not in a cell, which then has no
+   * row to give and says `#VALUE!`.
+   */
+  at?: { readonly row: number; readonly column: number };
+  /**
+   * Whether a row is hidden by hand, filtered out, or neither.
+   *
+   * `SUBTOTAL`'s whole reason to exist: `SUBTOTAL(9, …)` under a
+   * filter totals what the filter shows. Rows are the document's, not
+   * the sheet's, so this is asked rather than known.
+   */
+  rowState?(sheet: number, row: number): 'hidden' | 'filtered' | null;
+  /** Whether a cell's formula calls `SUBTOTAL`, which a `SUBTOTAL` skips. */
+  isSubtotal?(key: number): boolean;
 }
+
+/** A test for the cells a read should leave out; see `evaluateSubtotal`. */
+type Skip = (key: number, sheet: number, row: number) => boolean;
 
 /** What the evaluator needs to know about the sheets around it. */
 export interface WorkbookContext {
@@ -141,7 +161,7 @@ function readRef(ref: CellRef, context: EvaluationContext): CellValue {
 }
 
 /** A range's values and its shape, which the lookups need. */
-function readRange(range: RangeRef, context: EvaluationContext): Extract<Argument, { kind: 'range' }> {
+function readRange(range: RangeRef, context: EvaluationContext, skip?: Skip): Extract<Argument, { kind: 'range' }> {
   if (!inBounds(range.start.row, range.start.column) || !inBounds(range.end.row, range.end.column)) {
     return { kind: 'range', values: [REF], rows: 1, columns: 1 };
   }
@@ -156,6 +176,17 @@ function readRange(range: RangeRef, context: EvaluationContext): Extract<Argumen
     return { kind: 'range', values: [], rows: 0, columns };
   }
   const values: CellValue[] = [];
+  if (skip !== undefined) {
+    // A read with holes in it has no shape to report, and the one
+    // caller that skips — `SUBTOTAL` — hands the values to aggregates
+    // that do not ask for one.
+    for (const key of rangeKeys(read, sheet)) {
+      if (!skip(key, sheet, rowOf(key))) {
+        values.push(context.valueAt(key));
+      }
+    }
+    return { kind: 'range', values, rows: values.length, columns: 1 };
+  }
   for (const key of rangeKeys(read, sheet)) {
     values.push(context.valueAt(key));
   }
@@ -198,6 +229,12 @@ function call(name: string, args: readonly Ast[], context: EvaluationContext): C
       return evaluateIndirect(args, context);
     case 'OFFSET':
       return evaluateOffset(args, context);
+    case 'ROW':
+      return evaluatePosition(args, context, 'row');
+    case 'COLUMN':
+      return evaluatePosition(args, context, 'column');
+    case 'SUBTOTAL':
+      return evaluateSubtotal(args, context);
     default:
       break;
   }
@@ -224,6 +261,88 @@ function call(name: string, args: readonly Ast[], context: EvaluationContext): C
     return NAME;
   }
   const evaluated: Argument[] = args.map(arg => argumentOf(arg, context));
+  return FUNCTIONS[name](evaluated, context.functions ?? liveContext());
+}
+
+/**
+ * `ROW` and `COLUMN`: where a reference is, counted from one.
+ *
+ * Special forms because they read a reference's *position* rather than
+ * its value, and a function in the table is only ever handed values.
+ * With no argument they answer for the cell the formula is in, which
+ * is what `=ROW()` numbering a list down the side is. A range answers
+ * for its first row or column, which is what Excel shows when the
+ * array it would return has nowhere to spill.
+ */
+function evaluatePosition(args: readonly Ast[], context: EvaluationContext, axis: 'row' | 'column'): CellValue {
+  if (args.length > 1) {
+    return VALUE;
+  }
+  if (args.length === 0) {
+    return context.at === undefined ? VALUE : context.at[axis] + 1;
+  }
+  const node = args[0];
+  if (node.kind === 'ref') {
+    return node.ref[axis] + 1;
+  }
+  const range =
+    node.kind === 'range'
+      ? node.range
+      : node.kind === 'call' && node.args.length === 0
+        ? (context.rangeForName?.(node.name) ?? null)
+        : null;
+  if (range === null) {
+    return VALUE;
+  }
+  return Math.min(range.start[axis], range.end[axis]) + 1;
+}
+
+/**
+ * Which aggregate `SUBTOTAL`'s first argument names: 1 to 11, and
+ * 101 to 111 for the same ones leaving out hidden rows as well.
+ */
+const SUBTOTALS = ['AVERAGE', 'COUNT', 'COUNTA', 'MAX', 'MIN', 'PRODUCT', 'STDEV', 'STDEVP', 'SUM', 'VAR', 'VARP'];
+
+/**
+ * `SUBTOTAL`: an aggregate that leaves things out, which is the point.
+ *
+ * Three things, all Excel's. Rows a filter took away are never
+ * counted, so a total under a filtered list is the total of what the
+ * filter shows. Rows hidden by hand are counted by 1–11 and not by
+ * 101–111, which is the only difference between the two sets. And a
+ * cell that is itself a `SUBTOTAL` is never counted, so a grand total
+ * over a column of subtotals adds up the data once rather than twice.
+ *
+ * A special form because all three are questions about *cells* — which
+ * row, whose formula — and a function in the table is handed values.
+ */
+function evaluateSubtotal(args: readonly Ast[], context: EvaluationContext): CellValue {
+  if (args.length < 2) {
+    return VALUE;
+  }
+  const which = toNumber(evaluate(args[0], context));
+  if (isError(which)) {
+    return which;
+  }
+  const code = Math.trunc(which);
+  const name = SUBTOTALS[(code > 100 ? code - 100 : code) - 1];
+  if (name === undefined) {
+    return VALUE;
+  }
+  const leaveHidden = code > 100;
+  const skip: Skip = (key, sheet, row) => {
+    if (context.isSubtotal?.(key) === true) {
+      return true;
+    }
+    const state = context.rowState?.(sheet, row) ?? null;
+    return state === 'filtered' || (leaveHidden && state === 'hidden');
+  };
+  const evaluated = args.slice(1).map(arg => {
+    if (arg.kind === 'ref') {
+      return readRange({ start: arg.ref, end: arg.ref }, context, skip);
+    }
+    return argumentOf(arg, context, skip);
+  });
   return FUNCTIONS[name](evaluated, context.functions ?? liveContext());
 }
 
@@ -425,9 +544,9 @@ function wholeColumns(halves: readonly string[]): RangeRef | null {
  * range, computed rather than written, and `SUM(OFFSET(A1, 0, 0, 5,
  * 1))` is the whole reason anybody uses it.
  */
-function argumentOf(node: Ast, context: EvaluationContext): Argument {
+function argumentOf(node: Ast, context: EvaluationContext, skip?: Skip): Argument {
   if (node.kind === 'range') {
-    return readRange(node.range, context);
+    return readRange(node.range, context, skip);
   }
   /**
    * A named range is a range argument, which is the whole point of
@@ -437,7 +556,7 @@ function argumentOf(node: Ast, context: EvaluationContext): Argument {
   if (node.kind === 'call' && node.args.length === 0 && !isSheetFunction(node.name)) {
     const named = context.rangeForName?.(node.name) ?? null;
     if (named !== null) {
-      return readRange(named, context);
+      return readRange(named, context, skip);
     }
   }
   if (node.kind === 'call' && node.name === 'OFFSET') {

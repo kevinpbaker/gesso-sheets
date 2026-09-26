@@ -1,5 +1,5 @@
 import { arity, checked, numberAt, numbersOf, rangeAt, type SheetFunction } from './FunctionKit';
-import { DIV0, isError, VALUE } from './Values';
+import { DIV0, isError, NUM, VALUE } from './Values';
 
 /**
  * Arithmetic.
@@ -11,11 +11,10 @@ import { DIV0, isError, VALUE } from './Values';
  * negatives towards zero would not add up the way the person checking
  * it expects.
  *
- * **A result that is not a real number is `#VALUE!`**, not `NaN`.
- * `SQRT(-1)` and `LN(0)` are `#NUM!` in Excel; there is no `#NUM!`
- * here — see `Values.ts` — and `#VALUE!` says the true thing, which is
- * that a value of the wrong kind went in. What must never happen is a
- * `NaN` reaching a cell: it compares false with itself and poisons
+ * **A result that is not a real number is `#NUM!`**, not `NaN`, as it
+ * is in Excel: `SQRT(-1)` and `LN(0)` were given numbers of the right
+ * kind that are out of range. What must never happen is a `NaN`
+ * reaching a cell: it compares false with itself and poisons
  * everything downstream in silence.
  */
 
@@ -27,9 +26,9 @@ export function roundHalfAway(value: number, places: number): number {
   return rounded / factor;
 }
 
-/** A result, or `#VALUE!` when the arithmetic left the real numbers. */
+/** A result, or `#NUM!` when the arithmetic left the real numbers. */
 function real(value: number) {
-  return Number.isFinite(value) ? value : VALUE;
+  return Number.isFinite(value) ? value : NUM;
 }
 
 export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
@@ -39,7 +38,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return wrong;
     }
     const value = numberAt(args, 0);
-    return isError(value) ? value : value < 0 ? VALUE : Math.sqrt(value);
+    return isError(value) ? value : value < 0 ? NUM : Math.sqrt(value);
   },
 
   POWER(args) {
@@ -149,7 +148,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return wrong;
     }
     const value = numberAt(args, 0);
-    return isError(value) ? value : value <= 0 ? VALUE : Math.log(value);
+    return isError(value) ? value : value <= 0 ? NUM : Math.log(value);
   },
 
   /** Base ten unless a base is given, as every spreadsheet has it. */
@@ -167,7 +166,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return base;
     }
     if (value <= 0 || base <= 0 || base === 1) {
-      return VALUE;
+      return NUM;
     }
     return Math.log(value) / Math.log(base);
   },
@@ -178,7 +177,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return wrong;
     }
     const value = numberAt(args, 0);
-    return isError(value) ? value : value <= 0 ? VALUE : Math.log10(value);
+    return isError(value) ? value : value <= 0 ? NUM : Math.log10(value);
   },
 
   /**
@@ -208,7 +207,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     }
     const first = Math.ceil(low);
     const last = Math.floor(high);
-    return first > last ? VALUE : first + Math.floor(ctx.random() * (last - first + 1));
+    return first > last ? NUM : first + Math.floor(ctx.random() * (last - first + 1));
   },
 
   /**
@@ -264,7 +263,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (whole < 0 || whole > 170) {
       // Past 170 the answer is larger than a double can hold, and
       // `Infinity` in a cell is worse than saying so.
-      return VALUE;
+      return NUM;
     }
     let total = 1;
     for (let at = 2; at <= whole; at++) {
@@ -330,8 +329,8 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
 
   /**
    * A number rounded to the nearest multiple, a tie away from zero.
-   * The number and the multiple must share a sign, as Excel insists;
-   * this sheet has no `#NUM!`, so the refusal is `#VALUE!`.
+   * The number and the multiple must share a sign, as Excel insists,
+   * and a pair that does not is `#NUM!`.
    */
   MROUND(args) {
     const wrong = checked(args, 2, 2);
@@ -350,7 +349,7 @@ export const MATH_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return 0;
     }
     if (value !== 0 && Math.sign(value) !== Math.sign(multiple)) {
-      return VALUE;
+      return NUM;
     }
     // The same sign, so the quotient is positive and rounding it up
     // on a tie is rounding away from zero. Nudged first, so that

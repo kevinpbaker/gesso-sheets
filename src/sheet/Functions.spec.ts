@@ -154,7 +154,7 @@ table('logic', [
 
 table('maths', [
   ['SQRT(16)', '4'],
-  ['SQRT(-1)', '#VALUE!'],
+  ['SQRT(-1)', '#NUM!'],
   ['POWER(2, 10)', '1024'],
   ['MOD(7, 3)', '1'],
   // The sign follows the divisor, which JavaScript's `%` does not.
@@ -172,7 +172,7 @@ table('maths', [
   ['SIGN(0)', '0'],
   ['EXP(0)', '1'],
   ['LN(1)', '0'],
-  ['LN(0)', '#VALUE!'],
+  ['LN(0)', '#NUM!'],
   ['LOG(100)', '2'],
   ['LOG(8, 2)', '3'],
   ['LOG10(1000)', '3'],
@@ -322,7 +322,7 @@ table('dates', [
   ['DATEDIF(D2, D1, "M")', '7'],
   ['DATEDIF(D2, D1, "Y")', '0'],
   ['DATEDIF(D2, D1, "YM")', '7'],
-  ['DATEDIF(D1, D2, "D")', '#VALUE!'],
+  ['DATEDIF(D1, D2, "D")', '#NUM!'],
   ['NETWORKDAYS(D2, D1)', '169'],
   // Read as typing reads a date, so it agrees with typing one.
   ['DATEVALUE("2026-09-24")', '46289'],
@@ -336,7 +336,7 @@ table('dates', [
   ['WEEKNUM(D1)', '39'],
   ['WEEKNUM(D1, 2)', '39'],
   ['WEEKNUM(D2)', '5'],
-  ['WEEKNUM(D1, 21)', '#VALUE!']
+  ['WEEKNUM(D1, 21)', '#NUM!']
 ]);
 
 table('finance', [
@@ -350,6 +350,8 @@ table('finance', [
 
 table('checks and conversions', [
   ['ISERR(E1)', 'TRUE'],
+  ['ISERR(SQRT(-1))', 'TRUE'],
+  ['ISNUMBER(#NUM!)', 'FALSE'],
   ['ISERR(NA())', 'FALSE'],
   ['ISNA(NA())', 'TRUE'],
   ['ISNA(E1)', 'FALSE'],
@@ -369,7 +371,7 @@ table('checks and conversions', [
   ['MROUND(10, 3)', '9'],
   ['MROUND(11, 3)', '12'],
   ['MROUND(10, 0.1)', '10'],
-  ['MROUND(-10, 3)', '#VALUE!'],
+  ['MROUND(-10, 3)', '#NUM!'],
   ['QUOTIENT(A2, 7)', '2'],
   ['QUOTIENT(-7, 2)', '-3'],
   ['QUOTIENT(A1, 0)', '#DIV/0!'],
@@ -386,8 +388,27 @@ table('checks and conversions', [
   ['SUBTOTAL(1, A1:A5)', '21'],
   ['SUBTOTAL(109, A1:A5)', '105'],
   ['SUBTOTAL(4, A1:A5, C1:C5)', '40'],
-  ['SUBTOTAL(12, A1:A5)', '#VALUE!']
+  ['SUBTOTAL(12, A1:A5)', '#VALUE!'],
+  // Where a reference is, counted from one; with none, where the
+  // formula is — which the table evaluates at U21.
+  ['ROW()', '21'],
+  ['COLUMN()', '21'],
+  ['ROW(A5)', '5'],
+  ['COLUMN(C1)', '3'],
+  ['ROW(B2:B4)', '2'],
+  ['COLUMN(B2:D4)', '2'],
+  ['ROW(1)', '#VALUE!']
 ]);
+
+/** A total over subtotals counts the data once, which is what SUBTOTAL is for. */
+describe('SUBTOTAL over subtotals', () => {
+  it('leaves out a cell that is itself a SUBTOTAL', () => {
+    const cells = { F1: '1', F2: '2', F3: '=SUBTOTAL(9, F1:F2)', F4: '4', F5: '=SUBTOTAL(9, F4)' };
+    expect(answer('SUBTOTAL(9, F1:F5)', cells)).toBe('7');
+    // SUM has no such rule, which is the difference.
+    expect(answer('SUM(F1:F5)', cells)).toBe('14');
+  });
+});
 
 /**
  * The guard that keeps this file honest.

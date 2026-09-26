@@ -15,9 +15,16 @@
  * `IFNA` exists to catch exactly this one and nothing else, which is
  * only a coherent function if the code is its own.
  *
- * `#NUM!` is deliberately still absent. `SQRT(-1)` and `LN(0)` give
- * `#VALUE!` here: a value of the wrong kind was passed, which is what
- * `#VALUE!` says, and a seventh code earns less than it costs.
+ * `#NUM!` is the seventh, and it arrived with `.xlsx` import. It was
+ * left out on the argument that `SQRT(-1)` giving `#VALUE!` says a true
+ * thing and a seventh code earns less than it costs — which held while
+ * every workbook here was written here. An imported one was written in
+ * Excel, where `SQRT(-1)` is `#NUM!`, and a workbook that answers
+ * differently after it is opened is wrong in the only way that
+ * matters; `Parser.ts` copies `-2^2` from Excel on the same argument.
+ * `#VALUE!` stays what it says: an argument of the wrong kind. `#NUM!`
+ * is a number of the right kind that is out of range — a negative
+ * square root, a date before 1900, a percentile of 1.5.
  *
  * `null` is an empty cell, and it is not the same as `''`. An empty
  * cell is zero in arithmetic and the empty string in text, which is
@@ -25,7 +32,7 @@
  * happens to be empty, and `COUNT` treats them differently.
  */
 
-export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!' | '#N/A';
+export type ErrorCode = '#REF!' | '#DIV/0!' | '#NAME?' | '#VALUE!' | '#CIRC!' | '#N/A' | '#NUM!';
 
 export interface CellError {
   readonly kind: 'error';
@@ -51,6 +58,8 @@ export const VALUE = error('#VALUE!');
 export const CIRC = error('#CIRC!');
 /** A lookup that found nothing. Not a failure — an absence. */
 export const NA = error('#N/A');
+
+export const NUM = error('#NUM!');
 
 /**
  * Takes `unknown` rather than `CellValue` because it is the guard the

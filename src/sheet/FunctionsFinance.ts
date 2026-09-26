@@ -1,5 +1,5 @@
 import { checked, numberAt, numbersOf, type Argument, type SheetFunction } from './FunctionKit';
-import { isError, VALUE, type CellError } from './Values';
+import { DIV0, isError, NUM, VALUE, type CellError } from './Values';
 
 /**
  * Loans and savings: the time value of money.
@@ -62,7 +62,7 @@ export const FINANCE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     }
     const { rate, periods, third: present, fourth: future, due } = read;
     if (periods === 0) {
-      return VALUE;
+      return NUM;
     }
     if (rate === 0) {
       return -(present + future) / periods;
@@ -115,7 +115,7 @@ export const FINANCE_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
       return rate;
     }
     if (rate === -1) {
-      return VALUE;
+      return DIV0;
     }
     const flows = numbersOf(args.slice(1));
     if (isError(flows)) {

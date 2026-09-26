@@ -1187,6 +1187,7 @@ export class SheetService {
     for (let row = first; row <= last && row < rowCount; row++) {
       this.document.hiddenRows.add(row);
     }
+    this.rowsShownChanged();
     this.publishGeometry();
     this.persist();
   }
@@ -1198,6 +1199,7 @@ export class SheetService {
     for (let row = Math.max(0, first - 1); row <= last + 1; row++) {
       this.document.hiddenRows.delete(row);
     }
+    this.rowsShownChanged();
     this.publishGeometry();
     this.persist();
   }
@@ -1384,10 +1386,21 @@ export class SheetService {
         this.document.filteredRows.add(row);
       }
     }
+    this.rowsShownChanged();
     this.publishGeometry();
     this.publishWindow();
     this.publishFormats();
     this.persist();
+  }
+
+  /**
+   * Which rows show changed, which no cell did — so the `SUBTOTAL`s,
+   * the one kind of formula that reads it, are told and the pump
+   * picks them up.
+   */
+  private rowsShownChanged(): void {
+    this.document.book.visibilityChanged();
+    this.pump();
   }
 
   clearFilter(): void {
@@ -1395,6 +1408,7 @@ export class SheetService {
       return;
     }
     this.document.filteredRows.clear();
+    this.rowsShownChanged();
     this.publishGeometry();
     this.publishWindow();
     this.publishFormats();

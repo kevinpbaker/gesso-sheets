@@ -36,6 +36,7 @@ const MEANINGS: Readonly<Record<ErrorCode, string>> = {
   '#REF!': 'A reference points at no cell. A row or column it named was deleted.',
   '#NAME?': 'A name the sheet does not know. Usually a misspelt function.',
   '#N/A': 'A lookup found nothing. The formula is fine; the table has no such row.',
+  '#NUM!': 'A number out of range: a negative square root, a date before 1900, a percentile past 1.',
   '#CIRC!': 'This cell depends on itself, directly or through others. There is no order to work it out in.'
 };
 

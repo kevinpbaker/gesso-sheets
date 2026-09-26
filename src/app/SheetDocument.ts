@@ -282,6 +282,19 @@ export class SheetDocument {
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
+
+  constructor() {
+    // Which rows show is the document's to know and `SUBTOTAL`'s to
+    // ask; see `Workbook.rowState`. A filter wins over a hand-hidden
+    // row, because 1–11 leave out the filtered and keep the hidden.
+    this.book.rowState = (sheet, row) => {
+      const page = this.pages[sheet];
+      if (page === undefined) {
+        return null;
+      }
+      return page.filteredRows.has(row) ? 'filtered' : page.hiddenRows.has(row) ? 'hidden' : null;
+    };
+  }
   /** Edits collected by an open `transact`, or null outside one. */
   private collecting: Edit[] | null = null;
 
