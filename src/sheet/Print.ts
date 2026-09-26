@@ -1,5 +1,5 @@
 import { formatRange, formatRef, inBounds, type RangeRef } from './A1';
-import type { Ast } from './Ast';
+import type { Ast, BinaryOperator } from './Ast';
 import { formatNumber } from './Values';
 
 /**
@@ -10,13 +10,17 @@ import { formatNumber } from './Values';
  * disagree about what a tree means, and the place they would disagree
  * is the place a formula silently changes.
  *
- * **Fully parenthesised rather than minimally.** A writer that dropped
- * brackets would have to know the precedence table as exactly as the
- * parser does, and the one place the two could differ is the one that
- * matters. Extra brackets are ugly and cannot be wrong. (A
- * precedence-aware printer with a parse-back round-trip spec is the
- * way to lose them, and it belongs with the formula editor in Phase
- * 12 rather than here.)
+ * **With the brackets the tree needs and no others.** This used to
+ * bracket every operation — `=B2*C2` filled down became `=(B3*C3)` —
+ * on the argument that a printer dropping brackets must know the
+ * precedence table as exactly as the parser does, and the one place the
+ * two could differ is the one that matters. The argument was right and
+ * so was its answer, which this file named: a printer that knows the
+ * table, held to it by a spec that parses everything it prints back
+ * and asks for the same tree — `Print.spec.ts`, over hand-picked cases
+ * and a few thousand random trees. The table is `PRECEDENCE`, copied
+ * from `Parser.ts` with the one asymmetry that matters: `^` groups to
+ * the right, everything else to the left.
  */
 export function printFormula(node: Ast): string {
   switch (node.kind) {
@@ -35,10 +39,49 @@ export function printFormula(node: Ast): string {
     case 'call':
       return `${node.name}(${node.args.map(printFormula).join(',')})`;
     case 'unary':
-      return `${node.op}${printFormula(node.operand)}`;
-    case 'binary':
-      return `(${printFormula(node.left)}${node.op}${printFormula(node.right)})`;
+      // Unary minus binds tighter than every binary operator, so any
+      // operation under it needs its brackets back: -(A1+B1).
+      return `${node.op}${node.operand.kind === 'binary' ? `(${printFormula(node.operand)})` : printFormula(node.operand)}`;
+    case 'binary': {
+      const own = PRECEDENCE[node.op];
+      const right = node.op === '^';
+      return `${operand(node.left, own, right)}${node.op}${operand(node.right, own, !right)}`;
+    }
   }
+}
+
+/** How tightly each operator binds, loosest first; see `Parser.ts`. */
+const PRECEDENCE: Readonly<Record<BinaryOperator, number>> = {
+  '=': 1,
+  '<>': 1,
+  '<': 1,
+  '<=': 1,
+  '>': 1,
+  '>=': 1,
+  '&': 2,
+  '+': 3,
+  '-': 3,
+  '*': 4,
+  '/': 4,
+  '^': 5
+};
+
+/**
+ * A child of a binary operation, bracketed when the parser would
+ * otherwise group it differently.
+ *
+ * A looser child always needs them: `(A1+B1)*2`. An equally tight one
+ * needs them on the side its associativity does not reach: `A1-(B1-C1)`
+ * on the right of a left-grouping operator, `(2^3)^2` on the left of
+ * `^`, which groups the other way.
+ */
+function operand(child: Ast, parent: number, againstAssociativity: boolean): string {
+  const text = printFormula(child);
+  if (child.kind !== 'binary') {
+    return text;
+  }
+  const own = PRECEDENCE[child.op];
+  return own < parent || (own === parent && againstAssociativity) ? `(${text})` : text;
 }
 
 /**

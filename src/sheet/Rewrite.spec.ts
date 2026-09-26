@@ -26,14 +26,14 @@ describe('moving a formula', () => {
   });
 
   it('moves them through operators and leaves the literals', () => {
-    expect(rewriteFormula('=B2*C2', 1, 0)).toBe('=(B3*C3)');
-    expect(rewriteFormula('=A1+1', 1, 0)).toBe('=(A2+1)');
-    expect(rewriteFormula('=IF(A1>0,"yes","no")', 1, 0)).toBe('=IF((A2>0),"yes","no")');
+    expect(rewriteFormula('=B2*C2', 1, 0)).toBe('=B3*C3');
+    expect(rewriteFormula('=A1+1', 1, 0)).toBe('=A2+1');
+    expect(rewriteFormula('=IF(A1>0,"yes","no")', 1, 0)).toBe('=IF(A2>0,"yes","no")');
   });
 
   /** The seed's share column, which is why it was written that way. */
   it('moves the row and keeps the total', () => {
-    expect(rewriteFormula('=ROUND(D2/$D$7*100,1)', 1, 0)).toBe('=ROUND(((D3/$D$7)*100),1)');
+    expect(rewriteFormula('=ROUND(D2/$D$7*100,1)', 1, 0)).toBe('=ROUND(D3/$D$7*100,1)');
   });
 
   it('is unchanged by a move of nothing', () => {
@@ -52,7 +52,7 @@ describe('moving a formula', () => {
    */
   it('writes #REF! for a reference pushed off the sheet', () => {
     expect(rewriteFormula('=A1', -1, 0)).toBe('=#REF!');
-    expect(rewriteFormula('=A1+B1', 0, -1)).toBe('=(#REF!+A1)');
+    expect(rewriteFormula('=A1+B1', 0, -1)).toBe('=#REF!+A1');
     expect(rewriteFormula('=SUM(A1:B1)', -5, 0)).toBe('=SUM(#REF!)');
   });
 
@@ -61,7 +61,7 @@ describe('moving a formula', () => {
   });
 
   it('keeps a quoted string intact', () => {
-    expect(rewriteFormula('=A1&" says ""hi"""', 1, 0)).toBe('=(A2&" says ""hi""")');
+    expect(rewriteFormula('=A1&" says ""hi"""', 1, 0)).toBe('=A2&" says ""hi"""');
   });
 
   /**
@@ -72,7 +72,7 @@ describe('moving a formula', () => {
   it('carries the sheet a reference names', () => {
     expect(rewriteFormula('=Sheet2!A1', 1, 0)).toBe('=Sheet2!A2');
     expect(rewriteFormula('=Sheet2!A1:B2', 1, 0)).toBe('=Sheet2!A2:B3');
-    expect(rewriteFormula('=Sheet2!$A$1+A1', 1, 0)).toBe('=(Sheet2!$A$1+A2)');
+    expect(rewriteFormula('=Sheet2!$A$1+A1', 1, 0)).toBe('=Sheet2!$A$1+A2');
   });
 
   it('quotes a sheet name that needs it, and only then', () => {

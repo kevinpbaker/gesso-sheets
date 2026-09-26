@@ -53,8 +53,8 @@ describe('inserting rows', () => {
   });
 
   it('moves every reference in a formula', () => {
-    // Fully parenthesised, which is `Print.ts`'s documented choice.
-    expect(shiftFormula('=ROUND(D10/$D$20*100,1)', insertRows(4))).toBe('=ROUND(((D11/$D$21)*100),1)');
+    // Printed with only the brackets the tree needs; see `Print.ts`.
+    expect(shiftFormula('=ROUND(D10/$D$20*100,1)', insertRows(4))).toBe('=ROUND(D11/$D$21*100,1)');
   });
 
   /**
@@ -81,7 +81,7 @@ describe('deleting rows', () => {
   /** The cell it named is gone, and there is nothing else to name. */
   it('breaks a reference to a deleted cell', () => {
     expect(shiftFormula('=A5', deleteRows(4))).toBe('=#REF!');
-    expect(shiftFormula('=A5+1', deleteRows(4))).toBe('=(#REF!+1)');
+    expect(shiftFormula('=A5+1', deleteRows(4))).toBe('=#REF!+1');
   });
 
   it('breaks an absolute reference to a deleted cell too', () => {
@@ -219,7 +219,7 @@ describe('an insert on one sheet of several', () => {
 
   it('moves the ones that point at it and no others, in one formula', () => {
     expect(shiftFormula('=A5+Sheet2!A5+Sheet3!A5', rows(0, 1, 'Sheet2'), 'Sheet1')).toBe(
-      '=((A5+Sheet2!A6)+Sheet3!A5)'
+      '=A5+Sheet2!A6+Sheet3!A5'
     );
   });
 
@@ -229,6 +229,6 @@ describe('an insert on one sheet of several', () => {
   });
 
   it('moves everything when the workbook has one sheet', () => {
-    expect(shiftFormula('=A5+Sheet2!A5', rows(0, 1))).toBe('=(A6+Sheet2!A6)');
+    expect(shiftFormula('=A5+Sheet2!A5', rows(0, 1))).toBe('=A6+Sheet2!A6');
   });
 });

@@ -59,12 +59,9 @@ describe('filling down and across', () => {
     service.fillDown();
     drain();
 
-    // Fully parenthesised, which is `Rewrite.ts`'s documented choice
-    // from Phase 5: a writer that dropped brackets would have to know
-    // the precedence table as exactly as the parser, and the one
-    // place they could disagree is where a fill silently changes what
-    // a formula means.
-    expect(document.sheet.input(1, 1)).toBe('=(A2*10)');
+    // Printed with only the brackets the tree needs, which is what
+    // somebody would have typed; see `Print.ts`.
+    expect(document.sheet.input(1, 1)).toBe('=A2*10');
     expect(document.sheet.value(2, 1)).toBe(40);
   });
 
@@ -83,7 +80,7 @@ describe('filling down and across', () => {
     service.fillDown();
     drain();
 
-    expect(document.sheet.input(1, 1)).toBe('=(A2+1)');
+    expect(document.sheet.input(1, 1)).toBe('=A2+1');
   });
 
   it('fills right the same way', () => {
@@ -374,7 +371,7 @@ describe('inserting and deleting rows', () => {
     });
     service.deleteRows(1, 1);
     drain();
-    expect(document.sheet.input(1, 0)).toBe('=(#REF!&"!")');
+    expect(document.sheet.input(1, 0)).toBe('=#REF!&"!"');
 
     service.undo();
     drain();
@@ -405,7 +402,7 @@ describe('inserting and deleting columns', () => {
     drain();
 
     expect(document.sheet.input(0, 2)).toBe('5');
-    expect(document.sheet.input(0, 3)).toBe('=(C1*2)');
+    expect(document.sheet.input(0, 3)).toBe('=C1*2');
     expect(document.sheet.value(0, 3)).toBe(10);
   });
 

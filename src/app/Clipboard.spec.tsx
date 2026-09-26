@@ -259,7 +259,7 @@ describe('clipboard and fill', () => {
       await press('ArrowRight');
       await paste(text);
 
-      expect(h.document.sheet.input(1, 1)).toBe('=(B1*10)');
+      expect(h.document.sheet.input(1, 1)).toBe('=B1*10');
       expect(h.document.sheet.value(1, 1)).toBe(30);
       // And the original is untouched.
       expect(h.document.sheet.value(1, 0)).toBe(20);
@@ -408,7 +408,7 @@ describe('clipboard and fill', () => {
 
       await dragHandleTo(3);
 
-      expect(h.document.sheet.input(1, 3)).toBe('=(B2*C2)');
+      expect(h.document.sheet.input(1, 3)).toBe('=B2*C2');
       expect(h.document.sheet.value(1, 3)).toBe(5 * 6);
       expect(h.document.sheet.value(3, 3)).toBe(7 * 8);
     });

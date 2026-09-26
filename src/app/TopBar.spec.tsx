@@ -529,7 +529,7 @@ describe('the top bar from the keyboard', () => {
       await press('ArrowRight');
       await press('ArrowDown', { shift: true });
       await press('d', { ctrl: true });
-      expect(h.document.sheet.input(1, 1)).toBe('=(A2*3)');
+      expect(h.document.sheet.input(1, 1)).toBe('=A2*3');
     });
 
     /**

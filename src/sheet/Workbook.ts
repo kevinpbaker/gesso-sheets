@@ -921,10 +921,11 @@ export class Workbook {
  * A formula with one sheet name swapped for another.
  *
  * Done on the text rather than on the tree, and the reason is that a
- * tree printed back is a *different* text: `=A1+B1` comes back as
- * `=(A1+B1)`, because the printer is fully parenthesised on purpose.
- * Rewriting every formula in the workbook through it would reformat
- * formulas that have nothing to do with the rename.
+ * tree printed back is a *different* text: the spaces somebody typed
+ * and the brackets they put in for their own reading are not in the
+ * tree, so `= (A1 + B1) * 2` would come back as `=(A1+B1)*2`. Rewriting
+ * every formula in the workbook through it would reformat formulas
+ * that have nothing to do with the rename.
  *
  * So the tokenizer says where the sheet names are and only those
  * spans are replaced. The scan is the authority on what is a sheet
