@@ -41,6 +41,7 @@ import {
   type SheetAutofit,
   type SheetCompletion,
   type SheetNotes,
+  ZOOMS,
   type SheetRowFit,
   type SheetRowFitRow,
   type SheetEdge,
@@ -353,6 +354,7 @@ export class SheetService {
       rowHeights: [],
       frozenRows: 0,
       frozenColumns: 0,
+      zoom: document.zoom,
       merges: []
     });
     this.selectionSubject = new BehaviorSubject<SheetSelection>(document.selection);
@@ -965,6 +967,7 @@ export class SheetService {
       rowHeights: this.rowHeightsNow(),
       frozenRows: this.document.frozenRows,
       frozenColumns: this.document.frozenColumns,
+      zoom: this.document.zoom,
       merges: this.document.merges.all.map(rect => ({ ...rect }))
     });
   }
@@ -990,6 +993,18 @@ export class SheetService {
     } else {
       this.document.rowHeights.set(row, Math.min(Math.max(Math.round(height), MIN_ROW_HEIGHT), MAX_ROW_HEIGHT));
     }
+    this.publishGeometry();
+    this.persist();
+  }
+
+  setZoom(zoom: number): void {
+    const first = ZOOMS[0];
+    const last = ZOOMS[ZOOMS.length - 1];
+    const held = Number.isFinite(zoom) ? Math.min(Math.max(zoom, first), last) : 1;
+    if (held === this.document.zoom) {
+      return;
+    }
+    this.document.zoom = held;
     this.publishGeometry();
     this.persist();
   }

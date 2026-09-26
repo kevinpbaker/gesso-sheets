@@ -4,7 +4,7 @@ import { percent, type UiPointerEvent } from 'gesso-core';
 import { Menu, type MenuItem } from 'gesso-components';
 import { createComponent, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
 
-import { Sheet, type SheetStatus } from './SheetContract';
+import { Sheet, zoomStep, type SheetStatus } from './SheetContract';
 import { DEFAULT_FIGURES, FIGURES, figuresOf, type StatFigure } from './Statistics';
 
 /**
@@ -207,6 +207,13 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
           live="polite"
         />
         <text text={search} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
+        {zoomControl('Zoom out', '−', () => sheet.send.setZoom(zoomStep(sheet.view.geometry.value.zoom, 'zoomOut')))}
+        {zoomControl(
+          'Zoom to 100%',
+          sheet.view.geometry.pipe(map(geometry => `${Math.round(geometry.zoom * 100)}%`)),
+          () => sheet.send.setZoom(1)
+        )}
+        {zoomControl('Zoom in', '+', () => sheet.send.setZoom(zoomStep(sheet.view.geometry.value.zoom, 'zoomIn')))}
         <text
           text={work}
           fontSize={11}
@@ -218,5 +225,26 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
         />
       </row>
     </column>
+  );
+}
+
+/**
+ * One of the zoom controls at the end of the bar: −, the zoom itself,
+ * and +. The zoom's own figure goes back to 100% on a click, which is
+ * the question somebody clicking a percentage is usually asking.
+ */
+function zoomControl(label: string, text: string | Observable<string>, onClick: () => void) {
+  return (
+    <text
+      text={text}
+      fontSize={11}
+      color="textMuted"
+      verticalAlign="middle"
+      selectable={false}
+      role="button"
+      label={label}
+      cursor="pointer"
+      onClick={onClick}
+    />
   );
 }

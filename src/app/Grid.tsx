@@ -43,20 +43,7 @@ import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer
 import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
 import type { Span } from '../sheet/Tokenizer';
 
-import {
-  CELL_FONT_SIZE,
-  CELL_PADDING,
-  COLUMN_COUNT,
-  COLUMN_WIDTH,
-  MAX_COLUMN_WIDTH,
-  GUTTER_WIDTH,
-  HEADER_HEIGHT,
-  MAX_ROW_HEIGHT,
-  MIN_COLUMN_WIDTH,
-  MIN_ROW_HEIGHT,
-  ROW_COUNT,
-  ROW_HEIGHT
-} from './dimensions';
+import * as dims from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import {
   cellIn,
@@ -154,7 +141,47 @@ const GRID_LINE = 'border';
  * both views are bound to it, so this is where it is made and
  * `SheetApp` is where it is shared.
  */
-export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentContext) {
+export function Grid(
+  _inputs: Inputs<{ editing: SheetEditing; zoom?: number; widen?: number; rebuilt?: boolean }>,
+  ctx: ComponentContext
+) {
+  /**
+   * The zoom, read once: the grid is built again when it changes.
+   *
+   * Every size handed to the engine is multiplied by it — the widths and
+   * heights, the strips, the fonts, the charts — so everything the
+   * engine works out from them, the offsets, `cellAt`, what is mounted,
+   * what a press hit, is right by construction, because it is all real
+   * pixels. The document stays at 100%: a size read from the other
+   * thread is multiplied on the way in and one sent back is divided on
+   * the way out, and a measurement it asks for is made at 100%. A
+   * transform over the paint would click in the right place and mount
+   * the wrong number of rows. See the roadmap's zoom note.
+   */
+  const zoom = _inputs.zoom.value ?? 1;
+  /**
+   * And how much wider the columns are drawn than they are, which is
+   * Show formulas: a formula is longer than its answer, and Excel
+   * doubles the columns while it shows them. Columns only; a row is as
+   * tall as a line of text whatever that text is.
+   */
+  const widen = _inputs.widen.value ?? 1;
+  const scaled = (size: number): number => Math.round(size * zoom);
+  /** A size on screen, in the document's pixels. */
+  const unscaled = (size: number): number => Math.round(size / zoom);
+  const scaledWidth = (size: number): number => Math.round(size * zoom * widen);
+  const unscaledWidth = (size: number): number => Math.round(size / (zoom * widen));
+  const ROW_HEIGHT = scaled(dims.ROW_HEIGHT);
+  const COLUMN_WIDTH = scaledWidth(dims.COLUMN_WIDTH);
+  const GUTTER_WIDTH = scaled(dims.GUTTER_WIDTH);
+  const HEADER_HEIGHT = scaled(dims.HEADER_HEIGHT);
+  const MIN_ROW_HEIGHT = scaled(dims.MIN_ROW_HEIGHT);
+  const MAX_ROW_HEIGHT = scaled(dims.MAX_ROW_HEIGHT);
+  const MIN_COLUMN_WIDTH = scaledWidth(dims.MIN_COLUMN_WIDTH);
+  const MAX_COLUMN_WIDTH = scaledWidth(dims.MAX_COLUMN_WIDTH);
+  const CELL_PADDING = scaled(dims.CELL_PADDING);
+  const CELL_FONT_SIZE = dims.CELL_FONT_SIZE * zoom;
+  const { COLUMN_COUNT, ROW_COUNT } = dims;
   const sheet = ctx.channel(Sheet);
   const focus = ctx.inject(FocusService);
   const shell = ctx.inject(ShellService);
@@ -969,7 +996,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       // padding it would only push against a zero height.
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
-      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize))),
+      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
       /**
        * Wrapped text breaks at the cell's width, and the row is made
        * tall enough to hold it — see the `rowFit` effect below.
@@ -1736,7 +1763,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
           if (heightDrag !== null) {
             event.stopPropagation();
             // Written down when the drag ends, as a column's width is.
-            sheet.send.setRowHeight(heightDrag.row, sized.value.get(heightDrag.row) ?? ROW_HEIGHT);
+            sheet.send.setRowHeight(heightDrag.row, unscaled(sized.value.get(heightDrag.row) ?? ROW_HEIGHT));
           }
           heightDrag = null;
         }
@@ -2378,7 +2405,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
       const { id, x, y, width, height } = chartDrag;
       chartDrag = null;
       chartFrom = null;
-      sheet.send.placeChart(id, x, y, width, height);
+      sheet.send.placeChart(id, x / zoom, y / zoom, width / zoom, height / zoom);
     }
   };
 
@@ -2645,7 +2672,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
             // round trip per pixel to agree on something this side has
             // already drawn; sending the result is what makes the
             // width survive a reload.
-            sheet.send.setColumnWidth(resizing.column, widths.value[resizing.column] ?? COLUMN_WIDTH);
+            sheet.send.setColumnWidth(resizing.column, unscaledWidth(widths.value[resizing.column] ?? COLUMN_WIDTH));
           }
           resizing = null;
         }
@@ -2916,14 +2943,15 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * being dragged would fight the drag.
    */
   ctx.effect(sheet.view.geometry, geometry => {
-    if (resizing === null && !sameWidths(geometry.columnWidths, widths.value)) {
-      widths.value = [...geometry.columnWidths];
+    const shown = geometry.columnWidths.map(scaledWidth);
+    if (resizing === null && !sameWidths(shown, widths.value)) {
+      widths.value = shown;
     }
     const rows = geometry.hiddenRows;
     if (rows.length !== hidden.value.size || rows.some(row => !hidden.value.has(row))) {
       hidden.value = new Set(rows);
     }
-    const heights = geometry.rowHeights;
+    const heights = geometry.rowHeights.map(([row, height]): [number, number] => [row, scaled(height)]);
     if (
       heightDrag === null &&
       (heights.length !== sized.value.size || heights.some(([row, height]) => sized.value.get(row) !== height))
@@ -2957,7 +2985,19 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * drawn by the row it left.
    */
   ctx.effect(sheet.view.charts, value => {
-    charts.value = value;
+    charts.value =
+      zoom === 1
+        ? value
+        : {
+            ...value,
+            entries: value.entries.map(chart => ({
+              ...chart,
+              x: chart.x * zoom,
+              y: chart.y * zoom,
+              width: chart.width * zoom,
+              height: chart.height * zoom
+            }))
+          };
     rebuildAnchors();
     sheetWindow?.invalidate();
   });
@@ -2987,21 +3027,24 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     }
     fitted = autofit.serial;
     const next = widths.value.slice();
+    const kept = new Map<number, number>();
     let moved = false;
     for (const entry of autofit.columns) {
       let widest = 0;
       entry.samples.forEach((text, index) => {
         widest = Math.max(
           widest,
-          measure.widthOf(text, { fontSize: CELL_FONT_SIZE, fontWeight: entry.bold[index] ? 'bold' : 'normal' })
+          measure.widthOf(text, { fontSize: dims.CELL_FONT_SIZE, fontWeight: entry.bold[index] ? 'bold' : 'normal' })
         );
       });
       // The padding a cell draws with, plus a hair so the widest
-      // string is not flush against the gridline.
-      const wanted = widest === 0 ? COLUMN_WIDTH : Math.ceil(widest) + CELL_PADDING * 2 + 2;
-      const clamped = Math.min(Math.max(wanted, MIN_COLUMN_WIDTH), MAX_COLUMN_WIDTH);
-      if (next[entry.column] !== clamped) {
-        next[entry.column] = clamped;
+      // string is not flush against the gridline. Measured at 100%,
+      // which is the size the document keeps.
+      const wanted = widest === 0 ? dims.COLUMN_WIDTH : Math.ceil(widest) + dims.CELL_PADDING * 2 + 2;
+      const clamped = Math.min(Math.max(wanted, dims.MIN_COLUMN_WIDTH), dims.MAX_COLUMN_WIDTH);
+      if (next[entry.column] !== scaledWidth(clamped)) {
+        next[entry.column] = scaledWidth(clamped);
+        kept.set(entry.column, clamped);
         moved = true;
       }
     }
@@ -3011,8 +3054,8 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     widths.value = next;
     // The document is what keeps a width, so it has to hear about
     // this one the same way a drag tells it.
-    for (const entry of autofit.columns) {
-      sheet.send.setColumnWidth(entry.column, next[entry.column] ?? COLUMN_WIDTH);
+    for (const [column, width] of kept) {
+      sheet.send.setColumnWidth(column, width);
     }
   });
 
@@ -3048,21 +3091,22 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     rowFitAnswered = fit.serial;
     // The default row is one line of the default font and the room
     // round it; a taller one keeps the same room.
-    const line = measure.measure({ text: 'X', fontSize: CELL_FONT_SIZE, wrap: 'none' }).height;
-    const room = Math.max(0, ROW_HEIGHT - line);
+    // At 100%, which is the size the document keeps.
+    const line = measure.measure({ text: 'X', fontSize: dims.CELL_FONT_SIZE, wrap: 'none' }).height;
+    const room = Math.max(0, dims.ROW_HEIGHT - line);
     const heights: [number, number][] = fit.rows.map(entry => {
       let tallest = 0;
       for (const cell of entry.cells) {
-        const fontSize = cell.fontSize === 0 ? CELL_FONT_SIZE : cell.fontSize;
+        const fontSize = cell.fontSize === 0 ? dims.CELL_FONT_SIZE : cell.fontSize;
         const size = measure.measure({
           text: cell.text,
           fontSize,
           fontWeight: cell.bold ? 'bold' : 'normal',
-          ...(cell.wrap ? { wrap: 'word' as const, maxWidth: Math.max(1, cell.width - CELL_PADDING * 2) } : { wrap: 'none' as const })
+          ...(cell.wrap ? { wrap: 'word' as const, maxWidth: Math.max(1, cell.width - dims.CELL_PADDING * 2) } : { wrap: 'none' as const })
         });
         tallest = Math.max(tallest, size.height);
       }
-      return [entry.row, tallest === 0 ? ROW_HEIGHT : Math.max(ROW_HEIGHT, Math.ceil(tallest + room))];
+      return [entry.row, tallest === 0 ? dims.ROW_HEIGHT : Math.max(dims.ROW_HEIGHT, Math.ceil(tallest + room))];
     });
     sheet.send.fitRows(fit.serial, heights);
   };
@@ -3217,9 +3261,9 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
    * node, which matters because the cell being scrolled to is usually
    * one that is not mounted yet.
    */
-  ctx.effect(edit.selection, at => {
+  const bringIntoView = (at: SheetSelection): void => {
     const view = viewport.value;
-    if (view.width === 0 || view.height === 0 || keepScroll) {
+    if (view.width === 0 || view.height === 0) {
       return;
     }
     const top = HEADER_HEIGHT + sheetWindow.rowOffsetOf(at.row);
@@ -3229,6 +3273,28 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
     // visible once it is past them.
     scrollY.value = bring(scrollY.value, top, sheetWindow.rowHeightOf(at.row), view.height, HEADER_HEIGHT);
     scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
+  };
+  ctx.effect(edit.selection, at => {
+    if (!keepScroll) {
+      bringIntoView(at);
+    }
+  });
+  // A grid built again — a new zoom — starts at the top of the sheet,
+  // and the selection is where somebody was looking. Once, when the
+  // window first has a size to be scrolled in.
+  let placedOnMount = false;
+  ctx.effect(viewport, box => {
+    if (!placedOnMount && box.width > 0 && box.height > 0) {
+      placedOnMount = true;
+      bringIntoView(edit.selectionNow());
+      // And the keyboard, which went with the grid it was on: a zoom or
+      // Show formulas chosen from the keyboard must leave the next key
+      // on the sheet. Only for a grid built again, and only when nothing
+      // else has the keyboard — the first grid takes nothing from anyone.
+      if (_inputs.rebuilt.value === true && gridNode !== null && focus.focused.value === null) {
+        focus.focus(gridNode);
+      }
+    }
   });
 
   /**

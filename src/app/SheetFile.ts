@@ -133,6 +133,8 @@ export interface StoredSheet {
   readonly notes?: readonly Note[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
+  /** How large the sheet is drawn; absent is 100%. */
+  readonly zoom?: number;
   readonly hiddenRows: readonly number[];
   /**
    * Row heights that are not the default, as `[row, height]`: the ones
@@ -221,6 +223,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       notes: page.notes.all().filter(note => note.row < rowCount),
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
+      zoom: page.zoom,
       hiddenRows: [...page.hiddenRows].filter(row => row < rowCount).sort((a, b) => a - b),
       rowHeights: heightsBelow(page.rowHeights, rowCount),
       fittedRows: heightsBelow(page.fittedRows, rowCount),
@@ -284,6 +287,7 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     page.notes.restore(stored.notes ?? []);
     page.frozenRows = stored.frozenRows;
     page.frozenColumns = stored.frozenColumns;
+    page.zoom = stored.zoom ?? 1;
     page.hiddenRows.clear();
     for (const row of stored.hiddenRows) {
       page.hiddenRows.add(row);
@@ -454,6 +458,7 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     notes: notesFrom(source.notes),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
+    zoom: typeof source.zoom === 'number' && source.zoom >= 0.25 && source.zoom <= 4 ? source.zoom : 1,
     hiddenRows: Array.isArray(source.hiddenRows)
       ? source.hiddenRows.filter((row): row is number => Number.isInteger(row) && row >= 0)
       : [],

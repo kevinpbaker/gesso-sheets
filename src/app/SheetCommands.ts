@@ -98,6 +98,9 @@ export type CommandId =
   | 'stopIterating'
   | 'showFormulas'
   | 'editNote'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset'
   | 'filterToSelection'
   | 'clearFilter'
   | 'freezeHere'
@@ -438,6 +441,11 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * the one key here that needs no Alt.
    */
   editNote: { id: 'editNote', label: 'Note…', accelerator: { key: 'F2', shift: true } },
+  // No keys: Excel's Ctrl+Alt+= and Ctrl+Alt+− insert and delete rows
+  // here, as they do in Google Sheets, and Ctrl+= is the browser's own.
+  zoomIn: { id: 'zoomIn', label: 'Zoom in' },
+  zoomOut: { id: 'zoomOut', label: 'Zoom out' },
+  zoomReset: { id: 'zoomReset', label: 'Zoom to 100%' },
   showFormulas: { id: 'showFormulas', label: 'Show formulas', accelerator: { key: '`', ctrl: true } },
   stopIterating: { id: 'stopIterating', label: 'Refuse circular formulas' },
   filterToSelection: {
@@ -678,7 +686,19 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'view',
     label: 'View',
     mnemonic: 'v',
-    entries: ['freezeHere', 'freezeTopRow', 'freezeFirstColumn', SEPARATOR, 'unfreeze', SEPARATOR, 'showFormulas']
+    entries: [
+      'freezeHere',
+      'freezeTopRow',
+      'freezeFirstColumn',
+      SEPARATOR,
+      'unfreeze',
+      SEPARATOR,
+      'showFormulas',
+      SEPARATOR,
+      'zoomIn',
+      'zoomOut',
+      'zoomReset'
+    ]
   },
   {
     id: 'data',

@@ -275,6 +275,11 @@ interface Page {
   /** How many rows and columns stay put while the rest scrolls. */
   frozenRows: number;
   frozenColumns: number;
+  /**
+   * How large this sheet is drawn: 1 is 100%. A way of looking, like
+   * the frozen panes, so it is saved with the sheet and is not an edit.
+   */
+  zoom: number;
   selection: { row: number; column: number; anchorRow: number; anchorColumn: number };
   /**
    * Formats that think, and what a cell is allowed to hold.
@@ -309,6 +314,7 @@ function newPage(sheet: Sheet): Page {
     filteredRows: new Set<number>(),
     frozenRows: 0,
     frozenColumns: 0,
+    zoom: 1,
     selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
     conditional: [],
     validations: [],
@@ -441,6 +447,14 @@ export class SheetDocument {
 
   get frozenColumns(): number {
     return this.page.frozenColumns;
+  }
+
+  get zoom(): number {
+    return this.page.zoom;
+  }
+
+  set zoom(zoom: number) {
+    this.page.zoom = zoom;
   }
 
   set frozenColumns(columns: number) {
@@ -1322,6 +1336,7 @@ export class SheetDocument {
       filteredRows: new Set(from.filteredRows),
       frozenRows: from.frozenRows,
       frozenColumns: from.frozenColumns,
+      zoom: from.zoom,
       // Copied with fresh ids, because an id is unique across the
       // workbook and two charts sharing one would be one chart as far
       // as selecting and dragging are concerned. The range inside

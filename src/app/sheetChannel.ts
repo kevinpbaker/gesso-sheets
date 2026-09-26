@@ -92,6 +92,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       fitRowsToContents: (first, last) => service.fitRowsToContents(first, last),
       setIteration: on => service.setIteration(on),
       showFormulas: on => service.showFormulas(on),
+      setZoom: zoom => service.setZoom(zoom),
       fitRows: (serial, heights) => service.fitRows(serial, heights),
       stress: cells => service.stress(cells),
       chartStress: points => service.chartStress(points),

@@ -113,7 +113,17 @@ const BUDGET = {
    * like the three above, so it means the same thing on a slower
    * machine.
    */
-  costOfAChart: 2
+  costOfAChart: 2,
+  /**
+   * How much slower a frame is allowed to get at 200%.
+   *
+   * Phase 22's. Four times the area per cell, so a quarter of the
+   * cells mounted and the same pixels painted: nothing about a zoomed
+   * sheet should cost more to scroll, and a grid that scaled its paint
+   * instead of its geometry would mount the rows of a 100% window and
+   * show here.
+   */
+  costOfAZoom: 2
 };
 
 const PORT = Number(process.env.PROOF_PORT ?? '4319');
@@ -436,6 +446,49 @@ async function main(): Promise<void> {
       `a 50,000-point chart open: median frame ${charting.median.toFixed(2)}ms against ${ruled.median.toFixed(2)}ms without it`,
       charting.median - ruled.median <= BUDGET.costOfAChart,
       BUDGET.costOfAChart
+    );
+
+    // --------------------------------------------------------------
+    // The same scroll at 200%
+    // --------------------------------------------------------------
+    //
+    // Phase 22's exit, run last before the freeze so the zoom it
+    // leaves behind is not under any other measurement. Zoomed through
+    // the status bar's own control, five steps from 100%.
+    for (let step = 0; step < 5; step++) {
+      const zoomIn = await devtools.evaluate<{ x: number; y: number } | null>(
+        `(() => {
+           const el = document.querySelector('[aria-label="Zoom in"]');
+           if (el === null) { return null; }
+           const box = el.getBoundingClientRect();
+           return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+         })()`
+      );
+      if (zoomIn === null) {
+        throw new Error('The zoom control is not in the accessibility tree, so it cannot be clicked.');
+      }
+      await devtools.click(zoomIn.x, zoomIn.y);
+      await sleep(250);
+    }
+    // Read off the geometry rather than the percentage: the mirror
+    // carries a control's name and not the text it draws, and a column
+    // twice as wide is the thing being claimed anyway.
+    await waitFor(
+      'the sheet to be at 200%',
+      async () =>
+        (await devtools.evaluate<number>(
+          `document.querySelector('[role="columnheader"][aria-label="A"]')?.getBoundingClientRect().width ?? 0`
+        )) >= 200
+          ? true
+          : undefined,
+      10_000
+    );
+    const zoomed = report('scrolling at 200%', await scrollRun(devtools, 'scrolling at 200%'), failures);
+    check(
+      failures,
+      `scrolling at 200%: median frame ${zoomed.median.toFixed(2)}ms against ${idle.median.toFixed(2)}ms at 100%`,
+      zoomed.median - idle.median <= BUDGET.costOfAZoom,
+      BUDGET.costOfAZoom
     );
 
     // --------------------------------------------------------------

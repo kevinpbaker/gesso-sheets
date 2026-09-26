@@ -106,6 +106,8 @@ export interface SheetGeometry {
    */
   readonly frozenRows: number;
   readonly frozenColumns: number;
+  /** How large the sheet is drawn, 1 being 100%; see `SheetCommands.setZoom`. */
+  readonly zoom: number;
   /**
    * The merged rectangles, all of them.
    *
@@ -417,6 +419,19 @@ export interface SheetPalette {
  * screen publishes an empty object, and the differ says nothing about
  * it after the first time.
  */
+/** The zooms View offers, smallest first. */
+export const ZOOMS: readonly number[] = [0.5, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+/** The next zoom along from `now`, or 100%. */
+export function zoomStep(now: number, id: 'zoomIn' | 'zoomOut' | 'zoomReset'): number {
+  if (id === 'zoomReset') {
+    return 1;
+  }
+  if (id === 'zoomIn') {
+    return ZOOMS.find(level => level > now + 1e-9) ?? ZOOMS[ZOOMS.length - 1];
+  }
+  return [...ZOOMS].reverse().find(level => level < now - 1e-9) ?? ZOOMS[0];
+}
+
 export interface SheetNotes {
   readonly cells: Readonly<Record<string, Readonly<Record<string, string>>>>;
 }
@@ -782,6 +797,11 @@ export interface SheetCommands {
    */
   showFormulas(on: boolean): void;
   /**
+   * Draws the sheet larger or smaller: 1 is 100%, held between the
+   * zooms `ZOOMS` offers. Saved with the sheet, and not an edit.
+   */
+  setZoom(zoom: number): void;
+  /**
    * The heights the rows in a `rowFit` request need, measured.
    *
    * Only rows nobody has set a height for take one; a row set by hand
@@ -1134,6 +1154,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     rowHeights: [],
     frozenRows: 0,
     frozenColumns: 0,
+    zoom: 1,
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },

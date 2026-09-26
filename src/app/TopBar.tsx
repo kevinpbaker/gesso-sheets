@@ -20,7 +20,7 @@ import type { FileActions } from './Files';
 import { RecentBar } from './RecentBar';
 import { RulesBar, type RulesTab } from './RulesBar';
 import { TAB_COLOURS } from './SheetTabs';
-import { Sheet } from './SheetContract';
+import { Sheet, zoomStep } from './SheetContract';
 import {
   acceleratorLabel,
   CHART_POINTS,
@@ -741,6 +741,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'showFormulas':
         sheet.send.showFormulas(!status.value.showingFormulas);
         break;
+      case 'zoomIn':
+      case 'zoomOut':
+      case 'zoomReset':
+        sheet.send.setZoom(zoomStep(sheet.view.geometry.value.zoom, id));
+        break;
       case 'iterate':
         sheet.send.setIteration(true);
         break;
@@ -1071,3 +1076,4 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     </column>
   );
 }
+

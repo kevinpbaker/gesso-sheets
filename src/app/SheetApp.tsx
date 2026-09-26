@@ -1,3 +1,4 @@
+import { combineLatest, distinctUntilChanged, map } from 'rxjs';
 import { dropTarget, EXTERNAL_FILES, percent, type UiDroppedFile } from 'gesso-core';
 import { type ComponentContext, type Inputs } from 'gesso-framework';
 
@@ -41,6 +42,10 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const edit = editing(ctx, sheet);
   const files = fileActions(ctx, sheet);
+  const view = combineLatest([sheet.view.geometry, sheet.view.status]).pipe(
+    map(([geometry, status]) => ({ zoom: geometry.zoom, widen: status.showingFormulas ? 2 : 1 })),
+    distinctUntilChanged((a, b) => a.zoom === b.zoom && a.widen === b.widen)
+  );
 
   /**
    * A file dragged in from the desktop, opened.
@@ -76,7 +81,18 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
       borderWidth={0}
       modifiers={[drop]}>
       <TopBar editing={edit} files={files} proof={inputs.proof.value === true} />
-      <Grid editing={edit} />
+      {/*
+       * Built again when the zoom changes, rather than taught to change
+       * size in place: every size the grid hands the engine comes from
+       * the zoom, and a grid that reads it once has one place to get
+       * that right. A zoom is chosen, not animated, so the rebuild is a
+       * frame now and then.
+       */}
+      {view.pipe(
+        map(({ zoom, widen }, built) => [
+          <Grid key={`zoom-${zoom}-${widen}`} editing={edit} zoom={zoom} widen={widen} rebuilt={built > 0} />
+        ])
+      )}
       <SheetTabs editing={edit} />
       <StatusBar />
     </column>

@@ -1914,7 +1914,7 @@ and write it into the spilled cell, which blocks the array. Typing
 over the cell from the sheet still replaces it, as in Excel, and the
 array reports `#SPILL!`.
 
-### Phase 22 — Knowing where you are — **three of four; zoom designed, not built**
+### Phase 22 — Knowing where you are — **done**
 
 - **Zoom** from View, Ctrl+Alt+= and Ctrl+Alt+-, per sheet, saved with
   the document. It scales the grid, not the chrome. This one is not
@@ -1958,11 +1958,10 @@ is said here rather than pretended otherwise.
 **Show formulas** is a way of looking, not an edit: the window the
 other thread publishes carries a formula cell's text instead of its
 answer, nothing goes on the undo stack, and nothing is saved, as in
-Excel. The columns are **not** widened, which is the half of the plan
-left undone. The widths are one shared source for the header, the
-cells and every pointer calculation, and scaling them for a view is a
-change to that source, not a flag. It belongs with zoom, which needs
-the same change.
+Excel. The columns are drawn twice as wide while it is on — Excel's
+doubling — on the same path as zoom below: a width is multiplied on
+its way into the grid and divided on its way back, so a column resized
+while formulas are shown keeps the width it would have had.
 
 **Notes** are `src/sheet/Notes.ts`: sparse by cell, moved by an insert
 or a delete as the formats are, and held whole in a structural step
@@ -2028,6 +2027,33 @@ The zoom is saved per sheet in `.gsheet` as a number, absent meaning
 1. It comes from View, and from Ctrl+Alt+= and Ctrl+Alt+−, not Ctrl+=,
 which is Chrome's page zoom and cannot be taken from it. The exit
 stands as written.
+
+**Zoom, built, the second way.** The grid reads the zoom once and is
+built again when it changes. The alternative, a grid that changes
+every size in place, has ninety places to be right about and one
+missed would be a click on the wrong cell. A zoom is chosen and not
+animated, so a rebuild is a frame now and then. The rebuilt grid
+brings the selection back into view and takes back the keyboard it
+had. Measurements the other thread asks for — autofit, a row's fitted
+height — are made at 100%, so their answers are the document's sizes
+already. It is 50% to 200% in the steps Excel offers, from View
+▸ Zoom in, Zoom out and Zoom to 100%, and from − 100% + at the end of
+the status bar. There are no keys, not even the ones planned above.
+Ctrl+Alt+= and Ctrl+Alt+− insert and delete rows here, as they do in
+Google Sheets, and have since Phase 10.
+
+`Zoom.spec.tsx` is the exit criterion, run at 50%, 100% and 200%: a
+click, a sweep, a fill-handle drag and a column resize each land on
+the cell or the edge under the pointer, and a column dragged 40 pixels
+wider on screen at 200% is 20 pixels wider in the document. `pnpm
+proof` has a seventh run, at 200%, zoomed by the status bar's own
+control: a 4.4 ms median frame against 2.7 ms idle, inside the 2 ms
+allowance, with 111 cells re-measured at most against 700 at 100%.
+The allowance is not generous. The run comes after the colour scale
+and the chart the runs before it leave on the sheet, and every run
+since the menus has been a little slower than the last. Checked in
+Chrome: at 150% a click on the cell showing *11 Aug 2026* selects the
+cell whose formula is `=DATE(2026,8,11)`.
 
 ---
 
