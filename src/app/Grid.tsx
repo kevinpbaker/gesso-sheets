@@ -34,7 +34,7 @@ import {
   type Inputs
 } from 'gesso-framework';
 
-import { looksNumeric } from './alignment';
+import { guessOf, type Place } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
 import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer';
 import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
@@ -838,7 +838,7 @@ export function Grid(_inputs: Inputs<{ editing: SheetEditing }>, ctx: ComponentC
        */
       textAlign: combineLatest([value, paint]).pipe(
         map(([text, how]) =>
-          how.align === 'auto' ? (looksNumeric(text) ? 'right' : 'start') : how.align === 'center' ? 'center' : how.align
+          how.align === 'auto' ? AUTO_ALIGN[guessOf(text)] : how.align === 'center' ? 'center' : how.align
         )
       ),
       // A sweep drags a text selection through anything selectable,
@@ -2547,6 +2547,9 @@ function inRange(selection: SheetSelection, row: number, column: number): boolea
   return row >= firstRow && row <= lastRow && column >= firstColumn && column <= lastColumn;
 }
 
+
+/** How the grid draws each place `guessOf` can answer. */
+const AUTO_ALIGN: Readonly<Record<Place, 'right' | 'center' | 'start'>> = { end: 'right', center: 'center', start: 'start' };
 
 export type { SheetWindow };
 

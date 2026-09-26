@@ -69,6 +69,29 @@ describe('the alignment a format would hide', () => {
     expect(paintAt(0, 0).align).toBe('start');
   });
 
+  /** Excel centres logicals and errors; the grid does from the string, so only a lie needs telling. */
+  it('centres TRUE and an error without sending anything', () => {
+    const { service, formats } = harness();
+    service.setCell(0, 0, 'TRUE');
+    service.setCell(0, 1, '=1/0');
+    const cells = formats().cells;
+    expect(Object.values(cells).every(line => Object.keys(line).length === 0)).toBe(true);
+  });
+
+  it('puts the text TRUE on the left, where text goes', () => {
+    const { service, paintAt } = harness();
+    service.format({ number: { kind: 'text' } });
+    service.setCell(0, 0, 'TRUE');
+    expect(paintAt(0, 0).align).toBe('start');
+  });
+
+  it('centres a logical under a number format, which would otherwise hide nothing', () => {
+    const { service, paintAt } = harness();
+    service.setCell(0, 0, '=1>0');
+    service.format({ number: { kind: 'currency', places: 2, symbol: '$' } });
+    expect(paintAt(0, 0).align).toBe('auto');
+  });
+
   it('leaves an alignment somebody chose alone', () => {
     const { service, paintAt } = harness();
     service.setCell(0, 0, '4.5');

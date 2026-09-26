@@ -63,7 +63,7 @@ import { snapshotOf, applySnapshot, parseSnapshot, type SheetSnapshot } from './
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
 import { exportCsv, importCsv } from './SheetCsv';
-import { looksNumeric } from './alignment';
+import { guessOf, placeOf } from './alignment';
 import { platformInflate, reportOfXlsx, snapshotOfXlsx } from './SheetXlsx';
 import { bytesOfBase64 } from './base64';
 import { openXlsx, XlsxError } from '../sheet/Xlsx';
@@ -2300,11 +2300,11 @@ export class SheetService {
     if (paint.align !== 'auto' || value === null || value === '') {
       return paint;
     }
-    const wants = typeof value === 'number';
-    if (looksNumeric(this.document.display(row, column)) === wants) {
+    const wants = placeOf(value);
+    if (guessOf(this.document.display(row, column)) === wants) {
       return paint;
     }
-    return { ...paint, align: wants ? 'end' : 'start' };
+    return { ...paint, align: wants };
   }
 
   /**
