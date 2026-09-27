@@ -31,7 +31,13 @@ echo "installing gesso's own dependencies…"
 # hashes, rewrites package.json and pnpm-workspace.yaml to match, and
 # installs. The rewrite is what the lockfile cannot survive: the
 # hashes are a property of the bytes just built, so the committed
-# lockfile names different tarballs and pnpm — which refuses to move
-# a lockfile under CI — has to be told this once.
-export NPM_CONFIG_FROZEN_LOCKFILE=false
+# lockfile names tarballs that no longer exist and pnpm, which will
+# not move a lockfile under CI, stops with
+# ERR_PNPM_LOCKFILE_CONFIG_MISMATCH on the `overrides` block.
+#
+# It has to be this flag and not NPM_CONFIG_FROZEN_LOCKFILE, which
+# pnpm ignores. The env var read as a suggestion is why the first
+# deploy failed and the second — packing, by luck, to the same hashes
+# the lockfile already named — did not.
+export PNPM_INSTALL_FLAGS=--no-frozen-lockfile
 GESSO_REPO="$GESSO" bash "$HERE/scripts/vendor-gesso.sh"

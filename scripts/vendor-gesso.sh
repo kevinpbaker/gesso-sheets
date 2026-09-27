@@ -99,7 +99,9 @@ if [ -n "$(git -C "$GESSO" status --porcelain)" ]; then
   echo "note: $GESSO has uncommitted changes; gesso.lock names its HEAD, which is not what was packed" >&2
 fi
 
-cd "$HERE" && pnpm install
+# The flags are the caller's, because CI needs one this does not.
+# Empty here: locally `pnpm install` is exactly what is wanted.
+cd "$HERE" && pnpm install ${PNPM_INSTALL_FLAGS:-}
 
 # Drop Vite's pre-bundled copies of the old packages.
 #
