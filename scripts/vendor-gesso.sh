@@ -80,6 +80,23 @@ const lines = [
   'overrides:'
 ];
 for (const [name, value] of Object.entries(spec)) lines.push(`  ${name}: ${value}`);
+lines.push(
+  '',
+  '# The engine is exempt from the publish-age cooldown.',
+  '#',
+  "# pnpm will not install anything published in the last day — a good",
+  '# rule, and malware is usually found inside it. It is the wrong rule',
+  '# for these six: they are built from the checkout beside this one and',
+  '# installed from the tarballs in vendor/, so the copy that lands here',
+  '# is never the registry copy and waiting a day protects nothing. The',
+  '# build rejected them the first afternoon 0.4.0 was published.',
+  '#',
+  '# The exemption is by name and only these names. Everything from the',
+  '# registry keeps the cooldown, which is the part that was protecting',
+  '# anything.',
+  'minimumReleaseAgeExclude:'
+);
+for (const name of Object.keys(spec)) lines.push(`  - ${name}`);
 writeFileSync(join(root, 'pnpm-workspace.yaml'), `${lines.join('\n')}\n`);
 console.log(`vendored ${tarballs.length} packages`);
 NODE
