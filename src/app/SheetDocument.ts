@@ -1125,6 +1125,27 @@ export class SheetDocument {
     return true;
   }
 
+  /** A rule changed in place, keeping its place in the order they paint in. */
+  replaceConditional(at: number, rule: ConditionalRule): boolean {
+    if (this.page.conditional[at] === undefined) {
+      return false;
+    }
+    this.changeRules(page => page.conditional.splice(at, 1, rule), rule.range.start.row, rule.range.start.column);
+    return true;
+  }
+
+  replaceValidation(at: number, validation: Validation): boolean {
+    if (this.page.validations[at] === undefined) {
+      return false;
+    }
+    this.changeRules(
+      page => page.validations.splice(at, 1, validation),
+      validation.range.start.row,
+      validation.range.start.column
+    );
+    return true;
+  }
+
   addValidation(validation: Validation): void {
     this.changeRules(
       page => page.validations.push(validation),

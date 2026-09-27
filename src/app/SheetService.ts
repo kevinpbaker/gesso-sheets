@@ -1,6 +1,6 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
-import { formatRange, MAX_SHEETS, relativeRef, type RangeRef } from '../sheet/A1';
+import { formatRange, MAX_SHEETS, parseAddress, relativeRef, type RangeRef } from '../sheet/A1';
 import {
   DEFAULT_CHART_HEIGHT,
   DEFAULT_CHART_WIDTH,
@@ -35,6 +35,7 @@ import {
   type BorderPattern,
   type SheetActiveFormat,
   type SheetActiveRules,
+  type SheetRules,
   type SheetTransfer,
   type SheetDocumentView,
   type SheetDownload,
@@ -190,6 +191,7 @@ export class SheetService {
   readonly palette: Observable<SheetPalette>;
   readonly activeFormat: Observable<SheetActiveFormat>;
   readonly activeRules: Observable<SheetActiveRules>;
+  readonly rules: Observable<SheetRules>;
   readonly autofit: Observable<SheetAutofit>;
   readonly completion: Observable<SheetCompletion>;
   readonly notes: Observable<SheetNotes>;
@@ -265,6 +267,7 @@ export class SheetService {
     number: { kind: 'general' }
   });
   private readonly activeRulesSubject = new BehaviorSubject<SheetActiveRules>({ conditional: null, validation: null });
+  private readonly rulesSubject = new BehaviorSubject<SheetRules>({ conditional: [], validations: [], matches: null, refused: '' });
   private readonly autofitSubject = new BehaviorSubject<SheetAutofit>({ serial: 0, columns: [] });
   private readonly notesSubject = new BehaviorSubject<SheetNotes>({ cells: {} });
   private readonly completionSubject = new BehaviorSubject<SheetCompletion>({
@@ -425,6 +428,7 @@ export class SheetService {
     this.palette = this.paletteSubject;
     this.activeFormat = this.activeFormatSubject;
     this.activeRules = this.activeRulesSubject;
+    this.rules = this.rulesSubject;
     this.autofit = this.autofitSubject;
     this.completion = this.completionSubject;
     this.notes = this.notesSubject;
@@ -554,18 +558,86 @@ export class SheetService {
   // Formats that think, and what a cell is allowed to hold
   // ---------------------------------------------------------------------
 
-  addConditional(rule: SheetConditionalRule): void {
-    const rect = rectOf(this.document.selection);
-    this.document.addConditional({
-      range: {
-        start: relativeRef(rect.firstRow, rect.firstColumn),
-        end: relativeRef(rect.lastRow, rect.lastColumn)
-      },
-      test: rule.test,
-      paint: rule.paint,
-      scale: rule.scale
-    });
+  addConditional(rule: SheetConditionalRule, range?: string): void {
+    const at = this.ruleRange(range);
+    if (at === null) {
+      return;
+    }
+    this.document.addConditional({ range: at, test: rule.test, paint: rule.paint, scale: rule.scale });
     this.rulesChanged();
+  }
+
+  replaceConditional(at: number, rule: SheetConditionalRule, range: string): void {
+    const over = this.ruleRange(range);
+    if (over === null) {
+      return;
+    }
+    if (this.document.replaceConditional(at, { range: over, test: rule.test, paint: rule.paint, scale: rule.scale })) {
+      this.rulesChanged();
+    }
+  }
+
+  /**
+   * The cells a rule is for: `range` as written, on this sheet, or the
+   * selection when none is. Null, with the reason published on the
+   * rules view, for text that is not a range here.
+   */
+  private ruleRange(range: string | undefined): RangeRef | null {
+    if (range === undefined || range.trim() === '') {
+      const rect = rectOf(this.document.selection);
+      return { start: relativeRef(rect.firstRow, rect.firstColumn), end: relativeRef(rect.lastRow, rect.lastColumn) };
+    }
+    const parsed = parseAddress(range.trim().replace(/\$/g, ''));
+    if (parsed === null || parsed.start.sheet !== undefined || parsed.end.sheet !== undefined) {
+      this.publishRules(`${range.trim()} is not a range on this sheet. Write it as E4:E27.`);
+      return null;
+    }
+    return {
+      start: relativeRef(Math.min(parsed.start.row, parsed.end.row), Math.min(parsed.start.column, parsed.end.column)),
+      end: relativeRef(Math.max(parsed.start.row, parsed.end.row), Math.max(parsed.start.column, parsed.end.column))
+    };
+  }
+
+  /**
+   * How many cells of `range` a rule would colour, for the bar to say as
+   * the rule is written. Asked of a painter holding that rule alone, so
+   * it is the painter's own answer; bounded by the rows the sheet has
+   * written to, and by a count past which the number is not the point.
+   */
+  countMatches(serial: number, rule: SheetConditionalRule, range: string): void {
+    const parsed = parseAddress(range.trim().replace(/\$/g, ''));
+    if (parsed === null || parsed.start.sheet !== undefined) {
+      this.rulesSubject.next({ ...this.rulesSubject.value, matches: { serial, matching: 0, cells: null } });
+      return;
+    }
+    const firstRow = Math.min(parsed.start.row, parsed.end.row);
+    const firstColumn = Math.min(parsed.start.column, parsed.end.column);
+    const lastRow = Math.max(parsed.start.row, parsed.end.row);
+    const lastColumn = Math.max(parsed.start.column, parsed.end.column);
+    const sheet = this.document.sheet;
+    const painter = new ConditionalPainter(() => sheet);
+    painter.setRules([
+      {
+        range: { start: relativeRef(firstRow, firstColumn), end: relativeRef(lastRow, lastColumn) },
+        test: rule.test,
+        // The colour is not the question; a test with none paints nothing.
+        paint: rule.scale === undefined ? { fill: '#000000' } : undefined,
+        scale: rule.scale
+      }
+    ]);
+    const cells = (lastRow - firstRow + 1) * (lastColumn - firstColumn + 1);
+    const through = Math.min(lastRow, sheet.usedRows - 1);
+    let matching = 0;
+    let asked = 0;
+    for (let row = firstRow; row <= through && asked < MAX_COUNTED; row++) {
+      for (let column = firstColumn; column <= lastColumn && asked < MAX_COUNTED; column++) {
+        asked++;
+        if (painter.paintFor(row, column, sheet.value(row, column)) !== null) {
+          matching++;
+        }
+      }
+    }
+    this.rulesSubject.next({ ...this.rulesSubject.value, matches: { serial, matching, cells } });
   }
 
   removeConditional(at: number): void {
@@ -574,18 +646,24 @@ export class SheetService {
     }
   }
 
-  addValidation(rule: SheetValidationRule, strict: boolean, message: string): void {
-    const rect = rectOf(this.document.selection);
-    this.document.addValidation({
-      range: {
-        start: relativeRef(rect.firstRow, rect.firstColumn),
-        end: relativeRef(rect.lastRow, rect.lastColumn)
-      },
-      rule,
-      strict,
-      message: message === '' ? undefined : message
-    });
+  addValidation(rule: SheetValidationRule, strict: boolean, message: string, range?: string): void {
+    const at = this.ruleRange(range);
+    if (at === null) {
+      return;
+    }
+    this.document.addValidation({ range: at, rule, strict, message: message === '' ? undefined : message });
     this.rulesChanged();
+  }
+
+  replaceValidation(at: number, rule: SheetValidationRule, strict: boolean, range: string): void {
+    const over = this.ruleRange(range);
+    if (over === null) {
+      return;
+    }
+    const was = this.document.validations[at];
+    if (this.document.replaceValidation(at, { range: over, rule, strict, message: was?.message })) {
+      this.rulesChanged();
+    }
   }
 
   removeValidation(at: number): void {
@@ -682,6 +760,7 @@ export class SheetService {
    */
   private rulesChanged(): void {
     this.painter.setRules(this.document.conditional);
+    this.rulesSubject.next({ ...this.rulesSubject.value, refused: '' });
     this.publishFormats();
     this.publishValidation();
     this.publishActiveRules();
@@ -3475,7 +3554,31 @@ export class SheetService {
     this.activeFormatSubject.next({ paint: format.paint, number: format.number });
   }
 
+  /** Every rule on the sheet showing, as the rules bar lists them. */
+  private publishRules(refused: string): void {
+    const rangeText = (range: RangeRef): string =>
+      formatRange({ start: { ...range.start, rowAbsolute: false, columnAbsolute: false }, end: { ...range.end, rowAbsolute: false, columnAbsolute: false } });
+    this.rulesSubject.next({
+      conditional: this.document.conditional.map(rule => ({
+        range: rangeText(rule.range),
+        test: rule.test,
+        ...(rule.paint === undefined ? {} : { paint: rule.paint }),
+        ...(rule.scale === undefined ? {} : { scale: rule.scale })
+      })),
+      validations: this.document.validations.map(validation => ({
+        range: rangeText(validation.range),
+        rule: validation.rule,
+        strict: validation.strict === true
+      })),
+      matches: this.rulesSubject.value.matches,
+      refused
+    });
+  }
+
   private publishActiveRules(): void {
+    // The list with it: every path that can change what the active cell
+    // is under — a sheet switched, an undo, an insert — changes the list.
+    this.publishRules(this.rulesSubject.value.refused);
     const { row, column } = this.document.selection;
     const conditional = this.document.conditionalAt(row, column);
     const validation = this.document.validationAt(row, column);
@@ -3488,7 +3591,9 @@ export class SheetService {
               ...(conditional.paint === undefined ? {} : { paint: conditional.paint }),
               ...(conditional.scale === undefined ? {} : { scale: conditional.scale })
             },
-      validation: validation === null ? null : { rule: validation.rule, strict: validation.strict === true }
+      validation: validation === null ? null : { rule: validation.rule, strict: validation.strict === true },
+      conditionalAt: conditional === null ? -1 : this.document.conditional.indexOf(conditional),
+      validationAt: validation === null ? -1 : this.document.validations.indexOf(validation)
     });
   }
 
@@ -3721,3 +3826,6 @@ async function fingerprintOf(script: Script): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
+
+/** How many cells a count of matches asks about before it stops: past this the number is not the point. */
+const MAX_COUNTED = 200_000;

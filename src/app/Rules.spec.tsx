@@ -6,6 +6,7 @@ import 'gesso-testing/matchers';
 
 import type { UiKeyModifiers } from 'gesso-core';
 
+import { colourName, describeConditional, describeValidation, paintName } from './RulesBar';
 import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
@@ -94,6 +95,26 @@ describe('rules over a selection', () => {
     await h.ui.settle();
   }
 
+  /** One of a dropdown's options, chosen as a person would: open it, click the option. */
+  async function choose(dropdown: string, option: string): Promise<void> {
+    h.ui.fireEvent.click(h.ui.getByRole('combobox', { name: dropdown }));
+    await h.ui.settle();
+    h.ui.fireEvent.click(h.ui.getByRole('option', { name: option }));
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  /** What a dropdown shows chosen. */
+  const shown = (dropdown: string) => h.ui.getByRole('combobox', { name: dropdown }).properties.get('valueText');
+
+  /** Types into a field, after putting the keyboard there. */
+  async function typeInto(field: string, text: string): Promise<void> {
+    h.ui.fireEvent.focus(h.ui.getByRole('textbox', { name: field }));
+    await h.ui.settle();
+    await type(text);
+  }
+
   /** What the render worker would paint a cell, after everything. */
   const fillOf = (row: number, column: number): string => {
     let entries: readonly { fill: string }[] = [];
@@ -158,7 +179,8 @@ describe('rules over a selection', () => {
       await menu('o', 'Conditional formatting…');
       h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Colour scale' }));
       await h.ui.settle();
-      await click('Apply');
+      await choose('Colour', 'white to red');
+      await click('Add rule');
 
       // The smallest is the scale's first stop and the largest its last.
       expect(fillOf(0, 0)).toBe('#ffffff');
@@ -167,9 +189,8 @@ describe('rules over a selection', () => {
 
     it('takes a custom formula, moved to each cell', async () => {
       await menu('o', 'Conditional formatting…');
-      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Custom formula' }));
-      await h.ui.settle();
-      await type('=A1>5');
+      await choose('Condition', 'makes a formula true');
+      await typeInto('Rule formula', '=A1>5');
       await press('Enter');
 
       expect(fillOf(1, 0)).toBe('#fce8e6');
@@ -190,19 +211,18 @@ describe('rules over a selection', () => {
 
     it('opens on the rule the active cell is already under', async () => {
       await menu('o', 'Conditional formatting…');
-      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Less than' }));
-      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Green' }));
-      await h.ui.settle();
-      await type('3');
+      await choose('Condition', 'is less than');
+      await choose('Colour', 'green fill');
+      await typeInto('Value', '3');
       await press('Enter');
+      await press('Escape');
 
       // Off the range, where there is no rule, and back onto it.
       h.service.setSelection(10, 5, 10, 5);
       await h.served.settle();
       await h.ui.settle();
       await menu('o', 'Conditional formatting…');
-      expect(h.ui.getByRole('radio', { name: 'Less than' })).toHaveSemantics({ states: [] });
-      expect(h.ui.getByRole('radio', { name: 'Greater than' })).toHaveSemantics({ states: ['checked'] });
+      expect(shown('Condition')).toBe('is greater than');
       expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('');
       await press('Escape');
 
@@ -210,9 +230,11 @@ describe('rules over a selection', () => {
       await h.served.settle();
       await h.ui.settle();
       await menu('o', 'Conditional formatting…');
-      expect(h.ui.getByRole('radio', { name: 'Less than' })).toHaveSemantics({ states: ['checked'] });
-      expect(h.ui.getByRole('radio', { name: 'Green' })).toHaveSemantics({ states: ['checked'] });
+      expect(shown('Condition')).toBe('is less than');
+      expect(shown('Colour')).toBe('green fill');
       expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('3');
+      // And it is the rule being changed, not a new one to add.
+      expect(h.ui.getByRole('button', { name: 'Save changes' })).toBeDefined();
     });
 
     /**
@@ -237,9 +259,10 @@ describe('rules over a selection', () => {
     it('opens on a colour scale as a colour scale', async () => {
       await menu('o', 'Conditional formatting…');
       h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Colour scale' }));
-      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Blue' }));
       await h.ui.settle();
-      await click('Apply');
+      await choose('Colour', 'white to blue');
+      await click('Add rule');
+      await press('Escape');
 
       h.service.setSelection(10, 5, 10, 5);
       h.service.setSelection(0, 0, 0, 0);
@@ -247,7 +270,85 @@ describe('rules over a selection', () => {
       await h.ui.settle();
       await menu('o', 'Conditional formatting…');
       expect(h.ui.getByRole('radio', { name: 'Colour scale' })).toHaveSemantics({ states: ['checked'] });
-      expect(h.ui.getByRole('radio', { name: 'Blue' })).toHaveSemantics({ states: ['checked'] });
+      expect(shown('Colour')).toBe('white to blue');
+    });
+
+    /** The bar says which cells, and takes others typed in its place. */
+    it('says the cells it is for, and takes a range written in their place', async () => {
+      await menu('o', 'Conditional formatting…');
+      expect(h.ui.getByRole('textbox', { name: 'Cells' })).toHaveText('A1:A5');
+      await typeInto('Value', '5');
+      h.ui.fireEvent.focus(h.ui.getByRole('textbox', { name: 'Cells' }));
+      await press('a', { ctrl: true });
+      await type('A2:A3');
+      await press('Enter');
+      expect(h.document.conditional.map(rule => rule.range)).toMatchObject([
+        { start: { row: 1, column: 0 }, end: { row: 2, column: 0 } }
+      ]);
+    });
+
+    it('refuses a range that is not one, and says how to write it', async () => {
+      await menu('o', 'Conditional formatting…');
+      await typeInto('Value', '5');
+      h.ui.fireEvent.focus(h.ui.getByRole('textbox', { name: 'Cells' }));
+      await press('a', { ctrl: true });
+      await type('the top ones');
+      await press('Enter');
+      expect(h.document.conditional).toHaveLength(0);
+      expect(h.ui.getAllByText(/is not a range on this sheet/)).toHaveLength(1);
+    });
+
+    /** A1 is 1 and A2 is 9, under A1:A5. */
+    it('counts the cells the rule would colour as it is written', async () => {
+      await menu('o', 'Conditional formatting…');
+      await typeInto('Value', '5');
+      expect(h.ui.getAllByText('1 of 5 cells match')).toHaveLength(1);
+      await press('Backspace');
+      await type('0');
+      expect(h.ui.getAllByText('2 of 5 cells match')).toHaveLength(1);
+    });
+
+    it('changes the rule it opened on rather than adding another', async () => {
+      await menu('o', 'Conditional formatting…');
+      await typeInto('Value', '5');
+      await press('Enter');
+      expect(h.ui.getByRole('button', { name: 'Save changes' })).toBeDefined();
+      await press('Backspace');
+      await type('0');
+      await press('Enter');
+      expect(h.document.conditional).toHaveLength(1);
+      expect(h.document.conditional[0].test).toEqual({ kind: 'greaterThan', value: 0 });
+    });
+
+    it('lists the sheet’s rules as sentences, to change or remove one at a time', async () => {
+      h.service.addConditional({ test: { kind: 'greaterThan', value: 5 }, paint: { fill: '#fce8e6', color: '#c5221f' } });
+      h.service.addConditional({ test: { kind: 'lessThan', value: 2 }, paint: { fill: '#e6f4ea', color: '#137333' } });
+      await h.served.settle();
+      await menu('o', 'Conditional formatting…');
+      await click('Rules on this sheet');
+      const first = 'Highlight · A1:A5: greater than 5, in red fill';
+      const second = 'Highlight · A1:A5: less than 2, in green fill';
+      expect(h.ui.getByRole('listitem', { name: first })).toBeDefined();
+      expect(h.ui.getByRole('listitem', { name: second })).toBeDefined();
+
+      await click(`Edit ${first}`);
+      expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('5');
+      expect(h.ui.getByRole('button', { name: 'Save changes' })).toBeDefined();
+
+      await click(`Delete ${second}`);
+      expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'greaterThan', value: 5 }]);
+    });
+
+    /** A highlight being changed must not be saved as a scale by switching the tab. */
+    it('starts a new rule when the kind changes, rather than turning one into another', async () => {
+      await menu('o', 'Conditional formatting…');
+      await typeInto('Value', '5');
+      await press('Enter');
+      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'Colour scale' }));
+      await h.ui.settle();
+      expect(h.ui.getByRole('button', { name: 'Add rule' })).toBeDefined();
+      await click('Add rule');
+      expect(h.document.conditional.map(rule => (rule.scale === undefined ? 'highlight' : 'scale'))).toEqual(['highlight', 'scale']);
     });
 
     it('is cleared from the Data menu', async () => {
@@ -291,10 +392,10 @@ describe('rules over a selection', () => {
     /** `, 10` is "at most ten": the empty first part is the minimum nobody set. */
     it('takes a number rule with only a maximum, and shows it back that way', async () => {
       await menu('d', 'Data validation…');
-      h.ui.fireEvent.click(h.ui.getByRole('radio', { name: 'A number' }));
-      await h.ui.settle();
-      await type(', 10');
+      await choose('Allow', 'a number');
+      await typeInto('Allowed values', ', 10');
       await press('Enter');
+      await press('Escape');
       expect(h.document.validationAt(0, 0)?.rule).toEqual({ kind: 'number', max: 10 });
 
       h.service.setSelection(10, 5, 10, 5);
@@ -315,7 +416,7 @@ describe('rules over a selection', () => {
       await h.served.settle();
       await h.ui.settle();
       await menu('d', 'Data validation…');
-      expect(h.ui.getByRole('radio', { name: 'One of a list' })).toHaveSemantics({ states: ['checked'] });
+      expect(shown('Allow')).toBe('one of a list');
       expect(h.ui.getByRole('textbox', { name: 'Allowed values' })).toHaveText('North, South');
     });
 
@@ -348,7 +449,7 @@ describe('rules over a selection', () => {
       await menu('d', 'Data validation…');
       h.ui.fireEvent.click(h.ui.getByRole('checkbox', { name: 'Refuse anything else' }));
       await h.ui.settle();
-      await type('North, South');
+      await typeInto('Allowed values', 'North, South');
       await press('Enter');
 
       h.service.setCell(2, 0, 'Elsewhere');
@@ -362,7 +463,7 @@ describe('rules over a selection', () => {
       await menu('d', 'Data validation…');
       h.ui.fireEvent.click(h.ui.getByRole('checkbox', { name: 'Refuse anything else' }));
       await h.ui.settle();
-      await type('North, South');
+      await typeInto('Allowed values', 'North, South');
       await press('Enter');
 
       h.service.setCell(0, 0, '');
@@ -431,8 +532,8 @@ describe('the rules bar over the seeded workbook', () => {
       h.service.setSelection(row, 6, row, 6);
       await settle();
       expect(h.ui.getByRole('radio', { name: 'Colour scale' })).toHaveSemantics({ states: ['checked'] });
-      expect(h.ui.getByRole('radio', { name: 'Current colours' })).toHaveSemantics({ states: ['checked'] });
-      expect(h.ui.getByRole('radio', { name: 'Red' })).toHaveSemantics({ states: [] });
+      // Its own colours, named: none of the bar's.
+      expect(h.ui.getByRole('combobox', { name: 'Colour' }).properties.get('valueText')).toBe('pale red to pale yellow to pale green');
     }
   });
 
@@ -441,7 +542,7 @@ describe('the rules bar over the seeded workbook', () => {
     await settle();
     const before = h.document.conditionalAt(4, 6)?.scale;
     await openFormat();
-    h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Apply' }));
+    h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Save changes' }));
     await settle();
     expect(h.document.conditionalAt(4, 6)?.scale).toEqual(before);
   });
@@ -450,9 +551,9 @@ describe('the rules bar over the seeded workbook', () => {
     h.service.setSelection(4, 8, 4, 8);
     await settle();
     await openFormat();
-    expect(h.ui.getByRole('radio', { name: 'Text contains' })).toHaveSemantics({ states: ['checked'] });
+    expect(h.ui.getByRole('combobox', { name: 'Condition' }).properties.get('valueText')).toBe('contains the text');
     expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('Below');
-    expect(h.ui.getByRole('radio', { name: 'Current colours' })).toHaveSemantics({ states: ['checked'] });
+    expect(h.ui.getByRole('combobox', { name: 'Colour' }).properties.get('valueText')).toBe('bold red text');
   });
 });
 
@@ -554,5 +655,32 @@ describe('the list a cell may choose from', () => {
     await h.ui.settle();
     await openCell();
     expect(options()).toEqual([]);
+  });
+});
+
+describe('a rule, in words', () => {
+  it('names a colour for a person, not as a code', () => {
+    expect(colourName('#fde2e2')).toBe('pale red');
+    expect(colourName('#c5221f')).toBe('red');
+    expect(colourName('#1967d2')).toBe('blue');
+    expect(colourName('#f1f3f4')).toBe('pale grey');
+    expect(colourName('#ffffff')).toBe('white');
+  });
+
+  it('says what a highlight paints', () => {
+    expect(paintName({ fill: '#fce8e6', color: '#c5221f' })).toBe('red fill');
+    expect(paintName({ color: '#c5221f', bold: true })).toBe('bold red text');
+  });
+
+  it('reads a rule as a sentence', () => {
+    expect(describeConditional({ range: 'E4:E27', test: { kind: 'between', low: 1, high: 9 }, paint: { fill: '#e6f4ea', color: '#137333' } })).toBe(
+      'Highlight · E4:E27: between 1 and 9, in green fill'
+    );
+    expect(describeConditional({ range: 'G4:G27', test: null, scale: { from: '#ffffff', to: '#137333' } })).toBe(
+      'Colour scale · G4:G27: shaded white to green, lowest to highest'
+    );
+    expect(describeValidation({ range: 'J4:J27', rule: { kind: 'list', values: ['Yes', 'No'] }, strict: true })).toBe(
+      'Limit · J4:J27: one of Yes, No, and nothing else'
+    );
   });
 });

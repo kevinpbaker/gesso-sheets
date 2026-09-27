@@ -563,6 +563,39 @@ export interface SheetConditionalRule {
 export type SheetValidationRule = ValidationRule;
 
 /**
+ * Every rule on the sheet showing, in the order they paint, with the
+ * cells each covers written as a range — so the rules bar can list them
+ * as sentences and change or remove one at a time.
+ */
+export interface SheetRules {
+  readonly conditional: readonly SheetListedConditional[];
+  readonly validations: readonly SheetListedValidation[];
+  /** The answer to the latest `countMatches`, or null before one. */
+  readonly matches: SheetRuleMatches | null;
+  /** Why the last rule was not added — a range that is not one — or empty. */
+  readonly refused: string;
+}
+
+export interface SheetListedConditional extends SheetConditionalRule {
+  /** `E4:E27`. */
+  readonly range: string;
+}
+
+export interface SheetListedValidation {
+  readonly range: string;
+  readonly rule: SheetValidationRule;
+  readonly strict: boolean;
+}
+
+export interface SheetRuleMatches {
+  readonly serial: number;
+  /** How many cells the rule would colour. */
+  readonly matching: number;
+  /** How many cells it covers, or null for a range that is not one. */
+  readonly cells: number | null;
+}
+
+/**
  * The rules the active cell is under, for the rules bar to open on.
  *
  * One cell and not the selection, for the reason `activeFormat` is:
@@ -575,6 +608,9 @@ export type SheetValidationRule = ValidationRule;
 export interface SheetActiveRules {
   readonly conditional: SheetConditionalRule | null;
   readonly validation: { readonly rule: SheetValidationRule; readonly strict: boolean } | null;
+  /** Where each is in `SheetRules`' lists, so the bar can change the one it opened on; -1 for none. */
+  readonly conditionalAt?: number;
+  readonly validationAt?: number;
 }
 
 /**
@@ -720,11 +756,24 @@ export interface SheetCommands {
    * closure cannot cross a `postMessage` — which is also why the
    * tests are a tagged union rather than a predicate.
    */
-  addConditional(rule: SheetConditionalRule): void;
+  addConditional(rule: SheetConditionalRule, range?: string): void;
+  /** Puts a changed rule where the old one was, by its place in `rules.conditional`. */
+  replaceConditional(at: number, rule: SheetConditionalRule, range: string): void;
   removeConditional(at: number): void;
-  /** Adds a validation over the selection. */
-  addValidation(rule: SheetValidationRule, strict: boolean, message: string): void;
+  /**
+   * Adds a validation over the selection, or over `range` when one is
+   * written: `E4:E27`, on this sheet. A range that is not one is refused
+   * on `rules.refused`, and nothing is added.
+   */
+  addValidation(rule: SheetValidationRule, strict: boolean, message: string, range?: string): void;
+  replaceValidation(at: number, rule: SheetValidationRule, strict: boolean, range: string): void;
   removeValidation(at: number): void;
+  /**
+   * How many cells of `range` a rule not yet added would colour, for the
+   * bar to say while it is written. Answered on `rules.matches`, with the
+   * serial, so an answer to an older draft can be told from the current.
+   */
+  countMatches(serial: number, rule: SheetConditionalRule, range: string): void;
   /** Takes every rule off the sheet, which is the only bulk one. */
   clearRules(): void;
   /**
@@ -1225,6 +1274,8 @@ export interface SheetView {
   readonly activeFormat: SheetActiveFormat;
   /** The rules over the active cell; see `SheetActiveRules`. */
   readonly activeRules: SheetActiveRules;
+  /** Every rule on the sheet showing, for the rules bar's list; see `SheetRules`. */
+  readonly rules: SheetRules;
   readonly autofit: SheetAutofit;
   /** What the cell being typed into could be finished as; see `SheetCompletion`. */
   readonly completion: SheetCompletion;
@@ -1323,6 +1374,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   validation: { firstRow: 0, lastRow: -1, cells: {}, refused: '', list: [] },
   activeFormat: { paint: PLAIN_PAINT, number: { kind: 'general' } },
   activeRules: { conditional: null, validation: null },
+  rules: { conditional: [], validations: [], matches: null, refused: '' },
   autofit: { serial: 0, columns: [] },
   completion: { serial: 0, row: 0, column: 0, prefix: '', text: '' },
   notes: { cells: {} },

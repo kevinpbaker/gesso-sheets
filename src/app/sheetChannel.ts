@@ -31,6 +31,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       palette: service.palette,
       activeFormat: service.activeFormat,
       activeRules: service.activeRules,
+      rules: service.rules,
       autofit: service.autofit,
       completion: service.completion,
       notes: service.notes,
@@ -42,9 +43,12 @@ export function sheetChannel(service: SheetService): ServedChannel {
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
         service.setViewport(sheet, firstRow, lastRow, firstColumn, lastColumn),
-      addConditional: rule => service.addConditional(rule),
+      addConditional: (rule, range) => service.addConditional(rule, range),
+      replaceConditional: (at, rule, range) => service.replaceConditional(at, rule, range),
       removeConditional: at => service.removeConditional(at),
-      addValidation: (rule, strict, message) => service.addValidation(rule, strict, message),
+      addValidation: (rule, strict, message, range) => service.addValidation(rule, strict, message, range),
+      replaceValidation: (at, rule, strict, range) => service.replaceValidation(at, rule, strict, range),
+      countMatches: (serial, rule, range) => service.countMatches(serial, rule, range),
       removeValidation: at => service.removeValidation(at),
       clearRules: () => service.clearRules(),
       importCsv: (fileName, text) => service.importCsv(fileName, text),
