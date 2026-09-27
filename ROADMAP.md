@@ -32,7 +32,9 @@ what you typed.
 Excel reaches for, done but for what it left to
 [Part Four](#part-four--nothing-lost), which is about not losing
 anything: a file's rules, where the cursor is, a gesture, a finger,
-a preference.
+a preference. [Part Five](#part-five--scripting) is scripting: `LET`
+and `LAMBDA` first, then scripts that act on the workbook, behind a
+written security model.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -2500,6 +2502,153 @@ scripting, each large enough to be a part of its own and none of them
 a thing this sheet loses. Flash fill, still a feature and not a habit.
 Images in a cell or over the sheet, which the `.xlsx` reader will go on
 reporting as left out.
+
+---
+
+# Part five — scripting
+
+"Macros and scripting" has been one line in the list of things this
+sheet does not have since Part One. It is three different things. The
+cheapest one is most of what people use macros for, and the most
+dangerous one is the one people mean when they say the word.
+
+1. **Functions in the formula language.** `LET` names a value inside
+   one formula. `LAMBDA`, kept under a defined name, is a function
+   somebody wrote, and `=TAX(B2)` calls it. This is how Excel 365 does
+   custom functions without code. It is nothing but more formula
+   language, so it inherits everything the formula language already
+   has: the dependency graph, recalculation, undo, the `.xlsx` round
+   trip.
+2. **Scripts that act on the workbook**, as Office Scripts and Google
+   Apps Script do. A small typed API — read a range, write a range,
+   format, add a sheet — run on demand.
+3. **Functions written in script**, `=MYFUNC(A1)` backed by code, which
+   the recalculation would have to call synchronously.
+
+Part Five is the first two, in that order. The third is not in it, and
+says why below.
+
+## The rules Part Five runs under
+
+Part Two's three rules and Part Four's two still hold. Scripting adds
+two more, and they are about safety rather than speed.
+
+1. **Nothing in a file runs by itself.** A workbook can come from
+   anyone. A script in one is code a stranger wrote, so opening the
+   file never runs it, and neither does a recalculation. A person
+   runs it by choosing to, each time, having been told that it came
+   with the file. `LAMBDA` is not a script — it is a formula, and
+   formulas run — which is part of why it comes first.
+2. **A script reaches the workbook and nothing else.** No network, no
+   storage, no other document, no clipboard, no DOM. It is given an
+   API and a sandbox, not a page to reach around in. This is written
+   down as the security model before the phase that implements it
+   writes a line of code.
+
+---
+
+### Phase 28 — LET and LAMBDA
+
+**Names that hold formulas.** A defined name holds a range today;
+`NamedRange` is a name and a `RangeRef` and nothing else. It gains a
+second kind: a name that holds a formula. A `LAMBDA` kept under a name
+is a function, called by that name like any other. A plain formula
+under a name, `=TaxRate*1.2`, is a named calculation. Name ▸ Define
+takes either.
+
+**`LET`**: `=LET(price, B2*1.2, price + price*TaxRate)`. It names values
+once and uses them many times. It is evaluated left to right, and each
+name is visible to the ones after it and to the result.
+
+**`LAMBDA`**: `=LAMBDA(x, y, x*y)`. Called at once, as
+`=LAMBDA(x, x*2)(A1)`, or kept under a name and called by the name. It
+is a value in the evaluator, a function with its parameters and body,
+which is what lets it be handed to the helpers that take one: `MAP`,
+`REDUCE`, `SCAN`, `BYROW`, `BYCOL` and `MAKEARRAY`. They come with it,
+because a `LAMBDA` with nothing to pass it to is half a feature, and
+Phase 17's arrays are what they return.
+
+**The dependency graph.** A cell calling a named `LAMBDA` depends on the
+cells the `LAMBDA` reads, not only on the ones passed in. A `LAMBDA`
+whose body reads `TaxRate` makes every caller depend on `TaxRate`, so
+redefining the name, or changing a cell it reads, recalculates every
+caller. A `LAMBDA` that calls itself is how Excel's users write
+recursion. It is allowed to a depth, and past that depth it is
+`#NUM!`, not a frozen tab.
+
+**`.xlsx`.** Excel writes a named `LAMBDA` as a defined name,
+`_xlfn.LAMBDA(_xlpm.x, …)`. The reader skips it today as a name that
+is not a range, and counts it as skipped. It reads it once names can
+hold formulas. `clean()` already strips the `_xlpm.` prefixes. The
+writer writes it back with them.
+
+**Exit:** specs for `LET` scoping, and for `LAMBDA` called at once, by
+name, recursively (and past the depth), and inside each helper. A
+budget spec for the evaluator: a `LAMBDA` called down a column of
+100,000 costs within a small factor of the same arithmetic written out
+inline. A round trip through `.xlsx` of a workbook with named
+`LAMBDA`s, opened in LibreOffice (which reads `LAMBDA` since 24.8), and
+the count of POI's files that have one.
+
+### Phase 29 — The security model, written
+
+Before any script runs, a document in this file says what a script is
+and what stops it. It answers each of these questions.
+
+- **Where it runs.** In a worker of its own. Not the main thread, where
+  the input lives. Not the render worker, whose frames are Part One's
+  claim. Not the application worker, which holds the workbook and
+  which a script must reach only through messages. A script that loops
+  for ever is a worker that gets terminated.
+- **What it can reach.** The workbook API and nothing else. The worker
+  is created from a module with no `fetch`, no `importScripts`, no
+  `indexedDB`, no `WebSocket` and no `postMessage` except the
+  channel's own, removed before the script's code is evaluated. That
+  is checked by a spec that tries each one, not assumed.
+- **How much it can do.** A time limit on a run, a limit on the cells
+  a run may write, and the run stoppable from the chrome. A whole run
+  is one step of undo.
+- **Where scripts come from.** Written in the sheet, or brought in with
+  a file. A file's scripts are shown as the file's, not the person's,
+  and running one says so each time.
+
+**Exit:** the document, reviewed, and a spec per question that fails
+if the answer stops being true.
+
+### Phase 30 — Scripts
+
+The API the security model allows, typed, in a script editor that is a
+text field with the formula editor's colouring and nothing more:
+`sheet.range('A1:C9').values`, `.write(rows)`, `.format({ bold })`,
+`workbook.addSheet(name)`, `workbook.sheets`. It runs from Data ▸
+Scripts, one at a time. A run's writes are one transaction on the
+application worker, so the grid redraws once at the end and not once
+a cell. It is saved in `.gsheet`. It is not written into `.xlsx`,
+because an Excel file's code is VBA, and this is not.
+
+**Exit:** a script that fills a column from another and formats the
+result, run and undone in one step. A script that loops for ever,
+stopped by its time limit with the workbook unchanged. A script that
+tries each forbidden reach and gets nothing. And `pnpm proof` with a
+script running on its worker, held to the recalculating budget: a
+script is the other thing that must not reach the frame.
+
+---
+
+## Not in Part Five
+
+**Functions written in script.** The recalculation is synchronous: it
+cannot ask another worker for an answer and wait. So a script function
+would need an interpreter inside the evaluator itself — QuickJS
+compiled to WebAssembly is the usual one — with its own time and memory
+limits, on the thread that holds the workbook. That is a large piece
+of machinery for something `LAMBDA` does most of. It waits until
+somebody needs what `LAMBDA` cannot do.
+
+**VBA.** An `.xlsm`'s macros are VBA, a different language with a large
+runtime, and running a stranger's is the security problem everybody
+already knows. The import will say *this file had macros, and they
+were not kept* rather than dropping them without a word.
 
 ---
 
