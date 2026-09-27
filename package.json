@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
-    "gesso-components": "file:vendor/gesso-components-0.3.0-e653fdbd.tgz",
+    "gesso-components": "file:vendor/gesso-components-0.3.0-e5dc7e9f.tgz",
     "gesso-core": "file:vendor/gesso-core-0.3.0-8620990d.tgz",
     "gesso-framework": "file:vendor/gesso-framework-0.3.0-11c31f77.tgz",
     "quickjs-emscripten-core": "0.32.0",
@@ -37,7 +37,7 @@
   "overrides": {
     "gesso-core": "file:vendor/gesso-core-0.3.0-8620990d.tgz",
     "gesso-framework": "file:vendor/gesso-framework-0.3.0-11c31f77.tgz",
-    "gesso-components": "file:vendor/gesso-components-0.3.0-e653fdbd.tgz",
+    "gesso-components": "file:vendor/gesso-components-0.3.0-e5dc7e9f.tgz",
     "gesso-devtools": "file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz",
     "gesso-vite-plugin": "file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz"
   }
