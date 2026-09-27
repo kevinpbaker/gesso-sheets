@@ -58,6 +58,7 @@ import {
   type SheetMerge,
   type SheetChart,
   type SheetChartSource,
+  type SheetRect,
   type SheetCharts,
   type SheetSelection,
   type SheetSeriesView,
@@ -923,6 +924,33 @@ export function Grid(
     return source !== null && source.sheet === activeSheet ? source : null;
   };
 
+  /**
+   * The range a chart's corner handle is being dragged to, while it is:
+   * drawn as one outline in place of the chart's three, and sent as a
+   * command when the drag ends.
+   */
+  let chartRangeDraft: SheetRect | null = null;
+  /**
+   * Where the handle was when the drag began, which is where it stays
+   * until it ends: a handle moved to another row is a new node, and a
+   * drag does not survive its node being replaced.
+   */
+  let chartRangeFrom: SheetRect | null = null;
+
+  /** The whole of what a chart reads: the three parts together. */
+  const sourceRect = (source: SheetChartSource): SheetRect | null => {
+    const parts = [source.names, source.categories, source.values].filter((part): part is SheetRect => part !== null);
+    if (parts.length === 0) {
+      return null;
+    }
+    return {
+      firstRow: Math.min(...parts.map(part => part.firstRow)),
+      lastRow: Math.max(...parts.map(part => part.lastRow)),
+      firstColumn: Math.min(...parts.map(part => part.firstColumn)),
+      lastColumn: Math.max(...parts.map(part => part.lastColumn))
+    };
+  };
+
   const paintOutlines = (draft: string | null): void => {
     const references = draft === null ? [] : colouredReferences(draft);
     const rows = new Map<number, DecorationShape[]>();
@@ -973,11 +1001,15 @@ export function Grid(
     const source = chartSource();
     if (source !== null) {
       const range = sheetWindow.range$.value;
-      for (const [part, color] of [
-        [source.names, CHART_NAMES],
-        [source.categories, CHART_CATEGORIES],
-        [source.values, CHART_VALUES]
-      ] as const) {
+      const parts: readonly (readonly [SheetRect | null, string])[] =
+        chartRangeDraft !== null
+          ? [[chartRangeDraft, CHART_VALUES]]
+          : [
+              [source.names, CHART_NAMES],
+              [source.categories, CHART_CATEGORIES],
+              [source.values, CHART_VALUES]
+            ];
+      for (const [part, color] of parts) {
         if (part === null) {
           continue;
         }
@@ -2331,6 +2363,64 @@ export function Grid(
       }
     });
 
+  /**
+   * The corner of the cells the selected chart reads, to drag: the
+   * range grows or shrinks to the cell let go over, from the same top
+   * left, as Excel's does. Blue, like the values it usually ends in.
+   */
+  const chartRangeHandle = (row: number, column: number): UiElement =>
+    Box({
+      key: 'chart-range',
+      width: 8,
+      height: 8,
+      position: 'absolute',
+      left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + sheetWindow.widthOf(column) - 5,
+      top: heightNow(row) - 5,
+      zIndex: 3,
+      backgroundColor: CHART_VALUES,
+      borderColor: 'background',
+      borderWidth: 1,
+      cursor: 'nwse-resize',
+      role: 'button',
+      label: 'Chart range',
+      onPointerDown: (event: UiPointerEvent) => event.stopPropagation(),
+      onPanStart: (event: UiPointerEvent) => {
+        const source = chartSource();
+        chartRangeDraft = source === null ? null : sourceRect(source);
+        chartRangeFrom = chartRangeDraft;
+        event.stopPropagation();
+      },
+      onPanMove: (event: UiPointerEvent) => {
+        if (chartRangeDraft === null) {
+          return;
+        }
+        event.stopPropagation();
+        const box = viewport.value;
+        const to = sheetWindow.cellAt(event.x - box.x, event.y - box.y);
+        const next = {
+          ...chartRangeDraft,
+          lastRow: Math.max(chartRangeDraft.firstRow, to.row),
+          lastColumn: Math.max(chartRangeDraft.firstColumn, to.column)
+        };
+        if (next.lastRow !== chartRangeDraft.lastRow || next.lastColumn !== chartRangeDraft.lastColumn) {
+          chartRangeDraft = next;
+          repaintOutlines();
+        }
+      },
+      onClick: (event: UiPointerEvent) => event.stopPropagation(),
+      onPanEnd: (event: UiPointerEvent) => {
+        event.stopPropagation();
+        const draft = chartRangeDraft;
+        chartRangeDraft = null;
+        chartRangeFrom = null;
+        if (draft !== null && charts.value.selected !== 0) {
+          sheet.send.setChartRange(charts.value.selected, draft.firstRow, draft.firstColumn, draft.lastRow, draft.lastColumn);
+        }
+        repaintOutlines();
+        sheetWindow.invalidate();
+      }
+    });
+
   let filling = false;
   let fillTo: { row: number; column: number } | null = null;
   let sweeping = false;
@@ -2745,6 +2835,13 @@ export function Grid(
     if (start && startAt !== null) {
       line.push(selectionHandle(row, startAt.column, 'start'));
     }
+    // The selected chart's range, by its corner.
+    const reading = chartSource();
+    const readRect = chartRangeFrom ?? (reading === null ? null : sourceRect(reading));
+    const ranging = readRect !== null && readRect.lastRow === row;
+    if (ranging && readRect !== null) {
+      line.push(chartRangeHandle(row, readRect.lastColumn));
+    }
     // The hint hangs off the row holding the open cell, as the fill
     // handle hangs off the row holding the corner: a child of the row
     // travels with it through a scroll and needs nothing kept in step.
@@ -2828,7 +2925,7 @@ export function Grid(
         // formula being typed names something on this row, and an
         // empty array the rest of the time.
         modifiers: outlineFor(row).modifiers,
-        position: stuck ? 'sticky' : corner || start || spans || hinting || explaining ? 'relative' : undefined,
+        position: stuck ? 'sticky' : corner || start || ranging || spans || hinting || explaining ? 'relative' : undefined,
         top: stuck ? HEADER_HEIGHT + rowTop(row) : undefined,
         // A finger's handles reach over the rows around theirs, so their
         // rows are lifted over them.

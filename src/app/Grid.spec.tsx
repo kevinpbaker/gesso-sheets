@@ -976,6 +976,29 @@ describe('outlining the cells a selected chart reads', () => {
     expect(colours(4)).toEqual([]);
   });
 
+  /** Its corner, dragged, is the chart's range changed: the outline is how the range is edited. */
+  it('reads a larger range when the corner of its outline is dragged', async () => {
+    await charted();
+    const handle = h.ui.getVisibleBox(h.ui.getByRole('button', { name: 'Chart range' }));
+    const from = { x: handle.x + handle.width / 2, y: handle.y + handle.height / 2 };
+    const e = h.ui.getVisibleBox(h.ui.getByRole('columnheader', { name: 'E' }));
+    const six = h.ui.getVisibleBox(h.ui.getByRole('rowheader', { name: '6' }));
+    const to = { x: e.x + e.width / 2, y: six.y + six.height / 2 };
+    h.ui.fireEvent.pointerDown(from.x, from.y, { buttons: 1 });
+    h.ui.fireEvent.pointerMove(from.x + 8, from.y + 8, { buttons: 1 });
+    h.ui.fireEvent.pointerMove(to.x, to.y, { buttons: 1 });
+    await h.ui.settle();
+    // While it is dragged, one outline for the whole of the range to be.
+    expect(colours(5)).toEqual(['#4285f4']);
+    h.ui.fireEvent.pointerUp(to.x, to.y);
+    await settle();
+    expect(h.document.charts[0].range).toMatchObject({ start: { row: 0, column: 0 }, end: { row: 5, column: 4 } });
+    // And the selection did not sweep: the drag was the handle's.
+    expect(h.document.selection).toMatchObject({ row: 0, column: 0 });
+    h.document.undo();
+    expect(h.document.charts[0].range).toMatchObject({ end: { row: 3, column: 2 } });
+  });
+
   it('takes the outlines away when the chart is let go', async () => {
     await charted();
     h.service.selectChart(0);

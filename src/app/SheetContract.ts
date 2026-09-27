@@ -781,6 +781,11 @@ export interface SheetCommands {
   placeChart(id: number, x: number, y: number, width: number, height: number): void;
   setChartKind(id: number, kind: ChartKind): void;
   setChartTitle(id: number, title: string): void;
+  /**
+   * The cells a chart reads, changed: its outline dragged on the sheet.
+   * On the sheet the chart already reads, which a drag cannot leave.
+   */
+  setChartRange(id: number, firstRow: number, firstColumn: number, lastRow: number, lastColumn: number): void;
   removeChart(id: number): void;
   /** Shows a sheet, without waiting for its viewport to arrive. */
   activateSheet(sheet: number): void;

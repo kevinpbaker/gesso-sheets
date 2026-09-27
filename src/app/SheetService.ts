@@ -2744,6 +2744,26 @@ export class SheetService {
     this.publishStatus();
   }
 
+  setChartRange(id: number, firstRow: number, firstColumn: number, lastRow: number, lastColumn: number): void {
+    const rows = this.geometrySubject.value;
+    if (firstRow < 0 || firstColumn < 0 || lastRow < firstRow || lastColumn < firstColumn || lastRow >= rows.rowCount || lastColumn >= rows.columnCount) {
+      return;
+    }
+    const changed = this.document.changeChart(id, chart => {
+      // Kept on the sheet it named, if it named one.
+      const sheet = chart.range.start.sheet;
+      const on = (row: number, column: number) => ({ ...relativeRef(row, column), ...(sheet === undefined ? {} : { sheet }) });
+      return { ...chart, range: { start: on(firstRow, firstColumn), end: on(lastRow, lastColumn) } };
+    });
+    if (!changed) {
+      return;
+    }
+    this.publishCharts();
+    this.publishSeries();
+    this.persist();
+    this.publishStatus();
+  }
+
   removeChart(id: number): void {
     if (!this.document.removeChart(id)) {
       return;
