@@ -208,7 +208,15 @@ export interface SheetEditor {
  */
 export interface SheetNames {
   readonly entries: readonly SheetName[];
+  /** The names that hold formulas, which have no range to go to. */
+  readonly formulas: readonly SheetFormulaName[];
   readonly refused: string;
+}
+
+export interface SheetFormulaName {
+  readonly name: string;
+  /** As written, `=` and all. */
+  readonly formula: string;
 }
 
 export interface SheetName {
@@ -966,6 +974,12 @@ export interface SheetCommands {
    * published beside it.
    */
   defineName(name: string): void;
+  /**
+   * Gives a name a formula to hold: `=0.2`, or `=LAMBDA(x, x*2)`, which
+   * makes a function called by that name. Answered on the names view
+   * as `defineName` is.
+   */
+  defineFormulaName(name: string, formula: string): void;
   removeName(name: string): void;
   unmergeCells(): void;
   /**
@@ -1195,7 +1209,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '' },
-  names: { entries: [], refused: '' },
+  names: { entries: [], formulas: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
   clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },

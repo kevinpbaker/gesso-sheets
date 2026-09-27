@@ -120,6 +120,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       mergeCells: () => service.mergeCells(),
       defineName: (name: string) => service.defineName(name),
       removeName: (name: string) => service.removeName(name),
+      defineFormulaName: (name: string, formula: string) => service.defineFormulaName(name, formula),
       unmergeCells: () => service.unmergeCells(),
       measureColumns: (first, last) => service.measureColumns(first, last),
       filterToSelection: () => service.filterToSelection(),

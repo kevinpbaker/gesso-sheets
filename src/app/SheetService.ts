@@ -13,7 +13,7 @@ import { layoutOf, seriesFrom } from '../sheet/Series';
 import { STRESS_CELLS } from './SheetCommands';
 import type { CellValue } from '../sheet/Values';
 import { addressOf, explainCell } from '../sheet/Explain';
-import { nameProblemText } from '../sheet/Names';
+import { isNamedRange, nameProblemText } from '../sheet/Names';
 import { aggregateOf } from './Aggregate';
 import { ConditionalPainter } from './ConditionalPaint';
 import type { CellPaint } from '../sheet/Format';
@@ -367,7 +367,7 @@ export class SheetService {
       note: document.noteAt(document.selection.row, document.selection.column)
     });
     this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
-    this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], refused: '' });
+    this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], formulas: [], refused: '' });
     // Seeded from the document, because a sheet loaded from a file
     // arrives with its names already in it and nothing else would
     // ever tell the other thread they exist.
@@ -1733,6 +1733,16 @@ export class SheetService {
     this.afterEdit();
   }
 
+  defineFormulaName(name: string, formula: string): void {
+    const problem = this.document.defineFormulaName(name, formula);
+    if (problem !== null) {
+      this.publishNames(nameProblemText(problem));
+      return;
+    }
+    this.publishNames('');
+    this.afterEdit();
+  }
+
   removeName(name: string): void {
     if (this.document.removeName(name)) {
       this.publishNames('');
@@ -1742,13 +1752,16 @@ export class SheetService {
 
   private publishNames(refused: string): void {
     this.namesSubject.next({
-      entries: this.document.sheet.names.all().map(entry => ({
+      entries: this.document.sheet.names.ranges().map(entry => ({
         name: entry.name,
         firstRow: Math.min(entry.range.start.row, entry.range.end.row),
         firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
         lastRow: Math.max(entry.range.start.row, entry.range.end.row),
         lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
       })),
+      formulas: this.document.sheet.names
+        .all()
+        .flatMap(entry => (isNamedRange(entry) ? [] : [{ name: entry.name, formula: entry.formula }])),
       refused
     });
   }

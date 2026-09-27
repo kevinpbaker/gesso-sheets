@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { acceptCompletion, hintFor, markedArgument } from './FormulaHint';
+import { acceptCompletion, definedFunctionsOf, hintFor, markedArgument } from './FormulaHint';
 import { signatureOf } from './Signatures';
 
 /** Splits `=SUM(|` into the text and the caret offset. */
@@ -116,5 +116,28 @@ describe('which argument a signature marks', () => {
 
   it('marks nothing for a function that takes none', () => {
     expect(markedArgument(signatureOf('TODAY')!, 0)).toBe(-1);
+  });
+});
+
+/** Phase 28: a named LAMBDA is offered and hinted like the library's own. */
+describe('a function the workbook defined', () => {
+  const defined = definedFunctionsOf([
+    { name: 'Commission', formula: '=LAMBDA(amount, ROUND(amount*0.03, 2))' },
+    { name: 'TaxRate', formula: '=0.2' }
+  ]);
+
+  it('is a function only when the name holds a LAMBDA', () => {
+    expect(defined.map(each => each.name)).toEqual(['Commission']);
+    expect(defined[0].signature.args).toEqual(['amount']);
+  });
+
+  it('is offered while its name is typed', () => {
+    const hint = hintFor('=Comm', 5, defined);
+    expect(hint?.kind === 'completions' && hint.names).toEqual(['Commission']);
+  });
+
+  it('is hinted with its parameters once the bracket is typed', () => {
+    const hint = hintFor('=Commission(', 12, defined);
+    expect(hint?.kind === 'signature' && hint.signature.args).toEqual(['amount']);
   });
 });

@@ -135,6 +135,56 @@ describe('naming a range through the service', () => {
   });
 });
 
+/** Phase 28: a name can hold a formula, and a LAMBDA makes it a function. */
+describe('naming a formula through the service', () => {
+  const names = (service: SheetService) => {
+    let seen: SheetNames | undefined;
+    service.names.subscribe(value => (seen = value)).unsubscribe();
+    return seen!;
+  };
+
+  it('makes a function the sheet can call, and publishes it apart from the ranges', () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '21');
+    const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
+    service.defineFormulaName('Double', '=LAMBDA(x, x*2)');
+    service.setCell(0, 1, '=Double(A1)');
+    document.sheet.recalculate();
+    expect(document.sheet.value(0, 1)).toBe(42);
+    expect(names(service).entries).toEqual([]);
+    expect(names(service).formulas).toEqual([{ name: 'Double', formula: '=LAMBDA(x, x*2)' }]);
+  });
+
+  it('says why when the formula does not parse', () => {
+    const service = new SheetService(new SheetDocument(), { rowCount: 200, columnCount: 20 });
+    service.defineFormulaName('Double', '=LAMBDA(x, x*');
+    expect(names(service).formulas).toEqual([]);
+    expect(names(service).refused).toContain('does not parse');
+  });
+
+  it('takes it back on undo, and the caller notices', () => {
+    const document = new SheetDocument();
+    const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
+    service.setCell(0, 0, '=Rate*100');
+    service.defineFormulaName('Rate', '=0.2');
+    document.sheet.recalculate();
+    expect(document.sheet.value(0, 0)).toBe(20);
+    document.undo();
+    document.sheet.recalculate();
+    expect(document.sheet.display(0, 0)).toBe('#NAME?');
+  });
+
+  it('comes back with the sheet from a saved file', () => {
+    const document = new SheetDocument();
+    document.defineFormulaName('Double', '=LAMBDA(x, x*2)');
+    const reopened = new SheetDocument();
+    applySnapshot(reopened, parseSnapshot(JSON.stringify(snapshotOf(document)), 20)!);
+    reopened.setCell(0, 0, '=Double(4)');
+    reopened.sheet.recalculate();
+    expect(reopened.sheet.value(0, 0)).toBe(8);
+  });
+});
+
 describe('a name in a saved file', () => {
   it('comes back with the sheet', () => {
     const document = new SheetDocument();
@@ -235,6 +285,20 @@ describe('the name box', () => {
 
     await typeIntoBox('Sales');
     expect(document.sheet.names.rangeOf('Sales')).toBeNull();
+  });
+
+  /** `Name=formula`: the same gesture, with the formula in place of the selection. */
+  it('names a formula typed after an =', async () => {
+    const { document, service } = await mount(d => d.setCell(0, 0, '5'));
+    service.setSelection(1, 1, 1, 1);
+    await served.settle();
+    await ui.settle();
+
+    await typeIntoBox('Triple=LAMBDA(x, x*3)');
+    expect(document.sheet.names.formulaOf('Triple')).not.toBeNull();
+    service.setCell(2, 2, '=Triple(A1)');
+    document.sheet.recalculate();
+    expect(document.sheet.value(2, 2)).toBe(15);
   });
 
   it('goes to a name it already knows', async () => {

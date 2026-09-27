@@ -37,10 +37,23 @@ export function printFormula(node: Ast): string {
     case 'range':
       return printRange(node.range);
     case 'call':
+      if (node.word !== undefined) {
+        // A name, or a name a LET or LAMBDA bound, as it was typed:
+        // `Sales`, not `SALES()`, which would be a call to nothing.
+        return node.word;
+      }
       if (node.name === 'ANCHORARRAY' && node.args.length === 1 && node.args[0].kind === 'ref') {
         return `${printFormula(node.args[0])}#`;
       }
       return `${node.name}(${node.args.map(printFormula).join(',')})`;
+    case 'invoke': {
+      // A call or another invocation can be called as it stands; anything
+      // else is bracketed first, as it had to be to be called at all.
+      const callee = node.callee.kind === 'invoke' || (node.callee.kind === 'call' && node.callee.word === undefined)
+        ? printFormula(node.callee)
+        : `(${printFormula(node.callee)})`;
+      return `${callee}(${node.args.map(printFormula).join(',')})`;
+    }
     case 'unary':
       // Unary minus binds tighter than every binary operator, so any
       // operation under it needs its brackets back: -(A1+B1).

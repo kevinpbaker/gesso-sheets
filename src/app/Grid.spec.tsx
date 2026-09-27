@@ -1515,7 +1515,9 @@ describe('suggesting a function while it is typed', () => {
   });
 
   it('offers nothing for a word that is a cell reference', async () => {
-    await typing('=B');
+    // B2 and not B: BYCOL and BYROW start with a B, and Excel offers
+    // them for one, as this does.
+    await typing('=B2');
     expect(options()).toEqual([]);
   });
 

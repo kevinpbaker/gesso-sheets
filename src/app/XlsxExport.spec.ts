@@ -128,6 +128,33 @@ describe('a workbook written as an .xlsx', () => {
     expect(back.sheet.value(2, 0)).toBe(5);
   });
 
+  /**
+   * Phase 28. Excel writes a named LAMBDA as `_xlfn.LAMBDA(_xlpm.x, …)`
+   * — the function marked as one from after the format, the parameter
+   * as a parameter — and writes the same prefixes inside a cell's LET.
+   */
+  it('carries a named LAMBDA and a LET, spelt as Excel spells them', async () => {
+    const document = new SheetDocument();
+    document.setCell(0, 0, '21');
+    expect(document.defineFormulaName('Double', '=LAMBDA(x, x*2)')).toBeNull();
+    document.setCell(0, 1, '=Double(A1)');
+    document.setCell(0, 2, '=LET(total, A1+B1, total/3)');
+    document.setCell(0, 3, '=SUM(MAP(A1:B1, LAMBDA(v, v+1)))');
+    document.sheet.recalculate();
+    const parts = xlsxParts(xlsxOfDocument(document, ROWS).book);
+    const workbook = parts.find(part => part.name === 'xl/workbook.xml')!.text;
+    expect(workbook).toContain('<definedName name="Double">_xlfn.LAMBDA(_xlpm.x, _xlpm.x*2)</definedName>');
+    const sheet = parts.find(part => part.name === 'xl/worksheets/sheet1.xml')!.text;
+    expect(sheet).toContain('_xlfn.LET(_xlpm.total, A1+B1, _xlpm.total/3)');
+    expect(sheet).toContain('_xlfn.MAP(A1:B1, _xlfn.LAMBDA(_xlpm.v, _xlpm.v+1))');
+
+    const back = await roundTrip(document);
+    expect(back.sheet.names.all()).toEqual([expect.objectContaining({ name: 'Double', formula: '=LAMBDA(x, x*2)' })]);
+    expect([0, 1, 2, 3].map(column => back.sheet.value(0, column))).toEqual([21, 42, 21, 65]);
+    // Read back as formulas that run, not as the values Excel last saw.
+    expect(back.sheet.input(0, 2)).toBe('=LET(total, A1+B1, total/3)');
+  });
+
   it('says what it cannot carry', () => {
     const document = new SheetDocument();
     seed(document);

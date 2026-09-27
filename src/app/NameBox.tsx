@@ -115,6 +115,29 @@ export function NameBox(inputs: Inputs<NameBoxProps>, _ctx: ComponentContext) {
    */
   const define = (typed: string): void => {
     /**
+     * `Double=LAMBDA(x, x*2)`: a name and a formula for it to hold.
+     *
+     * The same gesture with an `=` in it. No selection is asked for —
+     * a formula has no range — and whether the formula parses is the
+     * application worker's to say, on the names view, as a refused
+     * name is.
+     */
+    const equals = typed.indexOf('=');
+    if (equals > 0) {
+      const name = typed.slice(0, equals).trim();
+      const formula = typed.slice(equals).trim();
+      const problem = nameProblem(name);
+      if (problem !== null) {
+        notice(nameProblemText(problem));
+        return;
+      }
+      draft.value = null;
+      notice('');
+      edit.defineFormulaName(name, formula);
+      edit.focusSheet();
+      return;
+    }
+    /**
      * The text first, the selection second.
      *
      * `not a cell` typed into the box is a slip rather than an

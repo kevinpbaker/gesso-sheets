@@ -211,7 +211,17 @@ export const SPECIAL_FORMS: ReadonlySet<string> = new Set([
   'ROW',
   'COLUMN',
   'SUBTOTAL',
-  'ANCHORARRAY'
+  'ANCHORARRAY',
+  // Phase 28: names bound inside a formula, functions as values, and
+  // the helpers that call one.
+  'LET',
+  'LAMBDA',
+  'MAP',
+  'REDUCE',
+  'SCAN',
+  'BYROW',
+  'BYCOL',
+  'MAKEARRAY'
 ]);
 
 /**

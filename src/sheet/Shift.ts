@@ -119,7 +119,17 @@ function shiftAst(node: Ast, shift: Shift, onSheet: string | undefined): Ast {
         changed = changed || moved !== arg;
         return moved;
       });
-      return changed ? { kind: 'call', name: node.name, args } : node;
+      return changed ? { ...node, args } : node;
+    }
+    case 'invoke': {
+      const callee = shiftAst(node.callee, shift, onSheet);
+      let changed = callee !== node.callee;
+      const args = node.args.map(arg => {
+        const moved = shiftAst(arg, shift, onSheet);
+        changed = changed || moved !== arg;
+        return moved;
+      });
+      return changed ? { kind: 'invoke', callee, args } : node;
     }
     case 'unary': {
       const operand = shiftAst(node.operand, shift, onSheet);

@@ -16,9 +16,82 @@ export type Ast =
   | { readonly kind: 'error'; readonly code: ErrorCode }
   | { readonly kind: 'ref'; readonly ref: CellRef }
   | { readonly kind: 'range'; readonly range: RangeRef }
-  | { readonly kind: 'call'; readonly name: string; readonly args: readonly Ast[] }
+  | CallNode
   | { readonly kind: 'unary'; readonly op: UnaryOperator; readonly operand: Ast }
-  | { readonly kind: 'binary'; readonly op: BinaryOperator; readonly left: Ast; readonly right: Ast };
+  | { readonly kind: 'binary'; readonly op: BinaryOperator; readonly left: Ast; readonly right: Ast }
+  /**
+   * A value called: `LAMBDA(x, x*2)(A1)`, or a `LAMBDA` a name or a
+   * `LET` handed back, called where it came out.
+   */
+  | { readonly kind: 'invoke'; readonly callee: Ast; readonly args: readonly Ast[] };
+
+/**
+ * A function called by name, or a bare word.
+ *
+ * A bare word — `Sales`, `TaxRate`, the `x` of `LAMBDA(x, x*2)` —
+ * is a call with no arguments that carries `word`, the spelling it was
+ * typed with. It is what tells `Sales` from `Sales()`, which are two
+ * different things to say: the first is a name and the second is a
+ * call to a function that does not exist. It is also what prints back,
+ * so a name filled down a column keeps the case it was typed in.
+ */
+export interface CallNode {
+  readonly kind: 'call';
+  readonly name: string;
+  readonly args: readonly Ast[];
+  readonly word?: string;
+}
+
+/** A bare word, by the name it is looked up under (upper case), or null. */
+export function wordOf(node: Ast): string | null {
+  return node.kind === 'call' && node.word !== undefined ? node.name : null;
+}
+
+/** The functions whose first arguments are names they bind, not values. */
+export const BINDERS: ReadonlySet<string> = new Set(['LET', 'LAMBDA']);
+
+/**
+ * Every name a `LET` or a `LAMBDA` in a formula binds, upper-cased.
+ *
+ * Not scoped: a name bound anywhere in the formula is in the set. It is
+ * for the two questions about a whole formula that need it — whether a
+ * file's formula mentions only things this sheet knows, and which words
+ * the file format marks as parameters — and neither is about where.
+ */
+export function bindingNamesOf(node: Ast, into = new Set<string>()): Set<string> {
+  switch (node.kind) {
+    case 'call': {
+      if (node.name === 'LAMBDA') {
+        node.args.slice(0, -1).forEach(arg => {
+          const word = wordOf(arg);
+          if (word !== null) {
+            into.add(word);
+          }
+        });
+      } else if (node.name === 'LET') {
+        node.args.forEach((arg, at) => {
+          const word = at % 2 === 0 && at < node.args.length - 1 ? wordOf(arg) : null;
+          if (word !== null) {
+            into.add(word);
+          }
+        });
+      }
+      node.args.forEach(arg => bindingNamesOf(arg, into));
+      return into;
+    }
+    case 'invoke':
+      bindingNamesOf(node.callee, into);
+      node.args.forEach(arg => bindingNamesOf(arg, into));
+      return into;
+    case 'unary':
+      return bindingNamesOf(node.operand, into);
+    case 'binary':
+      bindingNamesOf(node.left, into);
+      return bindingNamesOf(node.right, into);
+    default:
+      return into;
+  }
+}
 
 /** `@` is implicit intersection: the one value of a range, where Excel 365 writes it. */
 export type UnaryOperator = '-' | '+' | '@';
@@ -43,6 +116,12 @@ export function referencesOf(node: Ast, into: { ref(ref: CellRef): void; range(r
       into.range(node.range);
       return;
     case 'call':
+      for (const arg of node.args) {
+        referencesOf(arg, into);
+      }
+      return;
+    case 'invoke':
+      referencesOf(node.callee, into);
       for (const arg of node.args) {
         referencesOf(arg, into);
       }
@@ -78,6 +157,12 @@ export function callNamesOf(node: Ast, into: Set<string>): void {
         callNamesOf(arg, into);
       }
       return;
+    case 'invoke':
+      callNamesOf(node.callee, into);
+      for (const arg of node.args) {
+        callNamesOf(arg, into);
+      }
+      return;
     case 'unary':
       callNamesOf(node.operand, into);
       return;
@@ -105,6 +190,12 @@ export function bareWordsOf(node: Ast, into: Set<string>): void {
       if (node.args.length === 0) {
         into.add(node.name);
       }
+      for (const arg of node.args) {
+        bareWordsOf(arg, into);
+      }
+      return;
+    case 'invoke':
+      bareWordsOf(node.callee, into);
       for (const arg of node.args) {
         bareWordsOf(arg, into);
       }

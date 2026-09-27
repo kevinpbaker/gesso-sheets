@@ -6,7 +6,7 @@ import { SHEET, seed } from './SheetSeed';
 /** Where the seed puts things, as its own layout has them. */
 const TOTAL_ROW = 27;
 const ROLLUP_ROW = 8;
-const GLANCE_COUNT = 12;
+const GLANCE_COUNT = 14;
 
 /**
  * The seed, end to end through the engine.
@@ -165,6 +165,20 @@ describe('the seeded workbook', () => {
     expect(sheet.value(3, 1)).toBe(0.04);
     expect(sheet.value(24, 1)).toBeGreaterThan(base);
     expect(document.setCell(2, 1, 'Hopeful')).toBe('A scenario is Low, Base or High.');
+  });
+
+  it('calls a named LAMBDA down a column, and hands it to MAP', () => {
+    const document = seeded();
+    document.activate(SHEET.sales);
+    expect(document.sheet.input(3, 10)).toBe('=Commission(G4)');
+    const total = document.sheet.value(TOTAL_ROW, 10) as number;
+    document.activate(SHEET.summary);
+    // The same commission, worked out by MAP over the revenue column.
+    expect(document.sheet.value(ROLLUP_ROW + 3 + GLANCE_COUNT - 1, 1)).toBeCloseTo(total, 6);
+    // And a LET: the largest order over the rest of them.
+    const share = document.sheet.value(ROLLUP_ROW + 3 + GLANCE_COUNT - 2, 1) as number;
+    expect(share).toBeGreaterThan(0.1);
+    expect(share).toBeLessThan(0.2);
   });
 
   it('answers a lookup that cannot succeed with words instead of an error', () => {

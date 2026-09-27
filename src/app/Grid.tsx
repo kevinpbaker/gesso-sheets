@@ -40,7 +40,7 @@ import {
 import { guessOf, type Place } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
 import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer';
-import { acceptCompletion, hintFor, markedArgument, type FormulaHint } from '../sheet/FormulaHint';
+import { acceptCompletion, definedFunctionsOf, hintFor, markedArgument, type DefinedFunction, type FormulaHint } from '../sheet/FormulaHint';
 import type { Span } from '../sheet/Tokenizer';
 
 import * as dims from './dimensions';
@@ -1210,6 +1210,11 @@ export function Grid(
   const explain = internalState<SheetExplain | null>(null);
   /** Which name in the list is picked out, an index into `names`. */
   const chosen = internalState(0);
+  /** The workbook's own functions, named LAMBDAs, for the list and the hint. */
+  let definedFunctions: readonly DefinedFunction[] = [];
+  ctx.effect(sheet.view.names, current => {
+    definedFunctions = definedFunctionsOf(current.formulas);
+  });
 
   const refreshSpans = (): void => {
     const draft = edit.draftNow();
@@ -1221,7 +1226,7 @@ export function Grid(
     const caret = editorNode === null ? undefined : editorFor(editorNode).focus;
     editorSpans.next(formulaSpans(draft, caret));
 
-    const next = caret === undefined ? null : hintFor(draft, caret);
+    const next = caret === undefined ? null : hintFor(draft, caret, definedFunctions);
     /**
      * The choice survives a keystroke that did not change the list.
      *

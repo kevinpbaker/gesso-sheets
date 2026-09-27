@@ -1,5 +1,5 @@
 import { columnIndex } from './A1';
-import type { Ast } from './Ast';
+import { bindingNamesOf, type Ast } from './Ast';
 import { DEFAULT_FORMAT, GENERAL, NO_BORDERS, PLAIN, type CellEdge, type CellFormat, type CellPaint, type DatePattern, type NumberFormat } from './Format';
 import { isSheetFunction } from './Functions';
 import type { MergeRect } from './Merges';
@@ -115,11 +115,17 @@ export interface XlsxName {
 export interface XlsxBook {
   readonly sheets: readonly XlsxSheet[];
   readonly names: readonly XlsxName[];
+  /**
+   * Names that hold a formula rather than a range — a named `LAMBDA`,
+   * which Excel writes `_xlfn.LAMBDA(_xlpm.x, …)`, or a named
+   * calculation — as this sheet spells them, `=` and all.
+   */
+  readonly formulaNames: readonly { readonly name: string; readonly formula: string }[];
   /** Formulas whose last value was kept, because they could not be. */
   readonly valuesKept: number;
   /** Rows and columns past the sheet's edge, left out. */
   readonly cut: { readonly rows: number; readonly columns: number };
-  /** Defined names that are not a plain range, and so were not kept. */
+  /** Defined names that are neither a plain range nor a formula this sheet can read, and so were not kept. */
   readonly namesSkipped: number;
   /** Excel's iterative calculation, when the workbook turns it on; see `Workbook.iteration`. */
   readonly iteration: { readonly count: number; readonly delta: number } | null;
@@ -192,6 +198,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const dxfs = differentialFormats(read('xl/styles.xml'), theme);
 
   const names: XlsxName[] = [];
+  const formulaNames: { name: string; formula: string }[] = [];
   let namesSkipped = 0;
   for (const defined of children(child(workbook, 'definedNames'), 'definedName')) {
     const name = defined.attributes.name ?? '';
@@ -202,14 +209,21 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     }
     const range = rangeOf(defined.text.trim());
     if (range === null) {
-      namesSkipped++;
+      const formula = clean(defined.text.trim().replace(/^=/, ''));
+      if (formula !== '' && parses(formula)) {
+        formulaNames.push({ name, formula: `=${formula}` });
+      } else {
+        namesSkipped++;
+      }
       continue;
     }
     names.push({ name, ...range });
   }
   // A bare name parses as a call with no arguments, so a formula that
-  // reads one is runnable when the name is one of these.
-  const known = new Set(names.map(each => each.name.toUpperCase()));
+  // reads one is runnable when the name is one of these — and one that
+  // calls a named LAMBDA, when it is one of the formulas.
+  const callable = new Set(formulaNames.map(each => each.name.toUpperCase()));
+  const known = new Set([...names.map(each => each.name.toUpperCase()), ...callable]);
   // A name for one cell is one value already, and needs no `@`.
   const ranged = new Set(
     names
@@ -234,7 +248,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
     }
     const sheetName = entry.attributes.name ?? `Sheet${sheets.length + 1}`;
     const root = parseXml(text);
-    const sheet = worksheet(sheetName, root, strings, formats, limits, { known, ranged }, date1904, dxfs);
+    const sheet = worksheet(sheetName, root, strings, formats, limits, { known, ranged, callable }, date1904, dxfs);
     const charted = target === undefined ? { charts: [], skipped: 0 } : readCharts(root, target, sheetName, read);
     chartsLeftOut += charted.skipped;
     valuesKept += sheet.valuesKept;
@@ -294,7 +308,7 @@ export function readXlsx(read: (path: string) => string | null, limits: XlsxLimi
   const iteration = iterate
     ? { count: Number.isInteger(count) && count > 0 ? count : 100, delta: delta > 0 ? delta : 0.001 }
     : null;
-  return { sheets, names, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut, 'conditional formats': conditionalLeftOut, charts: chartsLeftOut } };
+  return { sheets, names, formulaNames, valuesKept, cut, namesSkipped, iteration, leftOut: { validations: validationsLeftOut, 'conditional formats': conditionalLeftOut, charts: chartsLeftOut } };
 }
 
 // ---------------------------------------------------------------------------
@@ -865,7 +879,7 @@ function worksheet(
   strings: readonly string[],
   formats: readonly CellFormat[],
   limits: XlsxLimits,
-  { known, ranged }: { known: ReadonlySet<string>; ranged: ReadonlySet<string> },
+  { known, ranged, callable }: { known: ReadonlySet<string>; ranged: ReadonlySet<string>; callable: ReadonlySet<string> },
   date1904: boolean,
   dxfs: readonly ConditionalPaint[] = []
 ): ReadSheet {
@@ -942,7 +956,7 @@ function worksheet(
         }
         continue;
       }
-      const read = cellInput(cell, at.row, at.column, strings, shared, known, ranged);
+      const read = cellInput(cell, at.row, at.column, strings, shared, known, ranged, callable);
       if (read === null) {
         if (style > 0) {
           styled.push({ row: at.row, column: at.column, style });
@@ -1052,7 +1066,8 @@ function cellInput(
   strings: readonly string[],
   shared: Map<string, { input: string; row: number; column: number }>,
   known: ReadonlySet<string>,
-  ranged: ReadonlySet<string>
+  ranged: ReadonlySet<string>,
+  callable: ReadonlySet<string>
 ): { input: string; asText: boolean; kept: boolean; cached?: string } | null {
   const type = cell.attributes.t ?? 'n';
   const raw = child(cell, 'v')?.text ?? null;
@@ -1061,7 +1076,7 @@ function cellInput(
   const formula = child(cell, 'f');
   if (formula !== null) {
     const written = formulaOf(formula, row, column, shared, ranged);
-    if (written !== null && canRun(written, known)) {
+    if (written !== null && canRun(written, known, callable)) {
       return { input: written, asText: false, kept: false, ...(value === null ? {} : { cached: value.text }) };
     }
     if (value === null) {
@@ -1117,7 +1132,7 @@ function literal(value: Value): { input: string; asText: boolean } {
   return { input: text, asText: text.startsWith('=') || typeof literalOf(text) !== 'string' };
 }
 
-const KNOWN_ERRORS: ReadonlySet<string> = new Set(['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!', '#SPILL!']);
+const KNOWN_ERRORS: ReadonlySet<string> = new Set(['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#N/A', '#NUM!', '#SPILL!', '#CALC!']);
 
 /**
  * A formula as this sheet would write it, or null.
@@ -1166,25 +1181,40 @@ function clean(text: string): string {
     .replace(/_xl(?:fn|ws|pm)\./g, '');
 }
 
+/** Whether a formula's text parses here. */
+function parses(formula: string): boolean {
+  try {
+    parseFormula(formula);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function inside(area: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number }, row: number, column: number): boolean {
   return row >= area.firstRow && row <= area.lastRow && column >= area.firstColumn && column <= area.lastColumn;
 }
 
 /** Whether this sheet can parse a formula and knows every function and name it calls. */
-function canRun(input: string, known: ReadonlySet<string>): boolean {
+function canRun(input: string, known: ReadonlySet<string>, callable: ReadonlySet<string> = new Set()): boolean {
   let tree: Ast;
   try {
     tree = parseFormula(input.slice(1));
   } catch {
     return false;
   }
+  // A name a LET or LAMBDA in the formula binds is known inside it.
+  const bound = bindingNamesOf(tree);
   const knowsAll = (node: Ast): boolean => {
     switch (node.kind) {
       case 'call': {
         const name = node.name.toUpperCase();
-        const found = isSheetFunction(name) || (node.args.length === 0 && known.has(name));
+        const found =
+          isSheetFunction(name) || bound.has(name) || callable.has(name) || (node.args.length === 0 && known.has(name));
         return found && node.args.every(knowsAll);
       }
+      case 'invoke':
+        return knowsAll(node.callee) && node.args.every(knowsAll);
       case 'unary':
         return knowsAll(node.operand);
       case 'binary':
@@ -1205,6 +1235,8 @@ function canRun(input: string, known: ReadonlySet<string>): boolean {
         return node.range.start.sheet?.startsWith('[') === true;
       case 'call':
         return node.args.some(external);
+      case 'invoke':
+        return external(node.callee) || node.args.some(external);
       case 'unary':
         return external(node.operand);
       case 'binary':

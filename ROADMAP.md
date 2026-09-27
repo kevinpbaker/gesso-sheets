@@ -2547,7 +2547,7 @@ two more, and they are about safety rather than speed.
 
 ---
 
-### Phase 28 — LET and LAMBDA
+### Phase 28 — LET and LAMBDA — **done**
 
 **Names that hold formulas.** A defined name holds a range today;
 `NamedRange` is a name and a `RangeRef` and nothing else. It gains a
@@ -2589,6 +2589,79 @@ budget spec for the evaluator: a `LAMBDA` called down a column of
 inline. A round trip through `.xlsx` of a workbook with named
 `LAMBDA`s, opened in LibreOffice (which reads `LAMBDA` since 24.8), and
 the count of POI's files that have one.
+
+**Met, apart from LibreOffice, which turned out not to read `LAMBDA`.**
+
+- **In the evaluator,** a `LAMBDA` is a value: its parameters, its
+  body, and the names in scope where it was made, so a function a
+  `LET` built still knows the `LET`'s names wherever it is called.
+  `LET` binds left to right and refuses a name bound twice. A name a
+  formula binds shadows a workbook name. `ROW(row)` inside
+  `LAMBDA(row, …)` still reaches the function, because brackets after
+  a name bound to a value mean the function of that name. A function
+  where a cell's value belongs is `#CALC!`, a new error code, as in
+  Excel. So is a helper's `LAMBDA` that hands back a whole array where
+  one value was wanted. `MAP`, `REDUCE`, `SCAN`, `BYROW`, `BYCOL` and
+  `MAKEARRAY` are special forms beside `IF`, because they are handed a
+  function and a table function is handed values. `LAMBDA(x, x*2)(A1)`
+  parses as an `invoke` node, a new kind in the tree that every walker
+  now handles.
+- **Recursion** is allowed to a depth of 512, and past that it is
+  `#NUM!`. So is a name defined as itself, and so is the engine's own
+  stack if a body is deep enough to reach it first.
+- **Names that hold formulas.** `Names` holds a range or a formula,
+  kept as its text and parsed once. `Double(A1)` calls a named
+  `LAMBDA`, and `Gross` reads a named calculation. Unqualified
+  references in the formula are read on the caller's sheet, the rule a
+  range without a sheet already follows. The name box takes the
+  gesture: `Double=LAMBDA(x, x*2)` typed into it defines one. The
+  formula list and the signature hint offer a named `LAMBDA` like the
+  library's own, with its parameters as arguments. Names that hold
+  formulas are saved in the file as their text, and a build from before
+  this leaves them out rather than misreading them.
+- **The graph.** A formula depends on everything the formulas of the
+  names it reaches read, through names inside names, each once. So a
+  `LAMBDA` reading `TaxRate` wakes every caller when the rate changes,
+  and `NOW()` inside a named function makes its callers volatile.
+  Redefining a name rewires the workbook, as it already did.
+- **A bug that was already there.** The tree could not tell `Sales`
+  from `Sales()`, so filling `=SUM(Sales)` down a column printed
+  `=SUM(SALES())`, which is `#NAME?`. A bare word now carries the
+  spelling it was typed with, so the name comes back as typed and a
+  `LET`'s `price` stays `price`.
+- **`.xlsx`.** The writer spells the new functions `_xlfn.` and every
+  name a `LET` or `LAMBDA` binds `_xlpm.`, in cells and in defined
+  names, as Excel does. The reader keeps a defined name that is a
+  formula rather than skipping it. It also treats a cell calling a
+  named `LAMBDA`, or using a `LET`'s names, as a formula it can run
+  rather than a value to keep. `INDEX` takes a single value as an array
+  of one, as Excel's does, so `INDEX(BYCOL(A1:A3, …), 1)` is not
+  `#VALUE!`.
+- **LibreOffice 26.8 does not implement `LAMBDA`.** It translates `LET`
+  (as `COM.MICROSOFT.LET`) and computes it. It keeps `LAMBDA`, `MAP`
+  and the rest as `_xlfn.lambda`, a function it does not know. Opened
+  with the default settings, it shows the values this sheet cached in
+  the file. Made to recalculate, every one of them is `#NAME?`, and so
+  is a call to a named `LAMBDA`. What it does do is carry them: a file
+  it saves back reads here with every formula intact and recalculating
+  to the same answers. The plan's "since 24.8" was about `LET`.
+- **POI's files: none has one.** Of the 335 of POI's 353 files that
+  open, none uses `LAMBDA` or `LET`. Reading names that are formulas
+  did change 11 of them: 100 names that used to be skipped are read
+  now. Most are Excel's broken `=#REF!` names, which Excel keeps too.
+  The 29 still skipped are unions (`#REF!,#REF!`) and sheet-qualified
+  errors (`Sheet1!#REF!`), which no formula can say.
+- **The budget.** A hundred thousand rows calling a named `LAMBDA`
+  recalculate in 1.3 to 1.4 times the time of the same arithmetic
+  written inline. `Lambda.budget.spec.ts` holds it under 3, and asserts
+  exactly one evaluation per row.
+- **The seed** shows it: Sales's commission column calls a named
+  `Commission` `LAMBDA`, and Summary has a `LET` and a `MAP` handed
+  that function, which agrees with the column's total.
+
+**Not done:** a `LAMBDA`'s optional parameters, `[x]` and
+`ISOMITTED`, which nothing here writes yet. Also a name scoped to one
+sheet: this workbook's names belong to the workbook, as they did before.
 
 ### Phase 29 — The security model, written
 

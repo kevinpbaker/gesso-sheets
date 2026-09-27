@@ -1,6 +1,8 @@
 import { columnIndex, inBounds, MAX_COLUMNS, parseRef, type RangeRef } from './A1';
+import type { Ast } from './Ast';
 import { isSheetFunction } from './Functions';
-import { shiftRange, type Shift } from './Shift';
+import { FormulaSyntaxError, parseFormula } from './Parser';
+import { shiftFormula, shiftRange, type Shift } from './Shift';
 
 /**
  * Names for ranges: `Sales` instead of `B2:B97`.
@@ -36,8 +38,33 @@ export interface NamedRange {
   readonly range: RangeRef;
 }
 
+/**
+ * A name that holds a formula rather than a range.
+ *
+ * `TaxRate` as `=0.2`, `Gross` as `=Net*(1+TaxRate)` — a calculation
+ * with a name — and, the reason this exists, `Double` as
+ * `=LAMBDA(x, x*2)`: a function, called by its name as `=Double(A1)`
+ * like any other. The formula is kept as written, `=` and all, and
+ * parsed once when it is defined.
+ */
+export interface NamedFormula {
+  readonly name: string;
+  readonly formula: string;
+  readonly ast: Ast;
+}
+
+/** Everything a name can hold. */
+export type DefinedName = NamedRange | NamedFormula;
+
+/** A name as a file or an undo step keeps it: a formula without its tree. */
+export type StoredDefinedName = NamedRange | { readonly name: string; readonly formula: string };
+
+export function isNamedRange(entry: DefinedName | StoredDefinedName): entry is NamedRange {
+  return 'range' in entry;
+}
+
 /** Why a name was refused, in words somebody can act on. */
-export type NameProblem = 'empty' | 'shape' | 'reference' | 'long' | 'function';
+export type NameProblem = 'empty' | 'shape' | 'reference' | 'long' | 'function' | 'formula';
 
 const SHAPE = /^[A-Za-z_][A-Za-z0-9_.]*$/;
 /** Excel's limit, and long enough that nothing real reaches it. */
@@ -111,6 +138,24 @@ export function nameProblemText(problem: NameProblem): string {
       return 'That is a cell reference, so it already means something else.';
     case 'function':
       return 'That is the name of a function, which the sheet reaches for first.';
+    case 'formula':
+      return 'The formula after the = does not parse, so the name would hold nothing.';
+  }
+}
+
+/** A formula for a name, parsed; the leading `=` is optional. Null if it does not parse. */
+function parsedFormula(formula: string): Ast | null {
+  const text = formula.trim().replace(/^=/, '');
+  if (text === '') {
+    return null;
+  }
+  try {
+    return parseFormula(text);
+  } catch (error) {
+    if (error instanceof FormulaSyntaxError) {
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -122,15 +167,27 @@ export function nameProblemText(problem: NameProblem): string {
  * listing can still show `Sales` rather than `SALES`.
  */
 export class Names {
-  private readonly byKey = new Map<string, NamedRange>();
+  private readonly byKey = new Map<string, DefinedName>();
 
   get size(): number {
     return this.byKey.size;
   }
 
-  /** The range a name stands for, or null. */
+  /** The range a name stands for, or null — also for a name that holds a formula. */
   rangeOf(name: string): RangeRef | null {
-    return this.byKey.get(name.toUpperCase())?.range ?? null;
+    const entry = this.byKey.get(name.toUpperCase());
+    return entry !== undefined && isNamedRange(entry) ? entry.range : null;
+  }
+
+  /** The formula a name holds, parsed, or null — also for a name that holds a range. */
+  formulaOf(name: string): Ast | null {
+    const entry = this.byKey.get(name.toUpperCase());
+    return entry !== undefined && !isNamedRange(entry) ? entry.ast : null;
+  }
+
+  /** Whatever a name holds, or undefined. */
+  get(name: string): DefinedName | undefined {
+    return this.byKey.get(name.toUpperCase());
   }
 
   has(name: string): boolean {
@@ -155,13 +212,38 @@ export class Names {
     return null;
   }
 
+  /**
+   * Gives a name a formula to hold, or says why not: the name's own
+   * rules, and then a formula that parses. `=LAMBDA(x, x*2)` makes a
+   * function; anything else is a calculation with a name.
+   */
+  defineFormula(name: string, formula: string): NameProblem | null {
+    const problem = nameProblem(name);
+    if (problem !== null) {
+      return problem;
+    }
+    const ast = parsedFormula(formula);
+    if (ast === null) {
+      return 'formula';
+    }
+    const trimmed = name.trim();
+    const text = formula.trim();
+    this.byKey.set(trimmed.toUpperCase(), { name: trimmed, formula: text.startsWith('=') ? text : `=${text}`, ast });
+    return null;
+  }
+
   remove(name: string): boolean {
     return this.byKey.delete(name.toUpperCase());
   }
 
   /** Every name, in the order somebody would read them. */
-  all(): NamedRange[] {
+  all(): DefinedName[] {
     return [...this.byKey.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** The names that hold ranges, which are the ones a name box can go to. */
+  ranges(): NamedRange[] {
+    return this.all().filter(isNamedRange);
   }
 
   /**
@@ -176,6 +258,19 @@ export class Names {
    */
   shift(shift: Shift): void {
     for (const [key, entry] of [...this.byKey]) {
+      if (!isNamedRange(entry)) {
+        // A formula's references move as a cell's would; its
+        // unqualified ones belong to whichever sheet reads it, so only
+        // the ones that name the shifted sheet move.
+        const moved = shiftFormula(entry.formula, shift);
+        if (moved !== entry.formula) {
+          const ast = parsedFormula(moved);
+          if (ast !== null) {
+            this.byKey.set(key, { name: entry.name, formula: moved, ast });
+          }
+        }
+        continue;
+      }
       const moved = shiftRange(entry.range, shift);
       // `shiftRange` marks a range whose every cell was deleted by
       // putting its corners off the sheet, which is what makes a
@@ -192,11 +287,22 @@ export class Names {
     }
   }
 
-  /** Replaces the whole table, for loading a file and for undo. */
-  restore(entries: readonly NamedRange[]): void {
+  /**
+   * Replaces the whole table, for loading a file and for undo. A stored
+   * formula is parsed again; one that no longer parses is left out
+   * rather than kept as a name that holds nothing.
+   */
+  restore(entries: readonly (DefinedName | StoredDefinedName)[]): void {
     this.byKey.clear();
     for (const entry of entries) {
-      this.byKey.set(entry.name.toUpperCase(), entry);
+      if (isNamedRange(entry)) {
+        this.byKey.set(entry.name.toUpperCase(), entry);
+        continue;
+      }
+      const ast = 'ast' in entry ? entry.ast : parsedFormula(entry.formula);
+      if (ast !== null) {
+        this.byKey.set(entry.name.toUpperCase(), { name: entry.name, formula: entry.formula, ast });
+      }
     }
   }
 }

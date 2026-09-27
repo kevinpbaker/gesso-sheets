@@ -1,6 +1,40 @@
 import { callAt, scanFormula, wordAt } from './FormulaScan';
+import { parseFormula } from './Parser';
 import { completionsFor, signatureOf, type Signature } from './Signatures';
 import type { Span } from './Tokenizer';
+
+/**
+ * A function the workbook defined: a name that holds a `LAMBDA`, offered
+ * as it is typed and hinted once its bracket is, like the library's own.
+ */
+export interface DefinedFunction {
+  /** As it was defined, which is how it is offered. */
+  readonly name: string;
+  readonly signature: Signature;
+}
+
+/**
+ * The names among these that hold a `LAMBDA`, as functions: the
+ * parameters are the arguments, and the formula is the summary, because
+ * nobody wrote a sentence for it and the formula says what it does.
+ */
+export function definedFunctionsOf(formulas: readonly { name: string; formula: string }[]): DefinedFunction[] {
+  const found: DefinedFunction[] = [];
+  for (const { name, formula } of formulas) {
+    let tree;
+    try {
+      tree = parseFormula(formula.replace(/^=/, ''));
+    } catch {
+      continue;
+    }
+    if (tree.kind !== 'call' || tree.name !== 'LAMBDA' || tree.args.length === 0) {
+      continue;
+    }
+    const args = tree.args.slice(0, -1).map(arg => (arg.kind === 'call' && arg.word !== undefined ? arg.word : '?'));
+    found.push({ name, signature: { args, summary: formula } });
+  }
+  return found;
+}
 
 /**
  * What to offer somebody in the middle of typing a formula.
@@ -39,7 +73,7 @@ export type FormulaHint =
     }
   | null;
 
-export function hintFor(text: string, caret: number): FormulaHint {
+export function hintFor(text: string, caret: number, defined: readonly DefinedFunction[] = []): FormulaHint {
   if (!text.startsWith('=')) {
     return null;
   }
@@ -48,7 +82,11 @@ export function hintFor(text: string, caret: number): FormulaHint {
   const word = wordAt(scan, caret);
   if (word !== null) {
     const prefix = text.slice(word.start, word.end);
-    const names = completionsFor(prefix);
+    const upper = prefix.toUpperCase();
+    const names = [
+      ...completionsFor(prefix),
+      ...defined.filter(each => prefix !== '' && each.name.toUpperCase().startsWith(upper)).map(each => each.name)
+    ];
     // A word that matches nothing is somebody typing something else —
     // a name the sheet does not know, or a word inside a string. An
     // empty popup is worse than none.
@@ -62,7 +100,8 @@ export function hintFor(text: string, caret: number): FormulaHint {
   if (call === null) {
     return null;
   }
-  const signature = signatureOf(call.name);
+  const signature =
+    signatureOf(call.name) ?? defined.find(each => each.name.toUpperCase() === call.name.toUpperCase())?.signature ?? null;
   if (signature === null) {
     return null;
   }

@@ -155,7 +155,8 @@ export class ConditionalPainter {
     const answer = evaluate(moved, {
       valueAt: (key: number) => sheet.valueAt(key),
       usedRows: sheet.usedRows,
-      rangeForName: (name: string) => sheet.rangeForName(name)
+      rangeForName: (name: string) => sheet.rangeForName(name),
+      formulaForName: (name: string) => sheet.formulaForName(name)
     });
     const truth = toBoolean(answer);
     return typeof truth === 'boolean' && truth;

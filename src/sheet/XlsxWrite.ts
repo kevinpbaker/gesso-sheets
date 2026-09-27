@@ -1,4 +1,6 @@
 import { columnName, quoteSheetName } from './A1';
+import { bindingNamesOf } from './Ast';
+import { parseFormula } from './Parser';
 import type { Validation } from './Validation';
 import { dxfOf, writeConditionals, writeValidations } from './XlsxRules';
 import { chartPartOf, drawingPartOf, type XlsxOutChart } from './XlsxCharts';
@@ -83,11 +85,17 @@ export interface XlsxOutName {
   readonly lastColumn: number;
 }
 
+/** A name that holds a formula, as written in this sheet, `=` and all. */
+export interface XlsxOutFormulaName {
+  readonly name: string;
+  readonly formula: string;
+}
+
 export interface XlsxOut {
   readonly sheets: readonly XlsxOutSheet[];
   /** Every format a cell uses, 0 the default. */
   readonly formats: readonly CellFormat[];
-  readonly names: readonly XlsxOutName[];
+  readonly names: readonly (XlsxOutName | XlsxOutFormulaName)[];
   readonly active: number;
   readonly iteration: { readonly count: number; readonly delta: number } | null;
 }
@@ -126,7 +134,7 @@ export function xlsxParts(book: XlsxOut): { name: string; text: string }[] {
   );
   const ranged = new Set(
     book.names
-      .filter(name => name.firstRow !== name.lastRow || name.firstColumn !== name.lastColumn)
+      .filter(name => !('formula' in name) && (name.firstRow !== name.lastRow || name.firstColumn !== name.lastColumn))
       .map(name => name.name.toUpperCase())
   );
   const parts: { name: string; text: string }[] = [
@@ -250,6 +258,11 @@ function contentTypes(sheets: number, noted: readonly boolean[] = [], charted: r
 function workbookOf(book: XlsxOut, sheets: readonly XlsxOutSheet[]): string {
   const names = book.names
     .map(name => {
+      if ('formula' in name) {
+        // As a cell's formula is spelt, prefixes and all: Excel writes a
+        // named LAMBDA as `_xlfn.LAMBDA(_xlpm.x, …)`.
+        return `<definedName name="${escape(name.name)}">${escape(excelFormula(name.formula, true))}</definedName>`;
+      }
       const start = `$${columnName(name.firstColumn)}$${name.firstRow + 1}`;
       const end = `$${columnName(name.lastColumn)}$${name.lastRow + 1}`;
       const ref = `${quoteSheetName(name.sheet)}!${start}${start === end ? '' : `:${end}`}`;
@@ -594,7 +607,15 @@ const XLFN = new Set([
   'NORM.DIST',
   'NORM.INV',
   'NORM.S.DIST',
-  'NORM.S.INV'
+  'NORM.S.INV',
+  'LET',
+  'LAMBDA',
+  'MAP',
+  'REDUCE',
+  'SCAN',
+  'BYROW',
+  'BYCOL',
+  'MAKEARRAY'
 ]);
 /** And two more that carry the worksheet prefix as well. */
 const XLWS = new Set(['FILTER', 'SORT']);
@@ -609,8 +630,21 @@ export function excelFormula(input: string, array: boolean): string {
     return body;
   }
   const edits: { at: number; to: number; text: string }[] = [];
+  // The names a LET or LAMBDA binds are written `_xlpm.x`, where they are
+  // bound and wherever they are read — which the tree knows and the
+  // tokens do not.
+  let bound: ReadonlySet<string> = new Set();
+  try {
+    bound = bindingNamesOf(parseFormula(body));
+  } catch {
+    // A formula that does not parse binds nothing.
+  }
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at];
+    if (token.kind === 'word' && bound.has(token.value.toUpperCase())) {
+      edits.push({ at: token.start, to: token.start, text: '_xlpm.' });
+      continue;
+    }
     if (token.kind === 'word' && tokens[at + 1]?.kind === 'open') {
       const name = token.value.toUpperCase();
       const prefix = XLWS.has(name) ? '_xlfn._xlws.' : XLFN.has(name) ? '_xlfn.' : '';

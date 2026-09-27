@@ -1,3 +1,4 @@
+import type { Ast } from './Ast';
 import type { RangeRef } from './A1';
 import type { Names } from './Names';
 import type { Shift } from './Shift';
@@ -151,6 +152,11 @@ export class Sheet {
   /** The `EvaluationContext`'s name half. */
   rangeForName(name: string): RangeRef | null {
     return this.book.names.rangeOf(name);
+  }
+
+  /** The other half: the formula a name holds, when it holds one. */
+  formulaForName(name: string): Ast | null {
+    return this.book.names.formulaOf(name);
   }
 
   /** The value behind a key, which already carries its sheet. */

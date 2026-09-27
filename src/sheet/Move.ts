@@ -96,7 +96,17 @@ function moveAst(node: Ast, move: Move, onSheet: string, qualify: boolean): Ast 
         changed ||= next !== arg;
         return next;
       });
-      return changed ? { kind: 'call', name: node.name, args } : node;
+      return changed ? { ...node, args } : node;
+    }
+    case 'invoke': {
+      const callee = moveAst(node.callee, move, onSheet, qualify);
+      let changed = callee !== node.callee;
+      const args = node.args.map(arg => {
+        const next = moveAst(arg, move, onSheet, qualify);
+        changed ||= next !== arg;
+        return next;
+      });
+      return changed ? { kind: 'invoke', callee, args } : node;
     }
     case 'unary': {
       const operand = moveAst(node.operand, move, onSheet, qualify);

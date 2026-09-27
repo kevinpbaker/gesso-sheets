@@ -58,7 +58,7 @@ export type Token = Span &
 
 export class FormulaSyntaxError extends Error {}
 
-const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A', '#NUM!', '#SPILL!'];
+const ERROR_LITERALS: readonly ErrorCode[] = ['#REF!', '#DIV/0!', '#NAME?', '#VALUE!', '#CIRC!', '#N/A', '#NUM!', '#SPILL!', '#CALC!'];
 
 const TWO_CHARACTER_OPERATORS = new Set(['<>', '<=', '>=']);
 const ONE_CHARACTER_OPERATORS = new Set(['+', '-', '*', '/', '^', '&', '=', '<', '>', '@']);

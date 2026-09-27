@@ -724,6 +724,20 @@ export class Workbook {
     const on = sheetOf(key);
     const { keys, columns } = this.precedentsOf(formula, on);
     /**
+     * A name that holds a formula is read *through*: `=Double(A1)`
+     * depends on A1, and on every cell `Double`'s own formula reads, and
+     * on what the names inside that read. Otherwise a `LAMBDA` whose body
+     * reads `TaxRate` leaves every caller stale when the rate changes.
+     * On the caller's sheet, because that is where the name's unqualified
+     * references are read.
+     */
+    const bodies = this.namedBodiesOf(formula);
+    for (const body of bodies) {
+      const through = this.precedentsOf(body, on);
+      keys.push(...through.keys);
+      columns.push(...through.columns);
+    }
+    /**
      * A named range is read, so it is a precedent.
      *
      * Without this a formula saying `=SUM(Sales)` has no edge to the
@@ -733,6 +747,9 @@ export class Workbook {
      */
     const words = new Set<string>();
     bareWordsOf(formula, words);
+    for (const body of bodies) {
+      bareWordsOf(body, words);
+    }
     for (const word of words) {
       const range = this.names.rangeOf(word);
       if (range === null) {
@@ -754,6 +771,36 @@ export class Workbook {
     }
     this.graph.setPrecedents(key, keys);
     this.graph.setWatchedColumns(key, columns);
+  }
+
+  /**
+   * The formulas of every name a formula reaches, through names inside
+   * names, each once — so a `LAMBDA` that calls itself by name is read
+   * once and not forever.
+   */
+  private namedBodiesOf(formula: Ast): Ast[] {
+    if (this.names.size === 0) {
+      return [];
+    }
+    const bodies: Ast[] = [];
+    const seen = new Set<string>();
+    const visit = (node: Ast): void => {
+      const called = new Set<string>();
+      callNamesOf(node, called);
+      for (const name of called) {
+        if (seen.has(name)) {
+          continue;
+        }
+        seen.add(name);
+        const body = this.names.formulaOf(name);
+        if (body !== null) {
+          bodies.push(body);
+          visit(body);
+        }
+      }
+    };
+    visit(formula);
+    return bodies;
   }
 
   /**
@@ -805,6 +852,9 @@ export class Workbook {
   private classify(key: number, formula: Ast): void {
     const names = new Set<string>();
     callNamesOf(formula, names);
+    for (const body of this.namedBodiesOf(formula)) {
+      callNamesOf(body, names);
+    }
     let isVolatile = false;
     let isDynamic = false;
     for (const name of names) {
@@ -1190,6 +1240,7 @@ export class Workbook {
       valueAt: (key: number) => this.valueAt(key),
       functions: this.functions,
       rangeForName: (name: string) => this.names.rangeOf(name),
+      formulaForName: (name: string) => this.names.formulaOf(name),
       book: this.asContext,
       onSheet: sheet,
       at: key === undefined ? undefined : { row: rowOf(key), column: columnOf(key) },

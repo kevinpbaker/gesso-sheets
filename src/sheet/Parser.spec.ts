@@ -23,6 +23,8 @@ function show(node: Ast): string {
       return `range(${show({ kind: 'ref', ref: node.range.start })},${show({ kind: 'ref', ref: node.range.end })})`;
     case 'call':
       return `${node.name}(${node.args.map(show).join(',')})`;
+    case 'invoke':
+      return `[${show(node.callee)}](${node.args.map(show).join(',')})`;
     case 'unary':
       return `${node.op}${show(node.operand)}`;
     case 'binary':

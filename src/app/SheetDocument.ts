@@ -7,7 +7,7 @@ import { columnName, MAX_COLUMNS as MAX_COLUMNS_HERE, MAX_ROWS as MAX_ROWS_HERE,
 import { Notes, type Note } from '../sheet/Notes';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
-import type { NamedRange, NameProblem } from '../sheet/Names';
+import { isNamedRange, type DefinedName, type NameProblem } from '../sheet/Names';
 import { Sheet } from '../sheet/Sheet';
 import type { SheetSelection } from './SheetContract';
 import { literalOf, Workbook } from '../sheet/Workbook';
@@ -51,8 +51,8 @@ interface NamesEdit extends OnASheet {
   readonly kind: 'names';
   readonly row: number;
   readonly column: number;
-  readonly before: readonly NamedRange[];
-  readonly after: readonly NamedRange[];
+  readonly before: readonly DefinedName[];
+  readonly after: readonly DefinedName[];
 }
 
 /**
@@ -944,10 +944,34 @@ export class SheetDocument {
     return null;
   }
 
+  /**
+   * Gives a name a formula to hold — `=0.2`, or `=LAMBDA(x, x*2)` — or
+   * says why it cannot. Recorded like a range's, and taken back the
+   * same way; the step selects the cell somebody was on, because a
+   * formula has no range of its own to go to.
+   */
+  defineFormulaName(name: string, formula: string): NameProblem | null {
+    const before = this.sheet.names.all();
+    const problem = this.sheet.names.defineFormula(name, formula);
+    if (problem !== null) {
+      return problem;
+    }
+    this.record({
+      kind: 'names',
+      sheet: this.activeSheet,
+      row: this.selection.row,
+      column: this.selection.column,
+      before,
+      after: this.sheet.names.all()
+    });
+    this.sheet.namesChanged();
+    return null;
+  }
+
   /** Takes a name away. False when there was no such name. */
   removeName(name: string): boolean {
-    const range = this.sheet.names.rangeOf(name);
-    if (range === null) {
+    const entry = this.sheet.names.get(name);
+    if (entry === undefined) {
       return false;
     }
     const before = this.sheet.names.all();
@@ -955,8 +979,8 @@ export class SheetDocument {
     this.record({
       kind: 'names',
       sheet: this.activeSheet,
-      row: Math.min(range.start.row, range.end.row),
-      column: Math.min(range.start.column, range.end.column),
+      row: isNamedRange(entry) ? Math.min(entry.range.start.row, entry.range.end.row) : this.selection.row,
+      column: isNamedRange(entry) ? Math.min(entry.range.start.column, entry.range.end.column) : this.selection.column,
       before,
       after: this.sheet.names.all()
     });
@@ -1157,7 +1181,7 @@ export class SheetDocument {
     page.validations.push(...held.validations);
   }
 
-  private restoreNames(entries: readonly NamedRange[]): void {
+  private restoreNames(entries: readonly DefinedName[]): void {
     this.sheet.names.restore(entries);
     this.sheet.namesChanged();
   }

@@ -62,6 +62,8 @@ export interface SheetEditing {
   readonly names: Observable<SheetNames>;
   /** Gives the selection a name. The answer arrives on `names`. */
   defineName(name: string): void;
+  /** Gives a name a formula to hold. The answer arrives on `names`. */
+  defineFormulaName(name: string, formula: string): void;
   /** The grid, saying which node that is. Called once, on mount. */
   provideFocus(run: () => void): void;
   /**
@@ -460,6 +462,7 @@ export function editing(
     selectionNow: () => selection.value,
     names: sheet.view.names,
     defineName: (name: string) => sheet.send.defineName(name),
+    defineFormulaName: (name: string, formula: string) => sheet.send.defineFormulaName(name, formula),
     draft,
     draftNow: () => draft.value,
     open: draft.pipe(

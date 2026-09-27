@@ -86,7 +86,14 @@ function permute(node: Ast, moved: ReadonlyMap<number, number>, columns: ColumnS
       const args = node.args.map(arg => permute(arg, moved, columns));
       return args.every(arg => arg === null)
         ? null
-        : { kind: 'call', name: node.name, args: node.args.map((arg, at) => args[at] ?? arg) };
+        : { ...node, args: node.args.map((arg, at) => args[at] ?? arg) };
+    }
+    case 'invoke': {
+      const callee = permute(node.callee, moved, columns);
+      const args = node.args.map(arg => permute(arg, moved, columns));
+      return callee === null && args.every(arg => arg === null)
+        ? null
+        : { kind: 'invoke', callee: callee ?? node.callee, args: node.args.map((arg, at) => args[at] ?? arg) };
     }
     case 'unary': {
       const operand = permute(node.operand, moved, columns);
@@ -178,6 +185,10 @@ function collect(node: Ast, columns: ColumnSpan, into: RowSpan[]): void {
       return;
     }
     case 'call':
+      node.args.forEach(arg => collect(arg, columns, into));
+      return;
+    case 'invoke':
+      collect(node.callee, columns, into);
       node.args.forEach(arg => collect(arg, columns, into));
       return;
     case 'unary':

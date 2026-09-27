@@ -119,15 +119,18 @@ async function main(): Promise<void> {
 
     // Onto the ledger: the seeded workbook opens on its dashboard, whose
     // figures are merged tiles. A tap on the tab is a tap like any other.
-    const tab = await page.evaluate<Point | null>(`(() => {
-      const el = [...document.querySelectorAll('[role="tab"]')].find(el => el.getAttribute('aria-label') === 'Sales');
-      if (!el) { return null; }
-      const r = el.getBoundingClientRect();
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
-    })()`);
-    if (tab === null) {
-      throw new Error('There is no Sales tab to tap.');
-    }
+    // Waited for, because the tabs arrive after the rows do.
+    const tab = await waitFor(
+      'the Sales tab',
+      async () =>
+        (await page.evaluate<Point | null>(`(() => {
+          const el = [...document.querySelectorAll('[role="tab"]')].find(el => el.getAttribute('aria-label') === 'Sales');
+          if (!el) { return null; }
+          const r = el.getBoundingClientRect();
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+        })()`)) ?? undefined,
+      30_000
+    );
     await tap(tab);
     await sleep(300);
 

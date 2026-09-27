@@ -471,6 +471,38 @@ table('arrays', [
 ]);
 
 /**
+ * Phase 28: names bound inside a formula, and functions as values.
+ * The fixture's A column is 10, 20, 30, 40, 5.
+ */
+table('LET and LAMBDA', [
+  ['LET(x, 2, x * 3)', '6'],
+  // Each name sees the ones before it.
+  ['LET(x, A1, y, x * 2, x + y)', '30'],
+  ['LET(total, SUM(A1:A5), total / COUNT(A1:A5))', '21'],
+  ['LET(x, 1)', '#VALUE!'],
+  ['LAMBDA(x, x * 2)(A2)', '40'],
+  ['LAMBDA(x, y, x * y)(3, 4)', '12'],
+  // A function where a cell's value should be.
+  ['LAMBDA(x, x)', '#CALC!'],
+  ['LAMBDA(x, x)(1, 2)', '#VALUE!'],
+  ['MAP(A1:A3, LAMBDA(v, v + 1))', '11'],
+  ['INDEX(MAP(A1:A3, LAMBDA(v, v + 1)), 3)', '31'],
+  ['REDUCE(0, A1:A5, LAMBDA(total, v, total + v))', '105'],
+  ['INDEX(SCAN(0, A1:A5, LAMBDA(total, v, total + v)), 3)', '60'],
+  ['SCAN(1, A1:A3, LAMBDA(total, v, total * v))', '10'],
+  ['INDEX(BYROW(A1:C5, LAMBDA(row, SUM(row))), 3)', '37'],
+  ['INDEX(BYCOL(A1:C5, LAMBDA(column, COUNT(column))), 3)', '4'],
+  ['BYROW(A1:C2, LAMBDA(row, MAX(row)))', '10'],
+  ['BYCOL(A1:A5, LAMBDA(column, SUM(column)))', '105'],
+  // One column, so one answer, which INDEX still reaches into.
+  ['INDEX(BYCOL(A1:A5, LAMBDA(column, SUM(column))), 1)', '105'],
+  // One answer per row, or it is a function handing back an array.
+  ['BYROW(A1:C2, LAMBDA(row, row))', '#CALC!'],
+  ['INDEX(MAKEARRAY(3, 4, LAMBDA(r, c, r * 10 + c)), 2, 3)', '23'],
+  ['MAKEARRAY(0, 1, LAMBDA(r, c, 1))', '#VALUE!']
+]);
+
+/**
  * The guard that keeps this file honest.
  *
  * A function added to the library with no case above is a function

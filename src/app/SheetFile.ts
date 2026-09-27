@@ -2,7 +2,7 @@ import { relativeRef, type RangeRef } from '../sheet/A1';
 import type { Note } from '../sheet/Notes';
 import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } from '../sheet/Conditional';
 import type { Validation, ValidationRule } from '../sheet/Validation';
-import { nameProblem } from '../sheet/Names';
+import { isNamedRange, nameProblem } from '../sheet/Names';
 import type { MergeRect } from '../sheet/Merges';
 import { MIN_CHART_HEIGHT, MIN_CHART_WIDTH, type Chart, type ChartKind, type ChartPlacement } from '../sheet/Chart';
 import {
@@ -234,7 +234,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
     version: 3,
     sheets,
     active: document.active,
-    names: document.book.names.all().map(entry => ({
+    names: document.book.names.all().map((entry): StoredName => isNamedRange(entry) ? ({
       name: entry.name,
       // The name of the sheet rather than its index, so a name
       // survives the sheets being reordered between two saves — and
@@ -246,7 +246,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
       lastRow: Math.max(entry.range.start.row, entry.range.end.row),
       lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
-    })),
+    }) : { name: entry.name, formula: entry.formula }),
     ...(document.book.iteration === null ? {} : { iteration: { ...document.book.iteration } })
   };
 }
@@ -317,6 +317,9 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   }
   document.book.names.restore(
     snapshot.names.map(stored => {
+      if ('formula' in stored) {
+        return { name: stored.name, formula: stored.formula };
+      }
       const on = stored.sheet === null ? undefined : stored.sheet;
       return {
         name: stored.name,
@@ -964,7 +967,20 @@ function validationRuleFrom(stored: unknown): ValidationRule | null {
 }
 
 /** A name as a file holds it: its text, its sheet, and the corners it names. */
-export interface StoredName {
+/** A name as a file keeps it: a range, or a formula. */
+export type StoredName = StoredRangeName | StoredFormulaName;
+
+/**
+ * A name that holds a formula — `=0.2`, `=LAMBDA(x, x*2)` — kept as its
+ * text, which is parsed again on the way in. No corners, so a build from
+ * before names held formulas leaves it out rather than misreading it.
+ */
+export interface StoredFormulaName {
+  readonly name: string;
+  readonly formula: string;
+}
+
+export interface StoredRangeName {
   readonly name: string;
   /**
    * The sheet its range is on, by name, or null for the first one.
@@ -997,8 +1013,12 @@ function namesFrom(stored: unknown): StoredName[] {
     if (typeof entry !== 'object' || entry === null) {
       continue;
     }
-    const held = entry as Partial<StoredName>;
+    const held = entry as Partial<StoredRangeName & StoredFormulaName>;
     if (typeof held.name !== 'string' || nameProblem(held.name) !== null) {
+      continue;
+    }
+    if (typeof held.formula === 'string') {
+      found.push({ name: held.name, formula: held.formula });
       continue;
     }
     const corners = [held.firstRow, held.firstColumn, held.lastRow, held.lastColumn];

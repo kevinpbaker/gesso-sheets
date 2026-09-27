@@ -67,7 +67,13 @@ function shift(node: Ast, rowDelta: number, columnDelta: number): Ast {
         }
       };
     case 'call':
-      return { kind: 'call', name: node.name, args: node.args.map(arg => shift(arg, rowDelta, columnDelta)) };
+      return { ...node, args: node.args.map(arg => shift(arg, rowDelta, columnDelta)) };
+    case 'invoke':
+      return {
+        kind: 'invoke',
+        callee: shift(node.callee, rowDelta, columnDelta),
+        args: node.args.map(arg => shift(arg, rowDelta, columnDelta))
+      };
     case 'unary':
       return { kind: 'unary', op: node.op, operand: shift(node.operand, rowDelta, columnDelta) };
     case 'binary':

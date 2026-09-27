@@ -111,7 +111,8 @@ function sales(document: SheetDocument): void {
     document.setCell(row, 9, order.review);
     // The tier an order falls in is the largest threshold under it: an
     // approximate match, next smaller, into a table somebody maintains.
-    document.setCell(row, 10, `=ROUND(G${line}*XLOOKUP(G${line},${TIER_FROM},${TIER_RATE},0,-1),2)`);
+    // The tier table's arithmetic is a function with a name; see `salesNames`.
+    document.setCell(row, 10, `=Commission(G${line})`);
   });
 
   document.setCell(TOTAL_ROW, 0, 'Total');
@@ -539,6 +540,16 @@ const GLANCES: readonly { label: string; formula: string; number: NumberFormat }
     number: GENERAL
   },
   { label: 'Quarter of the last order', formula: `=SWITCH(ROUNDUP(MONTH(MAX(${SALES_ORDERED}))/3,0),1,"First",2,"Second",3,"Third","Fourth")&" quarter"`, number: GENERAL },
+  {
+    label: 'Largest order, against the rest',
+    formula: `=LET(top,LARGE(${SALES_REVENUE},1),rest,SUM(${SALES_REVENUE})-top,top/rest)`,
+    number: { kind: 'percent', places: 1 }
+  },
+  {
+    label: 'Commission, worked out again by MAP',
+    formula: `=SUM(MAP(${SALES_REVENUE},LAMBDA(amount,Commission(amount))))`,
+    number: { kind: 'currency', places: 2, symbol: '$' }
+  },
   { label: 'A region not on file', formula: `=IFERROR(VLOOKUP("Nowhere",${PRICES},2,FALSE),"not on file")`, number: GENERAL }
 ];
 
@@ -728,6 +739,13 @@ function salesNames(document: SheetDocument): void {
   document.defineName('Units', range(`E4:E${last}`));
   document.defineName('Price', range(`F4:F${last}`));
   document.defineName('Revenue', range(`G4:G${last}`));
+  // A name that holds a function: the commission an amount earns, by the
+  // tier it reaches. Every row of column K calls it, and so does a
+  // figure on Summary, handing it to MAP.
+  document.defineFormulaName(
+    'Commission',
+    `=LAMBDA(amount, ROUND(amount * XLOOKUP(amount, ${TIER_FROM}, ${TIER_RATE}, 0, -1), 2))`
+  );
 }
 
 function salesRules(document: SheetDocument): void {

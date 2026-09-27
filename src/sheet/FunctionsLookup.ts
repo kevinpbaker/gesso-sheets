@@ -193,7 +193,14 @@ export const LOOKUP_FUNCTIONS: Readonly<Record<string, SheetFunction>> = {
     if (wrong !== null) {
       return wrong;
     }
-    const range = rangeAt(args, 0);
+    // One value is an array of one, as in Excel: `INDEX(5, 1)` is 5. An
+    // array that came out one cell wide and one tall arrives as a value,
+    // so without this `INDEX(BYCOL(A1:A3, …), 1)` was `#VALUE!`.
+    const given = args[0];
+    const range =
+      given?.kind === 'value' && !isError(given.value)
+        ? { kind: 'range' as const, values: [given.value], rows: 1, columns: 1 }
+        : rangeAt(args, 0);
     if (isError(range)) {
       return range;
     }

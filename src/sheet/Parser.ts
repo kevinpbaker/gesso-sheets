@@ -96,8 +96,29 @@ class Parser {
       this.at++;
       return { kind: 'unary', op: token.value, operand: this.unary() };
     }
-    return this.primary();
+    return this.invocations(this.primary());
   }
+
+  /**
+   * A value called where it stands: `LAMBDA(x, x*2)(A1)`.
+   *
+   * Only after something that can hand back a function — a call, or a
+   * bracketed expression — because after anything else a `(` has no
+   * meaning. A bare word followed by one is already a call by name.
+   */
+  private invocations(callee: Ast): Ast {
+    let at = callee;
+    while (this.peek().kind === 'open' && (at.kind === 'invoke' || (at.kind === 'call' && at.word === undefined) || this.bracketed)) {
+      this.bracketed = false;
+      this.at++;
+      at = { kind: 'invoke', callee: at, args: this.arguments() };
+    }
+    this.bracketed = false;
+    return at;
+  }
+
+  /** Whether the value just parsed was a bracketed expression. */
+  private bracketed = false;
 
   private primary(): Ast {
     const token = this.peek();
@@ -115,6 +136,7 @@ class Parser {
         this.at++;
         const inner = this.expression();
         this.expect('close');
+        this.bracketed = true;
         return inner;
       }
       case 'word':
@@ -176,7 +198,7 @@ class Parser {
       // well formed — and fails at evaluation, which is where Excel
       // puts it too: `=NOSUCHNAME` is a `#NAME?` in the cell, not a
       // refusal to accept what was typed.
-      return { kind: 'call', name: upper, args: [] };
+      return { kind: 'call', name: upper, args: [], word: text };
     }
     const at = on(ref, sheet);
     // `A1#` is Excel 365's spill reference, which its files write as

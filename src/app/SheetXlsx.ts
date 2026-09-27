@@ -28,7 +28,8 @@ export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapsh
     version: 3,
     sheets: book.sheets.map(sheet => storedSheet(sheet, columnCount, () => ++chartId)),
     active: 0,
-    names: book.names.map(name => ({
+    names: [
+      ...book.names.map(name => ({
       name: name.name,
       sheet: name.sheet,
       firstRow: name.firstRow,
@@ -36,6 +37,8 @@ export function snapshotOfXlsx(book: XlsxBook, columnCount: number): SheetSnapsh
       lastRow: name.lastRow,
       lastColumn: name.lastColumn
     })),
+      ...book.formulaNames.map(name => ({ name: name.name, formula: name.formula }))
+    ],
     ...(book.iteration === null ? {} : { iteration: book.iteration })
   };
 }

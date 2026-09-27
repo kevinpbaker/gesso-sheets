@@ -5,7 +5,8 @@ import { layoutOf } from '../sheet/Series';
 import type { CellValue } from '../sheet/Values';
 import type { XlsxOutChart, XlsxOutSeries } from '../sheet/XlsxCharts';
 import { writeValidations } from '../sheet/XlsxRules';
-import type { XlsxOut, XlsxOutCell, XlsxOutName, XlsxOutRow, XlsxOutSheet } from '../sheet/XlsxWrite';
+import type { XlsxOut, XlsxOutCell, XlsxOutFormulaName, XlsxOutName, XlsxOutRow, XlsxOutSheet } from '../sheet/XlsxWrite';
+import { isNamedRange } from '../sheet/Names';
 import type { Deflate } from '../sheet/Zip';
 import { ROW_HEIGHT } from './dimensions';
 import type { SheetDocument } from './SheetDocument';
@@ -145,8 +146,14 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
     });
   }
 
-  const definedNames: XlsxOutName[] = [];
+  const definedNames: (XlsxOutName | XlsxOutFormulaName)[] = [];
   for (const entry of document.book.names.all()) {
+    if (!isNamedRange(entry)) {
+      // A formula goes out as written; the writer spells its functions
+      // and parameters as Excel's files do.
+      definedNames.push({ name: entry.name, formula: entry.formula });
+      continue;
+    }
     // A name written without a sheet means the sheet of the formula
     // that reads it, where an Excel name belongs to one sheet. So it
     // goes out on the sheet whose formulas use it — the first, when

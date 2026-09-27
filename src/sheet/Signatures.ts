@@ -181,6 +181,16 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   SORT: { args: ['array', '[by column]', '[1 or -1]', '[across]'], summary: 'An array in order.' },
   UNIQUE: { args: ['array', '[across]', '[only once]'], summary: 'Each different row once.' },
 
+  // Names bound inside a formula, and functions made in one
+  LET: { args: ['name', 'value', '…', 'result'], summary: 'Names a value once, to use it many times.' },
+  LAMBDA: { args: ['parameter', '…', 'body'], summary: 'A function: call it at once, or keep it under a name.' },
+  MAP: { args: ['array', '…', 'function'], summary: 'The function called on every value.' },
+  REDUCE: { args: ['initial', 'array', 'function'], summary: 'An array folded into one answer.' },
+  SCAN: { args: ['initial', 'array', 'function'], summary: 'Every step of a fold, as an array.' },
+  BYROW: { args: ['array', 'function'], summary: 'One answer for each row.' },
+  BYCOL: { args: ['array', 'function'], summary: 'One answer for each column.' },
+  MAKEARRAY: { args: ['rows', 'columns', 'function'], summary: 'An array built a cell at a time.' },
+
   // Dates
   DATEVALUE: { args: ['text'], summary: 'A date typed as text, as a date.' },
   TIMEVALUE: { args: ['text'], summary: 'A time typed as text, as a time.' },
