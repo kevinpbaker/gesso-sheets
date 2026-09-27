@@ -1,6 +1,6 @@
 import { BehaviorSubject, combineLatest, map, of, type Observable } from 'rxjs';
 
-import { type UiKeyboardEvent, type UiNode, type UiSemanticState } from 'gesso-core';
+import { type UiChild, type UiKeyboardEvent, type UiNode, type UiSemanticState } from 'gesso-core';
 import { Icon, tooltip } from 'gesso-components';
 import { createComponent, type ComponentContext, type Inputs } from 'gesso-framework';
 
@@ -44,6 +44,15 @@ interface ToolbarItemBase {
   readonly onDoubleRun?: () => void;
   /** A gap before this item, for the groups people read by. */
   readonly startsGroup?: boolean;
+  /**
+   * A bar of colour under the glyph: the colour the button would give,
+   * which for the text and fill colours is the active cell's own — so
+   * the toolbar says what a cell is before anybody changes it. Empty
+   * draws the bar as an outline, for no colour of its own.
+   */
+  readonly swatch?: Observable<string>;
+  /** The button's node, for something that opens beside it. */
+  readonly anchor?: (node: UiNode | null) => void;
 }
 
 /** A button drawn as a glyph; see `icons.ts` for where the glyphs come from. */
@@ -190,6 +199,7 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, c
       }}
       onDoubleClick={() => item.onDoubleRun?.()}
       label={item.label ?? item.text}
+      ref={item.anchor}
       paddingLeft={9}
       paddingRight={9}
       paddingTop={4}
@@ -202,20 +212,48 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, c
       cursor="pointer"
       opacity={enabled.pipe(map(is => (is ? 1 : 0.4)))}
       states={pressed.pipe(map((is): readonly UiSemanticState[] => (is ? ['pressed'] : [])))}>
-      {item.icon === undefined ? (
-        <text
-          text={item.text}
-          fontSize={12}
-          fontWeight={item.weight ?? 'normal'}
-          textAlign="center"
-          textWrap="none"
-          color="controlForeground"
-          selectable={false}
-        />
-      ) : (
-        glyph(item.icon)
+      {withSwatch(
+        item.swatch,
+        item.icon === undefined ? (
+          <text
+            text={item.text}
+            fontSize={12}
+            fontWeight={item.weight ?? 'normal'}
+            textAlign="center"
+            textWrap="none"
+            color="controlForeground"
+            selectable={false}
+          />
+        ) : (
+          glyph(item.icon)
+        )
       )}
     </button>
+  );
+}
+
+/**
+ * The button's face with a bar of colour under it, when it has one.
+ *
+ * The glyph keeps its one colour — see `glyph` — and the colour is a
+ * box of its own, so a row of icons still costs one raster each.
+ */
+function withSwatch(swatch: Observable<string> | undefined, face: UiChild) {
+  if (swatch === undefined) {
+    return face;
+  }
+  return (
+    <column x="center" gap={1}>
+      {face}
+      <box
+        width={16}
+        height={4}
+        borderRadius={1}
+        backgroundColor={swatch.pipe(map(colour => (colour === '' ? 'transparent' : colour)))}
+        borderColor={swatch.pipe(map(colour => (colour === '' ? 'controlBorder' : 'transparent')))}
+        borderWidth={swatch.pipe(map(colour => (colour === '' ? 1 : 0)))}
+      />
+    </column>
   );
 }
 

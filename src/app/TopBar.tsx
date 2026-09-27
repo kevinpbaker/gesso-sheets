@@ -9,6 +9,7 @@ import {
   type UiTextChangeEvent,
   type UiTextSpan
 } from 'gesso-core';
+import { ColorPalette } from 'gesso-components';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { FindBar } from './FindBar';
@@ -38,6 +39,7 @@ import { ICONS } from './icons';
 import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
+import { colourName } from './colourNames';
 import { NamesDialog } from './NamesDialog';
 import { NoteDialog } from './NoteDialog';
 import { ScriptDialog } from './ScriptDialog';
@@ -145,6 +147,25 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * does is the same `run` the menu and the accelerators go through.
    * Three ways to reach a command and one place that performs it.
    */
+  /**
+   * The text and fill palettes: whether each is open, and the button it
+   * opens beside. The colours used lately are shared between the two, as
+   * a spreadsheet's are, most recent first.
+   */
+  const textPaletteOpen = internalState(false);
+  const fillPaletteOpen = internalState(false);
+  const textAnchor = internalState<UiNode | null>(null);
+  const fillAnchor = internalState<UiNode | null>(null);
+  const recentColours = internalState<readonly string[]>([]);
+  const paintWith = (change: { color: string } | { fill: string }): void => {
+    const colour = 'color' in change ? change.color : change.fill;
+    if (colour !== '') {
+      recentColours.value = [colour, ...recentColours.value.filter(each => each !== colour)].slice(0, 10);
+    }
+    sheet.send.format(change);
+    edit.focusSheet();
+  };
+
   const tools: readonly ToolbarItem[] = [
     {
       id: 'undo',
@@ -163,6 +184,25 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     { id: 'bold', icon: ICONS.bold, ...runs('bold'), startsGroup: true, pressed: on(p => p.bold) },
     { id: 'italic', icon: ICONS.italic, ...runs('italic'), pressed: on(p => p.italic) },
     { id: 'underline', icon: ICONS.underline, ...runs('underline'), pressed: on(p => p.underline) },
+    {
+      id: 'textColour',
+      text: 'A',
+      weight: 'bold',
+      label: 'Text colour',
+      onRun: () => run('textColour'),
+      tip: () => `Text colour (${paint().color === '' ? 'automatic' : colourName(paint().color)})`,
+      swatch: sheet.view.activeFormat.pipe(map(current => current.paint.color || 'text')),
+      anchor: node => (textAnchor.value = node)
+    },
+    {
+      id: 'fillColour',
+      icon: ICONS.fill,
+      label: 'Fill colour',
+      onRun: () => run('fillColour'),
+      tip: () => `Fill colour (${paint().fill === '' ? 'none' : colourName(paint().fill)})`,
+      swatch: sheet.view.activeFormat.pipe(map(current => current.paint.fill)),
+      anchor: node => (fillAnchor.value = node)
+    },
     {
       id: 'alignLeft',
       icon: ICONS.alignLeft,
@@ -620,6 +660,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return;
       case 'manageNames':
         namesOpen.value = true;
+        return;
+      case 'textColour':
+        textPaletteOpen.value = true;
+        return;
+      case 'fillColour':
+        fillPaletteOpen.value = true;
         return;
       case 'editNote': {
         const at = sheet.view.editor.value;
@@ -1193,6 +1239,26 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         onStop={() => sheet.send.stopScript()}
         onFunctionsOn={(on: boolean) => sheet.send.setFunctionsOn(on)}
         onClose={closeScripts}
+      />
+      <ColorPalette
+        open={textPaletteOpen}
+        onOpenChange={(open: boolean) => (textPaletteOpen.value = open)}
+        anchor={textAnchor}
+        value={sheet.view.activeFormat.pipe(map(current => current.paint.color))}
+        recent={recentColours}
+        automaticLabel="Automatic"
+        label="Text colour"
+        onSelect={(colour: string) => paintWith({ color: colour })}
+      />
+      <ColorPalette
+        open={fillPaletteOpen}
+        onOpenChange={(open: boolean) => (fillPaletteOpen.value = open)}
+        anchor={fillAnchor}
+        value={sheet.view.activeFormat.pipe(map(current => current.paint.fill))}
+        recent={recentColours}
+        automaticLabel="No fill"
+        label="Fill colour"
+        onSelect={(colour: string) => paintWith({ fill: colour })}
       />
       <NamesDialog
         open={namesOpen}

@@ -39,6 +39,7 @@ const WANTED = [
   'italic',
   'paint-brush',
   'percent-badge',
+  'swatch',
   'underline'
 ] as const;
 

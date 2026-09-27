@@ -100,6 +100,8 @@ export type CommandId =
   | 'iterate'
   | 'stopIterating'
   | 'showFormulas'
+  | 'textColour'
+  | 'fillColour'
   | 'showReferences'
   | 'editNote'
   | 'scripts'
@@ -472,6 +474,10 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   zoomOut: { id: 'zoomOut', label: 'Zoom out' },
   zoomReset: { id: 'zoomReset', label: 'Zoom to 100%' },
   showFormulas: { id: 'showFormulas', label: 'Show formulas', accelerator: { key: '`', ctrl: true } },
+  /** The palette for the selection's text, opened beside its toolbar button. */
+  textColour: { id: 'textColour', label: 'Text colour…' },
+  /** And for its background. */
+  fillColour: { id: 'fillColour', label: 'Fill colour…' },
   /**
    * Excel's Trace Precedents, as outlines rather than arrows: the cells
    * the selected cell's formula reads, in the colours the formula bar
@@ -656,6 +662,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'bold',
       'italic',
       'underline',
+      'textColour',
+      'fillColour',
       SEPARATOR,
       'alignLeft',
       'alignCenter',
