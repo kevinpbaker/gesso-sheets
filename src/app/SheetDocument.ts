@@ -1,4 +1,5 @@
 import { parseTypedDate } from '../sheet/Dates';
+import { COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
 import { formatWith, type CellFormat, type NumberFormat } from '../sheet/Format';
 import { Formats, type FormatPlacement } from '../sheet/Formats';
 import { Merges } from '../sheet/Merges';
@@ -461,8 +462,51 @@ export class SheetDocument {
     return this.page.columnWidths;
   }
 
+  /**
+   * The widths, and the charts over them with them.
+   *
+   * A chart sits over a cell, as it does in Excel: widening a column to
+   * its left moves it right, and widening the one it starts in stretches
+   * where in that column it starts. Every width change comes through
+   * here — a drag, an autofit, a reset — so every one keeps the charts
+   * beside the numbers they were placed beside. A shift, which moves
+   * whole columns, writes the widths itself and moves the charts by the
+   * columns; see `applyShift`.
+   */
   set columnWidths(widths: number[]) {
+    const before = this.page.columnWidths;
+    if (this.page.charts.length > 0 && !sameWidths(before, widths)) {
+      const was = columnAxis(before);
+      const now = columnAxis(widths);
+      this.page.charts = this.page.charts.map(chart => {
+        const x = now.to(was.from(chart.place.x));
+        return x === chart.place.x ? chart : { ...chart, place: { ...chart.place, x } };
+      });
+    }
     this.page.columnWidths = widths;
+  }
+
+  /**
+   * The charts on this sheet, moved with a row or column insert or
+   * delete: each keeps to the cell its corner was over, which moves
+   * with the shift, or to where the deleted lines were.
+   */
+  private moveChartsWith(shift: Shift, widths: readonly number[], rows: RowsHeld): void {
+    if (this.page.charts.length === 0) {
+      return;
+    }
+    const was = shift.axis === 'row' ? rowAxis(rows) : columnAxis(widths);
+    const now =
+      shift.axis === 'row'
+        ? rowAxis({ heights: [...this.rowHeights], fitted: [...this.fittedRows], hidden: [...this.hiddenRows], filtered: [...this.filteredRows] })
+        : columnAxis(this.page.columnWidths);
+    this.page.charts = this.page.charts.map(chart => {
+      const at = was.from(shift.axis === 'row' ? chart.place.y : chart.place.x);
+      const moved = shiftIndex(at.index, shift);
+      const next = now.to(moved === -1 ? { index: shift.at, share: 0 } : { index: moved, share: at.share });
+      const place = shift.axis === 'row' ? { ...chart.place, y: next } : { ...chart.place, x: next };
+      return place.x === chart.place.x && place.y === chart.place.y ? chart : { ...chart, place };
+    });
   }
 
   get frozenRows(): number {
@@ -854,12 +898,13 @@ export class SheetDocument {
       } else if (edit.kind === 'structure') {
         this.sheet.shift(edit.shift);
         this.formats.shift(edit.shift);
-        this.columnWidths = shiftWidths(edit.widths, edit.shift);
+        this.page.columnWidths = shiftWidths(edit.widths, edit.shift);
         this.restoreRows(edit.rows, edit.shift);
         this.page.notes.restore(edit.notes);
         this.page.notes.shift(edit.shift);
         this.restoreRanges(edit.ranges);
         this.shiftRanges(edit.shift);
+        this.moveChartsWith(edit.shift, edit.widths, edit.rows);
       } else if (edit.kind === 'note') {
         this.page.notes.set(edit.row, edit.column, edit.after);
       } else if (edit.kind === 'names') {
@@ -892,7 +937,8 @@ export class SheetDocument {
     if (edit.formats !== null) {
       this.formats.restorePlacement(edit.formats);
     }
-    this.columnWidths = [...edit.widths];
+    // The charts come back from the step's own copy of them, below.
+    this.page.columnWidths = [...edit.widths];
     this.restoreRows(edit.rows, null);
     this.page.notes.restore(edit.notes);
     this.restoreRanges(edit.ranges);
@@ -1324,13 +1370,16 @@ export class SheetDocument {
     this.formats.shift(shift);
     this.merges.shift(shift);
     this.page.notes.shift(shift);
-    this.columnWidths = shiftWidths(this.columnWidths, shift);
+    // Written past the setter: the columns moved, and the charts move
+    // with the columns below, not with the widths.
+    this.page.columnWidths = shiftWidths(this.columnWidths, shift);
     // A hidden row is hidden by index, so it moves with the rows it
     // was among — an insert above a hidden row must not reveal it and
     // hide its neighbour instead.
     if (shift.axis === 'row') {
       this.restoreRows(rows, shift);
     }
+    this.moveChartsWith(shift, widths, rows);
 
     this.record({
       kind: 'structure',
@@ -1723,4 +1772,63 @@ function describeStep(step: Step): string {
     return 'formatting';
   }
   return 'changes';
+}
+
+/**
+ * One axis of the grid, as the pixels a chart is placed in: where a
+ * position falls (which line, and how far into it) and back.
+ */
+interface Axis {
+  from(pixels: number): { index: number; share: number };
+  to(at: { index: number; share: number }): number;
+}
+
+/** Walks an axis of lines, each of the size `size` gives it. */
+function axisOf(size: (index: number) => number): Axis {
+  return {
+    from(pixels) {
+      let start = 0;
+      for (let index = 0; index < 1_000_000; index++) {
+        const width = size(index);
+        if (pixels < start + width) {
+          return { index, share: width > 0 ? (pixels - start) / width : 0 };
+        }
+        start += width;
+      }
+      return { index: 0, share: 0 };
+    },
+    to({ index, share }) {
+      let start = 0;
+      for (let at = 0; at < index; at++) {
+        start += size(at);
+      }
+      return Math.round(start + share * size(index));
+    }
+  };
+}
+
+function columnAxis(widths: readonly number[]): Axis {
+  return axisOf(index => widths[index] ?? COLUMN_WIDTH);
+}
+
+function rowAxis(rows: RowsHeld): Axis {
+  const heights = new Map(rows.fitted);
+  for (const [row, height] of rows.heights) {
+    heights.set(row, height);
+  }
+  const hidden = new Set([...rows.hidden, ...rows.filtered]);
+  return axisOf(index => (hidden.has(index) ? 0 : (heights.get(index) ?? ROW_HEIGHT)));
+}
+
+function sameWidths(a: readonly number[], b: readonly number[]): boolean {
+  if (a === b) {
+    return true;
+  }
+  const length = Math.max(a.length, b.length);
+  for (let index = 0; index < length; index++) {
+    if ((a[index] ?? COLUMN_WIDTH) !== (b[index] ?? COLUMN_WIDTH)) {
+      return false;
+    }
+  }
+  return true;
 }
