@@ -11,7 +11,7 @@ import {
 } from '../sheet/Chart';
 import { layoutOf, seriesFrom } from '../sheet/Series';
 import { STRESS_CELLS } from './SheetCommands';
-import type { CellValue } from '../sheet/Values';
+import { formatValue, type CellValue } from '../sheet/Values';
 import { addressOf, explainCell } from '../sheet/Explain';
 import { isNamedRange, nameProblemText } from '../sheet/Names';
 import { aggregateOf } from './Aggregate';
@@ -286,6 +286,10 @@ export class SheetService {
   private readonly scriptsSubject = new BehaviorSubject<SheetScripts>({ entries: [], running: '', refused: '', last: null });
   private readonly scriptHost: ScriptHost | null;
   private scriptRuns = 0;
+  private functionStressCells = 0;
+  private functionStressRuns = 0;
+  /** The proof's function chain's last cell, until it has been reported. */
+  private functionStressAt: { row: number; column: number; calls: number } | null = null;
   /**
    * The interpreter for the workbook's functions, made the first time a
    * workbook has any and kept: one runtime, redefined per document.
@@ -2153,6 +2157,51 @@ export class SheetService {
     this.runScript(PROOF_SCRIPT, false);
   }
 
+  /**
+   * The proof's fourth instrument: a chain of `calls` cells past the end
+   * of the sheet, each calling a script function on the cell before it.
+   *
+   * Below the recalculation's chain, and like it out of reach: nobody
+   * can scroll to it, select it or save it by accident. The function is
+   * defined first, and the chain written once it is, so every cell is a
+   * call into the interpreter and none is a cheap `#NAME?`. When the
+   * chain settles, the status bar says what its last cell came to,
+   * which is the proof's evidence that the calls happened.
+   */
+  functionStress(calls: number): void {
+    if (!this.document.scripts.some(script => script.name === PROOF_FUNCTIONS)) {
+      this.saveScript('', PROOF_FUNCTIONS, 'function STEP(n) {\n  return n + 1;\n}\n', 'functions');
+    }
+    const document = this.document;
+    void this.functionsReady.then(() => {
+      if (document !== this.document) {
+        return;
+      }
+      const sheet = document.sheet;
+      const { columnCount, rowCount } = this.geometrySubject.value;
+      // Past the recalculation's chain, which takes the first rows below the sheet.
+      const first = rowCount + Math.ceil((STRESS_CELLS + 1) / columnCount) + 10;
+      const lastRow = first + Math.floor(calls / columnCount);
+      const lastColumn = calls % columnCount;
+      if (this.functionStressCells !== calls) {
+        for (let at = 1; at <= calls; at++) {
+          const row = first + Math.floor(at / columnCount);
+          const column = at % columnCount;
+          const fromRow = first + Math.floor((at - 1) / columnCount);
+          const fromColumn = (at - 1) % columnCount;
+          sheet.setCell(row, column, `=STEP(${columnName(fromColumn)}${fromRow + 1})`);
+        }
+        this.functionStressCells = calls;
+      }
+      this.functionStressRuns++;
+      sheet.setCell(first, 0, String(this.functionStressRuns * 1_000_000));
+      this.functionStressAt = { row: lastRow, column: lastColumn, calls };
+      this.publishWindow();
+      this.publishStatus();
+      this.pump();
+    });
+  }
+
   stopScript(): void {
     this.scriptHost?.stop();
   }
@@ -3044,12 +3093,24 @@ export class SheetService {
     this.redrawCharts();
     if (result.done) {
       this.pumping = false;
+      this.reportFunctionStress();
       // A formula's new value is new text, and wrapped text may now
       // take more lines or fewer.
       this.fitRowsLater('all');
       return;
     }
     this.schedule(() => this.step());
+  }
+
+  /** Says what the proof's function chain came to, once it has settled. */
+  private reportFunctionStress(): void {
+    const at = this.functionStressAt;
+    if (at === null) {
+      return;
+    }
+    this.functionStressAt = null;
+    const value = this.document.sheet.value(at.row, at.column);
+    this.report(`${at.calls.toLocaleString('en-US')} script calls came to ${formatValue(value)}.`);
   }
 
   // ---------------------------------------------------------------------
@@ -3484,6 +3545,9 @@ const PASTE_LABELS: Readonly<Record<SheetPasteMode, string>> = {
 
 /** What the proof's script is called. */
 const PROOF_SCRIPT = 'Never ends';
+
+/** What the proof's function script is called. */
+const PROOF_FUNCTIONS = 'Proof functions';
 
 /** A cell's value as a script reads it: an error is its code. */
 function scriptValueOf(value: CellValue): ScriptValue {

@@ -25,6 +25,7 @@ import {
   acceleratorLabel,
   CHART_POINTS,
   COMMANDS,
+  FUNCTION_CALLS,
   menusFor,
   offers,
   STRESS_CELLS,
@@ -599,6 +600,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'scriptStress':
         if (proof) {
           sheet.send.scriptStress();
+        }
+        break;
+      case 'functionStress':
+        if (proof) {
+          sheet.send.functionStress(FUNCTION_CALLS);
         }
         break;
       case 'chartStress':

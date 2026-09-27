@@ -255,8 +255,11 @@ that exceeds it and then makes another call, which works:
   evaluator's frames under it.
 
 A result that is not a value (an object, a function) is an error, not a
-value. Phase 32 turns each failure into an error value in the cell, and
-adds a budget per recalculation slice as well as per call.
+value. In the cell, a throw is `#VALUE!` and every other failure is
+`#CALC!`, with the function's words in the formula bar. A recalculation
+slice also hands the thread back once it has spent 8 ms in calls, so a
+column of slow functions is slow to fill but never stops the sheet
+answering.
 
 ## Where functions come from
 
@@ -284,9 +287,10 @@ anything anywhere.
   arguments, including something misleading. That is true of every
   formula, and the defence is the same: the formula is there to read.
 - **Time, within the limits.** Five thousand cells each spending most
-  of 50 ms is minutes of recalculation. The budget per slice in Phase 32
-  bounds how much of that the thread spends before it hands back, and
-  the error values say which cells are slow.
+  of 50 ms is minutes of recalculation. The 8 ms budget per slice
+  bounds how long the thread goes before it hands back, and a cell that
+  runs out of time says so. A single call can still hold the thread
+  for its 50 ms.
 - **QuickJS itself.** The interpreter and its WebAssembly build are the
   boundary, and they are someone else's code, `quickjs-emscripten`
   0.32.0. It is pinned, and a bump is a change to this section's

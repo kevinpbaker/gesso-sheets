@@ -638,14 +638,51 @@ async function main(): Promise<void> {
       BUDGET.costOfRecalculating
     );
     // How it ended, from the status bar, where a run says so while
-    // the editor is closed. Not from the editor: a dialog opened and
-    // closed just before the freeze below changes what the freeze
-    // measures, which is a question for the engine and not this run.
+    // the editor is closed.
     await waitFor(
       'the script to be ended by its time limit',
       async () =>
         (await devtools.evaluate<boolean>(`(document.body.textContent ?? '').includes('Never ends ran out of time')`)) ? true : undefined,
       10_000
+    );
+
+    // --------------------------------------------------------------
+    // The same scroll, over 100,000 script calls recalculating
+    // --------------------------------------------------------------
+    //
+    // Phase 32's exit. A chain past the end of the sheet in which each
+    // cell calls a function the workbook's script defines, `STEP`, on
+    // the cell before it: a hundred thousand calls into QuickJS on the
+    // application worker, which the recalculation cannot skip or
+    // reorder. Measured against the run before it, as the script's is.
+    // The status bar says what the chain came to once it settles, which
+    // is the evidence that the calls happened and were not `#NAME?`.
+    await openMenu(devtools, 'Data');
+    const callsStarted = Date.now();
+    await chooseItem(devtools, 'Recalculate 100,000 script calls');
+    const calling = report(
+      'scrolling while 100,000 script calls recalculate',
+      await scrollRun(devtools, 'scrolling while 100,000 script calls recalculate'),
+      failures
+    );
+    const came = await waitFor(
+      'the script calls to settle',
+      async () => {
+        const text = await devtools.evaluate<string>(`document.body.textContent ?? ''`);
+        const found = /100,000 script calls came to ([^.]*)\./.exec(text);
+        return found === null ? undefined : found[1];
+      },
+      60_000
+    );
+    console.log(`\n  100,000 script calls came to ${came}, ${Date.now() - callsStarted}ms after the click\n`);
+    if (came.startsWith('#')) {
+      failures.push(`the script calls came to ${came}, so the function was not called`);
+    }
+    check(
+      failures,
+      `100,000 script calls recalculating: median frame ${calling.median.toFixed(2)}ms against ${scripting.median.toFixed(2)}ms without them`,
+      calling.median - scripting.median <= BUDGET.costOfRecalculating,
+      BUDGET.costOfRecalculating
     );
   } finally {
     if (process.env.PROOF_KEEP === undefined) {

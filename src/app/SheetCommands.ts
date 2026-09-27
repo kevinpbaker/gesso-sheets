@@ -46,6 +46,7 @@ export type CommandId =
   | 'recalculate'
   | 'chartStress'
   | 'scriptStress'
+  | 'functionStress'
   | 'shortcuts'
   | 'menuBar'
   | 'sheetTabs'
@@ -145,6 +146,13 @@ export const STRESS_CELLS = 200_000;
  * points — so the run measures the thinning rather than the drawing.
  */
 export const CHART_POINTS = 50_000;
+
+/**
+ * How many script calls the proof's chain makes: each cell calls a
+ * function the workbook's script defines on the cell before it, so the
+ * recalculation cannot skip one and every one is a call into QuickJS.
+ */
+export const FUNCTION_CALLS = 100_000;
 
 /**
  * A key and the modifiers held with it.
@@ -279,6 +287,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * is the other thing that must not reach the frame.
    */
   scriptStress: { id: 'scriptStress', label: 'Run a script that never ends' },
+  functionStress: { id: 'functionStress', label: `Recalculate ${FUNCTION_CALLS.toLocaleString('en-US')} script calls` },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
   menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
   /**
@@ -757,7 +766,8 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'recalculate',
       'chartStress',
-      'scriptStress'
+      'scriptStress',
+      'functionStress'
     ]
   },
   {
@@ -784,7 +794,7 @@ export const MENUS: readonly MenuDefinition[] = [
  * it, `commandFor` still answers F9 with it, and the specs that keep
  * the two tables honest still see every row.
  */
-export const PROOF_ONLY: readonly CommandId[] = ['recalculate', 'chartStress', 'scriptStress'];
+export const PROOF_ONLY: readonly CommandId[] = ['recalculate', 'chartStress', 'scriptStress', 'functionStress'];
 
 /** Whether a route offers a command at all. */
 export function offers(id: CommandId, proof: boolean): boolean {

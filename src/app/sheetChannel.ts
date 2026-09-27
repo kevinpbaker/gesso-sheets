@@ -101,6 +101,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       stress: cells => service.stress(cells),
       chartStress: points => service.chartStress(points),
       scriptStress: () => service.scriptStress(),
+      functionStress: calls => service.functionStress(calls),
       fillDown: () => service.fillDown(),
       fillRight: () => service.fillRight(),
       find: (query, matchCase, wholeCell, inFormulas) => service.find(query, matchCase, wholeCell, inFormulas),

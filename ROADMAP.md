@@ -2938,7 +2938,7 @@ functions.
   There is no `Math.random`, and `Date` will not say what time it is,
   so a function's value cannot change on its own.
 
-### Phase 32 — Functions a formula calls
+### Phase 32 — Functions a formula calls — **done**
 
 The workbook gains a module of functions, written in the script
 editor as a script of a second kind: `function TAX(amount, rate) {
@@ -2954,6 +2954,58 @@ recalculating when the function is edited. A function that loops, and
 one that allocates, each an error in its cell with the sheet
 responsive. And `pnpm proof` scrolling over 100,000 calls held to the
 recalculating budget.
+
+**Met.** Scripts gain a second kind, *functions*. In the editor, New
+functions starts one, Save defines it, and the editor says which names
+it defines or why it defines none. The sheet model knows functions only
+through an interface, `src/sheet/ScriptFunctions.ts`, which
+`SheetFunctions` implements over the interpreter, so `src/sheet` still
+imports nothing outside itself.
+
+- **Where a call sits.** After every built-in and every defined name,
+  in `boundCall`, so a script can shadow neither. A function named like
+  a built-in, or two whose names differ only by case, is not callable,
+  and the script says so.
+- **What crosses.** Values in, and a range as rows. A value, or rows
+  that spill, out. An error argument is the call's answer, and the
+  function is not called. A throw is `#VALUE!`. A call past its 50 ms,
+  past its memory, or returning something no cell holds is `#CALC!`.
+  Each shows the function's own words in the formula bar:
+  *CHECK threw: no negatives*.
+- **The slice.** A recalculation slice now hands the thread back once
+  it has spent 8 ms in script calls, as well as after 2,000 cells.
+  `ScriptFunctions.spec.ts` counts it.
+- **The exit, in `FunctionCells.spec.ts`,** with the real interpreter
+  behind `SheetService`:
+  - A 50-row column that calls `TAX`, right, and right again when
+    `TAX` is edited.
+  - A function that loops and one that allocates, each `#CALC!` in its
+    own cell, with the cells around them calculated.
+  - A syntax error in one script leaves another script's functions
+    working.
+  - A file's function scripts are off, each saying so, and a call to
+    one is `#NAME?`. Turning them on is Phase 33's.
+- **The proof.** *Recalculate 100,000 script calls* builds a chain past
+  the end of the sheet, each cell `=STEP(` the cell before `)`, and
+  reports what the last cell came to. In the production build in
+  headless Chrome it came to 1,100,000, which is right. Scrolling
+  while it recalculated, the median frame was 5.7 ms against 5.1 ms for
+  the run before it, inside the budget of 4. The whole proof passed.
+- **The cost of a call in a recalculation.** In Node, 100,000 chained
+  calls recalculate in 276 ms, against 73 ms for the same chain written
+  as `=A1+1`: about 2 µs a cell more, as Phase 31 measured. In the proof
+  the chain took 8.5 s from the click to its answer. Most of that is the
+  setup: 100,000 formulas written, and every formula in a
+  300,000-cell workbook read again once the function is defined.
+- **One thing learned about the limits.** A call that allocates can
+  reach its memory limit after its deadline has passed, having spent
+  the time collecting. It was reported as the deadline until the
+  interpreter's own message was made to decide first.
+
+**Not done:** saving a function edit re-reads every formula in the
+workbook, not just those that call it. That is `namesChanged`'s rule
+too, and it is cheap below a few hundred thousand formulas. The
+formula bar does not offer script functions as you type.
 
 ### Phase 33 — Functions from files
 

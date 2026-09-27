@@ -935,6 +935,8 @@ export interface SheetCommands {
   chartStress(points: number): void;
   /** And the third; see `SheetService.scriptStress`. */
   scriptStress(): void;
+  /** And the fourth; see `SheetService.functionStress`. */
+  functionStress(calls: number): void;
   /**
    * Repeats the top row of the selection down it, or the left column
    * across it.
