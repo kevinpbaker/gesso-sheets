@@ -1009,6 +1009,8 @@ export class SheetService {
     // Wrapped text breaks at the column's width.
     this.fitRowsLater('all');
     this.publishGeometry();
+    // A chart sits over a cell, and the widths just moved the cells.
+    this.publishCharts();
     this.persist();
   }
 
@@ -1650,6 +1652,7 @@ export class SheetService {
     }
     this.document.columnWidths = widths;
     this.publishGeometry();
+    this.publishCharts();
     this.persist();
   }
 
@@ -1933,6 +1936,7 @@ export class SheetService {
     }
     this.document.columnWidths = widths;
     this.publishGeometry();
+    this.publishCharts();
     this.persist();
   }
 
@@ -1971,6 +1975,10 @@ export class SheetService {
     this.editedOverMark();
     this.document.applyShift(shift);
     this.publishGeometry();
+    // The charts over the sheet move with the lines, and the ranges
+    // they read with the cells.
+    this.publishCharts();
+    this.publishSeries();
     this.publishWindow();
     this.publishFormats();
     this.publishPalette();
