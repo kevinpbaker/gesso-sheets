@@ -811,20 +811,28 @@ function rangeFrom(stored: unknown): RangeRef | null {
     return null;
   }
   const held = stored as Partial<RangeRef>;
-  const corner = (ref: unknown): { row: number; column: number } | null => {
+  const corner = (ref: unknown): { row: number; column: number; sheet?: string } | null => {
     if (typeof ref !== 'object' || ref === null) {
       return null;
     }
-    const at = ref as { row?: unknown; column?: unknown };
-    return Number.isInteger(at.row) && (at.row as number) >= 0 && Number.isInteger(at.column) && (at.column as number) >= 0
-      ? { row: at.row as number, column: at.column as number }
-      : null;
+    const at = ref as { row?: unknown; column?: unknown; sheet?: unknown };
+    if (!(Number.isInteger(at.row) && (at.row as number) >= 0 && Number.isInteger(at.column) && (at.column as number) >= 0)) {
+      return null;
+    }
+    // The sheet the range names, when it names one: a chart can read
+    // another sheet's cells, and without this a Dashboard's chart of
+    // Summary!A3:D8 came back from a reload reading the Dashboard's
+    // own A3:D8.
+    const sheet = typeof at.sheet === 'string' && at.sheet !== '' ? at.sheet : undefined;
+    return { row: at.row as number, column: at.column as number, ...(sheet === undefined ? {} : { sheet }) };
   };
   const start = corner(held.start);
   const end = corner(held.end);
-  return start === null || end === null
-    ? null
-    : { start: relativeRef(start.row, start.column), end: relativeRef(end.row, end.column) };
+  const on = (at: { row: number; column: number; sheet?: string }) => ({
+    ...relativeRef(at.row, at.column),
+    ...(at.sheet === undefined ? {} : { sheet: at.sheet })
+  });
+  return start === null || end === null ? null : { start: on(start), end: on(end) };
 }
 
 /**

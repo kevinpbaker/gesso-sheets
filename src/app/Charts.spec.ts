@@ -239,6 +239,25 @@ describe('a chart that is written down', () => {
     expect(after.charts[0].range.end.row).toBe(9);
   });
 
+  /** Found in a browser: a chart of another sheet read its own sheet's cells after a reload. */
+  it('keeps the sheet a chart reads through a save and a load', () => {
+    const document = new SheetDocument();
+    document.addSheet('Summary');
+    document.activate(0);
+    document.addChart({
+      kind: 'pie',
+      title: '',
+      range: { start: { ...relativeRef(2, 0), sheet: 'Summary' }, end: { ...relativeRef(7, 3), sheet: 'Summary' } },
+      place: { x: 0, y: 0, width: 300, height: 200 },
+      legend: true
+    });
+    const back = new SheetDocument();
+    applySnapshot(back, parseSnapshot(JSON.stringify(snapshotOf(document)), 20)!);
+    back.activate(0);
+    expect(back.charts[0].range.start.sheet).toBe('Summary');
+    expect(back.charts[0].range.end.sheet).toBe('Summary');
+  });
+
   it('reads a file written before charts existed as a sheet with none', () => {
     const read = parseSnapshot(
       JSON.stringify({ version: 2, cells: [{ row: 0, column: 0, input: '1' }] }),
