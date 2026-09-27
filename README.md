@@ -338,3 +338,44 @@ directory again with `--force`.
 To move to the published packages: delete `vendor/`, delete
 `pnpm-workspace.yaml`, delete `overrides`, and put version ranges back
 in `dependencies`.
+
+### Deploying
+
+The sheet is a static build — `dist/` is five files and a wasm — so
+hosting it is hosting a directory. `vercel.json` is the whole of the
+configuration: the Vite preset, the build, and one rewrite that sends
+every path to `index.html`, because `/proof` is a route the router
+knows and the filesystem does not. Hashed assets are sent with a
+year's `immutable`; `index.html` is not, so a deploy is visible on the
+next load.
+
+Connecting it to GitHub is done once, in the dashboard:
+
+1. **Add New… → Project** at [vercel.com/new](https://vercel.com/new),
+   and import `kevinpbaker/gesso-sheets`.
+2. Leave every build setting alone. `vercel.json` sets them, and what
+   is written in the file wins over what is typed in the form.
+3. **Deploy.**
+
+After that every push to `main` deploys to production and every push
+to any other branch, and every pull request, gets a preview url of its
+own. Nothing has to be run by hand and no token has to be stored: the
+GitHub App does the triggering, which is why there is no workflow file
+in `.github/` here.
+
+The one thing that is not ordinary is the install step, and `vendor/`
+is the reason. The engine is not on a registry and its tarballs are
+not committed, so a fresh clone has no Gesso to build against — see
+[Why `vendor/` exists](#why-vendor-exists-and-how-to-remove-it).
+`scripts/vercel-install.sh` is the answer: it fetches the one Gesso
+commit named in `gesso.lock`, builds the six packages, and hands them
+to `vendor-gesso.sh`, which packs and installs them exactly as it does
+locally. A cold deploy is about twenty seconds of install and one
+second of build.
+
+`gesso.lock` is stamped by `vendor-gesso.sh` every time it runs, so
+the deployed build runs the engine the working copy runs rather than
+whatever Gesso's main branch has moved on to. **An engine change is
+therefore two commits**: re-vendor, commit `gesso.lock` here, and push
+Gesso itself — a `gesso.lock` naming a commit that was never pushed is
+a deploy that cannot install.

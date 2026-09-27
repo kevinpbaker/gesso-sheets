@@ -7,3 +7,6 @@ dist
 # 2MB of tarballs that change on every engine iteration; regenerate
 # rather than commit. A fresh clone runs the script once before install.
 vendor
+
+# Vercel CLI link and local build output.
+.vercel

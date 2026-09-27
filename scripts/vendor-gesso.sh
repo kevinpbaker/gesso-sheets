@@ -84,6 +84,21 @@ writeFileSync(join(root, 'pnpm-workspace.yaml'), `${lines.join('\n')}\n`);
 console.log(`vendored ${tarballs.length} packages`);
 NODE
 
+# Record which Gesso commit these tarballs came out of.
+#
+# vendor/ is not committed, so a build with no sibling checkout — the
+# Vercel one, and any fresh clone — has to fetch the engine itself.
+# This is the only thing that tells it *which* engine: the deployed
+# build packs from the commit the working copy packed from, rather
+# than from whatever Gesso's main branch has moved on to. A dirty
+# checkout is packed all the same and said so, because the loop this
+# script exists for is editing the engine and looking at the sheet;
+# the stamp is then a near-miss and the warning is the honest part.
+git -C "$GESSO" rev-parse HEAD > "$HERE/gesso.lock"
+if [ -n "$(git -C "$GESSO" status --porcelain)" ]; then
+  echo "note: $GESSO has uncommitted changes; gesso.lock names its HEAD, which is not what was packed" >&2
+fi
+
 cd "$HERE" && pnpm install
 
 # Drop Vite's pre-bundled copies of the old packages.
