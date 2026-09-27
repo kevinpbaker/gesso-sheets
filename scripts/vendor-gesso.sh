@@ -94,9 +94,39 @@ NODE
 # checkout is packed all the same and said so, because the loop this
 # script exists for is editing the engine and looking at the sheet;
 # the stamp is then a near-miss and the warning is the honest part.
-git -C "$GESSO" rev-parse HEAD > "$HERE/gesso.lock"
+STAMP="$(git -C "$GESSO" rev-parse HEAD)"
+echo "$STAMP" > "$HERE/gesso.lock"
 if [ -n "$(git -C "$GESSO" status --porcelain)" ]; then
   echo "note: $GESSO has uncommitted changes; gesso.lock names its HEAD, which is not what was packed" >&2
+fi
+
+# And whether a deploy could fetch what was just stamped.
+#
+# vercel-install.sh clones that one commit from GitHub, so a
+# gesso.lock naming a commit that was never pushed is a deploy that
+# dies in two seconds on `upload-pack: not our ref` — twenty minutes
+# later, in a log nobody is watching, with nothing in this repository
+# to suggest why. That happened once, which is why this is here.
+#
+# A warning rather than a failure. The order is allowed to be wrong
+# for a while: what has to be true is that Gesso is pushed before the
+# commit carrying this gesso.lock is, not before this script ends. And
+# a checkout with no network still has a sheet to run, so an origin
+# that cannot be reached is said and stepped over.
+if GIT_TERMINAL_PROMPT=0 git -C "$GESSO" fetch --quiet origin 2>/dev/null; then
+  if [ -z "$(git -C "$GESSO" branch -r --contains "$STAMP" 2>/dev/null)" ]; then
+    cat >&2 <<WARN
+
+  WARNING: gesso $STAMP is on no remote branch.
+
+  gesso.lock now names it, and the deploy fetches it from GitHub by
+  that name alone. Push Gesso before you push the commit that carries
+  this gesso.lock, or the build fails with "upload-pack: not our ref".
+
+WARN
+  fi
+else
+  echo "note: could not reach Gesso's origin; gesso.lock was not checked against it" >&2
 fi
 
 # The flags are the caller's, because CI needs one this does not.

@@ -378,4 +378,11 @@ the deployed build runs the engine the working copy runs rather than
 whatever Gesso's main branch has moved on to. **An engine change is
 therefore two commits**: re-vendor, commit `gesso.lock` here, and push
 Gesso itself — a `gesso.lock` naming a commit that was never pushed is
-a deploy that cannot install.
+a deploy that cannot install, and fails in two seconds on
+`upload-pack: not our ref`.
+
+`vendor-gesso.sh` checks for that as it stamps and says so on the spot
+rather than leaving it to the build log, which is twenty minutes later
+and somewhere else. It is a warning and not a refusal: what has to be
+true is that Gesso is pushed before the commit carrying `gesso.lock`
+is, which is not yet true at the moment the stamp is written.
