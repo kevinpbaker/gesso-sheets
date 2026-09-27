@@ -99,6 +99,7 @@ export type CommandId =
   | 'iterate'
   | 'stopIterating'
   | 'showFormulas'
+  | 'showReferences'
   | 'editNote'
   | 'scripts'
   | 'zoomIn'
@@ -462,6 +463,13 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   zoomOut: { id: 'zoomOut', label: 'Zoom out' },
   zoomReset: { id: 'zoomReset', label: 'Zoom to 100%' },
   showFormulas: { id: 'showFormulas', label: 'Show formulas', accelerator: { key: '`', ctrl: true } },
+  /**
+   * Excel's Trace Precedents, as outlines rather than arrows: the cells
+   * the selected cell's formula reads, in the colours the formula bar
+   * gives them. A toggle, because selection is how somebody moves round
+   * the sheet and boxes appearing at every step would be noise.
+   */
+  showReferences: { id: 'showReferences', label: 'Show references' },
   stopIterating: { id: 'stopIterating', label: 'Refuse circular formulas' },
   filterToSelection: {
     id: 'filterToSelection',
@@ -710,6 +718,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'unfreeze',
       SEPARATOR,
       'showFormulas',
+      'showReferences',
       SEPARATOR,
       'zoomIn',
       'zoomOut',

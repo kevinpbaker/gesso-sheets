@@ -163,3 +163,18 @@ describe('matching brackets', () => {
     expect(pair('=SUM(A1', 4)).toBeNull();
   });
 });
+
+/** A reference keeps the sheet it names, so it is not drawn on the sheet that happens to show. */
+describe('a reference to another sheet', () => {
+  it('carries the sheet, and the span is still the cell alone', () => {
+    const [one, two] = scanFormula('=Sales!A4+SUM(Sales!G4:G27)').references;
+    expect(one.from.sheet).toBe('Sales');
+    expect(two.from.sheet).toBe('Sales');
+    expect(two.to.sheet).toBe('Sales');
+    expect('=Sales!A4+SUM(Sales!G4:G27)'.slice(one.start, one.end)).toBe('A4');
+  });
+
+  it('leaves an unqualified one unqualified', () => {
+    expect(scanFormula('=A4').references[0].from.sheet).toBeUndefined();
+  });
+});

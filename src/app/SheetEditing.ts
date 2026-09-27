@@ -36,6 +36,13 @@ export interface SheetEditing {
    * where the next click lands.
    */
   readonly painter: Observable<'off' | 'once' | 'held'> & { readonly value: 'off' | 'once' | 'held' };
+  /**
+   * View ▸ Show references: whether the selected cell's formula has the
+   * cells it reads outlined, as they are while it is typed. On until it
+   * is turned off, following the selection.
+   */
+  readonly referencesShown: Observable<boolean> & { readonly value: boolean };
+  setReferencesShown(on: boolean): void;
   setPainter(state: 'off' | 'once' | 'held'): void;
   moveTo(row: number, column: number): void;
   /**
@@ -210,6 +217,7 @@ export function editing(
   };
 
   const painter = internalState<'off' | 'once' | 'held'>('off');
+  const referencesShown = internalState(false);
   /**
    * A rectangle from `row, column` to the anchor. The active cell is
    * the first corner unless it is given — a Shift+click on a header
@@ -500,6 +508,10 @@ export function editing(
     painter,
     setPainter: state => {
       painter.value = state;
+    },
+    referencesShown,
+    setReferencesShown: on => {
+      referencesShown.value = on;
     },
     focusSheet: () => focusSheet(),
     provideFocus: run => {

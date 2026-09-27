@@ -120,6 +120,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     if (id === 'showFormulas') {
       return status.value.showingFormulas ? 'Show values' : undefined;
     }
+    if (id === 'showReferences') {
+      return edit.referencesShown.value ? 'Hide references' : undefined;
+    }
     if (id !== 'undo' && id !== 'redo') {
       return undefined;
     }
@@ -766,6 +769,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'showFormulas':
         sheet.send.showFormulas(!status.value.showingFormulas);
         break;
+      case 'showReferences':
+        edit.setReferencesShown(!edit.referencesShown.value);
+        return;
       case 'zoomIn':
       case 'zoomOut':
       case 'zoomReset':

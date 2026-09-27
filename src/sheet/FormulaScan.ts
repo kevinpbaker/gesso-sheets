@@ -102,6 +102,12 @@ function referencesIn(tokens: readonly Token[]): ScannedReference[] {
     if (tokens[at + 1]?.kind === 'open') {
       continue;
     }
+    // `Sales!A4`: the sheet in front belongs to the reference, so a box
+    // for it is not drawn round A4 of whichever sheet is showing. The
+    // span is still the cell's text alone, which is what F4 cycles.
+    const before = tokens[at - 1];
+    const sheet = before?.kind === 'sheet' ? before.value : undefined;
+    const on = (cell: CellRef): CellRef => (sheet === undefined ? cell : { ...cell, sheet });
     const ref = parseRef(token.value);
     const colon = tokens[at + 1];
     const after = tokens[at + 2];
@@ -109,19 +115,19 @@ function referencesIn(tokens: readonly Token[]): ScannedReference[] {
     if (colon?.kind === 'colon' && after?.kind === 'word') {
       const end = parseRef(after.value);
       if (ref !== null && end !== null) {
-        found.push({ from: ref, to: end, isRange: true, start: token.start, end: after.end });
+        found.push({ from: on(ref), to: on(end), isRange: true, start: token.start, end: after.end });
         at += 2;
         continue;
       }
       const columns = wholeColumns(token.value, after.value);
       if (columns !== null) {
-        found.push({ ...columns, isRange: true, start: token.start, end: after.end });
+        found.push({ from: on(columns.from), to: on(columns.to), isRange: true, start: token.start, end: after.end });
         at += 2;
         continue;
       }
     }
     if (ref !== null) {
-      found.push({ from: ref, to: ref, isRange: false, start: token.start, end: token.end });
+      found.push({ from: on(ref), to: on(ref), isRange: false, start: token.start, end: token.end });
     }
   }
   return found;

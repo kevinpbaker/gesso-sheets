@@ -64,7 +64,7 @@ import {
   type SheetSeriesView,
   type SheetWindow
 } from './SheetContract';
-import { colouredReferences, formulaSpans } from './FormulaColours';
+import { colouredReferences, formulaSpans, type ColouredReference } from './FormulaColours';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { COMMANDS, commandFor, type CommandId } from './SheetCommands';
 import { isPrintable, keyAction, stampText } from './SheetKeys';
@@ -951,8 +951,31 @@ export function Grid(
     };
   };
 
+  /** The selected cell's formula, for View ▸ Show references; see `paintOutlines`. */
+  let shownFormula = '';
+  /** The sheet showing, by name, so a reference to another sheet is not drawn on this one. */
+  let activeSheetName = '';
+
+  /**
+   * The references to outline: the draft's while a cell is being typed
+   * into, and otherwise the selected cell's when Show references is on.
+   * Only the ones on the sheet in view, because a box round `B2` of this
+   * sheet for `Sales!B2` would point at the wrong cell.
+   */
+  const outlinedReferences = (draft: string | null): readonly ColouredReference[] => {
+    const text = draft ?? (edit.referencesShown.value && shownFormula.startsWith('=') ? shownFormula : null);
+    if (text === null) {
+      return [];
+    }
+    const here = activeSheetName.toUpperCase();
+    return colouredReferences(text).filter(reference => {
+      const sheet = reference.range.start.sheet;
+      return sheet === undefined || sheet.toUpperCase() === here;
+    });
+  };
+
   const paintOutlines = (draft: string | null): void => {
-    const references = draft === null ? [] : colouredReferences(draft);
+    const references = outlinedReferences(draft);
     const rows = new Map<number, DecorationShape[]>();
     if (landing !== null) {
       const range = sheetWindow.range$.value;
@@ -1040,9 +1063,20 @@ export function Grid(
   ctx.effect(edit.draft, paintOutlines);
   const repaintOutlines = (): void => paintOutlines(edit.draftNow());
   ctx.effect(sheet.view.sheets, tabs => {
-    if (tabs.active !== activeSheet) {
+    const name = tabs.entries[tabs.active]?.name ?? '';
+    if (tabs.active !== activeSheet || name !== activeSheetName) {
       activeSheet = tabs.active;
+      activeSheetName = name;
       repaintOutlines();
+    }
+  });
+  ctx.effect(edit.referencesShown, repaintOutlines);
+  ctx.effect(sheet.view.editor, editor => {
+    if (editor.input !== shownFormula) {
+      shownFormula = editor.input;
+      if (edit.referencesShown.value) {
+        repaintOutlines();
+      }
     }
   });
 

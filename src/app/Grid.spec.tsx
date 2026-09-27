@@ -930,6 +930,97 @@ describe('colouring a formula as it is typed', () => {
  * at all.
  */
 /**
+ * View ▸ Show references: Excel's Trace Precedents, as the outlines a
+ * formula's references already get while it is typed — for the selected
+ * cell, following the selection, until it is turned off.
+ */
+describe('showing the references of the selected cell', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const colours = (row: number): string[] => {
+    const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
+    const shapes = (found?.decorations ?? []) as readonly { color: string }[];
+    return [...new Set(shapes.map(shape => shape.color))];
+  };
+
+  async function settle(): Promise<void> {
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function toggle(): Promise<void> {
+    h.ui.fireEvent.focus(h.ui.getByRole('grid'));
+    await settle();
+    h.ui.fireEvent.press('F10');
+    await settle();
+    h.ui.fireEvent.press('v');
+    await settle();
+    const item = h.ui.getAllByRole('menuitem').find(node => /references/.test(String(node.properties.get('label'))))!;
+    h.ui.fireEvent.click(item);
+    await settle();
+  }
+
+  async function select(row: number, column: number): Promise<void> {
+    h.service.setSelection(row, column, row, column);
+    await settle();
+  }
+
+  beforeEach(async () => {
+    h = await mount(document => {
+      document.setCell(1, 1, '5');
+      document.setCell(3, 1, '7');
+      document.addSheet('Other');
+      document.activate(0);
+      document.setCell(6, 4, '=B2+B4');
+      document.setCell(7, 4, '=Other!B2*2');
+      document.setCell(8, 4, '42');
+    });
+  });
+
+  it('outlines nothing until it is turned on', async () => {
+    await select(6, 4);
+    expect(colours(1)).toEqual([]);
+  });
+
+  it('outlines what the selected formula reads, and follows the selection', async () => {
+    await toggle();
+    await select(6, 4);
+    expect(colours(1)).toHaveLength(1);
+    expect(colours(3)).toHaveLength(1);
+    expect(colours(1)).not.toEqual(colours(3));
+    // A value reads nothing.
+    await select(8, 4);
+    expect(colours(1)).toEqual([]);
+  });
+
+  it('does not draw a reference to another sheet on this one', async () => {
+    await toggle();
+    await select(7, 4);
+    expect(colours(1)).toEqual([]);
+  });
+
+  it('says Hide references while it is on, and turns off again', async () => {
+    await toggle();
+    h.ui.fireEvent.press('F10');
+    await settle();
+    h.ui.fireEvent.press('v');
+    await settle();
+    expect(h.ui.getAllByRole('menuitem').some(node => node.properties.get('label') === 'Hide references')).toBe(true);
+    h.ui.fireEvent.press('Escape');
+    await settle();
+    await toggle();
+    await select(6, 4);
+    expect(colours(1)).toEqual([]);
+  });
+});
+
+/**
  * The cells a selected chart reads, outlined as Excel outlines them: the
  * series' names red, the categories purple, the values blue.
  */
