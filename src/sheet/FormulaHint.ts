@@ -73,7 +73,18 @@ export type FormulaHint =
     }
   | null;
 
-export function hintFor(text: string, caret: number, defined: readonly DefinedFunction[] = []): FormulaHint {
+/**
+ * `values` are the workbook's names that are not functions — ranges,
+ * and formulas that are not a `LAMBDA` — which are offered as the
+ * functions are and accepted without a bracket, because `Sales` is read
+ * and not called.
+ */
+export function hintFor(
+  text: string,
+  caret: number,
+  defined: readonly DefinedFunction[] = [],
+  values: readonly string[] = []
+): FormulaHint {
   if (!text.startsWith('=')) {
     return null;
   }
@@ -85,7 +96,8 @@ export function hintFor(text: string, caret: number, defined: readonly DefinedFu
     const upper = prefix.toUpperCase();
     const names = [
       ...completionsFor(prefix),
-      ...defined.filter(each => prefix !== '' && each.name.toUpperCase().startsWith(upper)).map(each => each.name)
+      ...defined.filter(each => prefix !== '' && each.name.toUpperCase().startsWith(upper)).map(each => each.name),
+      ...values.filter(name => prefix !== '' && name.toUpperCase().startsWith(upper))
     ];
     // A word that matches nothing is somebody typing something else —
     // a name the sheet does not know, or a word inside a string. An
@@ -116,9 +128,12 @@ export function hintFor(text: string, caret: number, defined: readonly DefinedFu
  * lands inside the brackets, which is where the next thing typed
  * goes.
  */
-export function acceptCompletion(text: string, span: Span, name: string): { text: string; caret: number } {
-  const written = `${text.slice(0, span.start)}${name}(${text.slice(span.end)}`;
-  return { text: written, caret: span.start + name.length + 1 };
+export function acceptCompletion(text: string, span: Span, name: string, call = true): { text: string; caret: number } {
+  // A name that is read rather than called takes no bracket, and the
+  // caret goes after it.
+  const opening = call ? '(' : '';
+  const written = `${text.slice(0, span.start)}${name}${opening}${text.slice(span.end)}`;
+  return { text: written, caret: span.start + name.length + opening.length };
 }
 
 /**

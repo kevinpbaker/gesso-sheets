@@ -141,3 +141,15 @@ describe('a function the workbook defined', () => {
     expect(hint?.kind === 'signature' && hint.signature.args).toEqual(['amount']);
   });
 });
+
+/** A named range is offered too, and taken without a bracket. */
+describe('a name the workbook defined that is read, not called', () => {
+  it('is offered while its name is typed', () => {
+    const hint = hintFor('=SUM(Rev', 8, [], ['Revenue', 'Region']);
+    expect(hint?.kind === 'completions' && hint.names).toEqual(['Revenue']);
+  });
+
+  it('is written without a bracket, with the caret after it', () => {
+    expect(acceptCompletion('=SUM(Rev', { start: 5, end: 8 }, 'Revenue', false)).toEqual({ text: '=SUM(Revenue', caret: 12 });
+  });
+});

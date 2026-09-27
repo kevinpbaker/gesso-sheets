@@ -1266,8 +1266,15 @@ export function Grid(
   const chosen = internalState(0);
   /** The workbook's own functions, named LAMBDAs, for the list and the hint. */
   let definedFunctions: readonly DefinedFunction[] = [];
+  /** And the names that are read rather than called: ranges, and formulas that are not functions. */
+  let definedValues: readonly string[] = [];
   ctx.effect(sheet.view.names, current => {
     definedFunctions = definedFunctionsOf(current.formulas);
+    const functions = new Set(definedFunctions.map(each => each.name));
+    definedValues = [
+      ...current.entries.map(entry => entry.name),
+      ...current.formulas.filter(entry => !functions.has(entry.name)).map(entry => entry.name)
+    ];
   });
 
   const refreshSpans = (): void => {
@@ -1280,7 +1287,7 @@ export function Grid(
     const caret = editorNode === null ? undefined : editorFor(editorNode).focus;
     editorSpans.next(formulaSpans(draft, caret));
 
-    const next = caret === undefined ? null : hintFor(draft, caret, definedFunctions);
+    const next = caret === undefined ? null : hintFor(draft, caret, definedFunctions, definedValues);
     /**
      * The choice survives a keystroke that did not change the list.
      *
@@ -2145,7 +2152,7 @@ export function Grid(
     if (draft === null || editorNode === null) {
       return;
     }
-    const written = acceptCompletion(draft, span, name);
+    const written = acceptCompletion(draft, span, name, !definedValues.includes(name));
     pickedText = written.text;
     edit.write(written.text);
     const model = editorFor(editorNode);

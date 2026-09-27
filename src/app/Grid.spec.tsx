@@ -1511,6 +1511,21 @@ describe('suggesting a function while it is typed', () => {
     expect(options()).toEqual(['IF', 'IFERROR', 'IFNA', 'IFS']);
   });
 
+  /** A workbook's own names are offered beside the library, and a range takes no bracket. */
+  it('offers a named range, and takes it without a bracket', async () => {
+    h.service.saveName('', 'Revenue', '=A1:A3');
+    h.service.saveName('', 'Rebate', '=LAMBDA(x, x*0.1)');
+    await h.served.settle();
+    await h.ui.settle();
+    await typing('=SUM(Re');
+    expect(options()).toEqual(expect.arrayContaining(['Rebate', 'Revenue']));
+    while (selected()?.properties.get('label') !== 'Revenue') {
+      await press('ArrowDown');
+    }
+    await press('Tab');
+    expect(editorText()).toBe('=SUM(Revenue');
+  });
+
   /** Prefix, not substring: `SU` offers `SUBSTITUTE` and `SUM` alike. */
   it('matches the start of the name', async () => {
     await typing('=SU');
