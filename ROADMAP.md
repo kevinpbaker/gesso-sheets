@@ -1455,6 +1455,23 @@ reproduce in either repo's harness, so there is no unit spec, and
 that is written down in the engine's commit rather than papered over
 with one that passes when the fix is reverted.
 
+### ~~An absolute box past the end of its containing block has no size~~ — **fixed**
+
+The richer seed put a chart on its Forecast sheet, and in a browser
+it was not there: mounted, labelled, and laid out 440 wide and 0 tall.
+A chart hangs off the row it starts in, the row is positioned so the
+chart can stack over the rows below, and this chart started 46 pixels
+down a row 24 tall. With no room left below its top, the engine
+measured it under a loose constraint of (0, 0) — which is a tight zero
+— and its explicit height lost. One pixel of room would have left it
+whole, which is why every chart before it had drawn.
+
+Fixed in gesso (307543c): an explicit size on an absolute box is the
+box's own, as in CSS, and the block no longer caps it. The engine's
+positioning spec has the case; this repo's `SheetSeed.spec.ts` checks
+that the seeded sheets are as wide as the workbook, which is the
+other half of how the chart came to be past the edge of its row.
+
 Carried forward from the head of this file, with what Part Two adds.
 Most of it is struck through now. Two of these were closed by the
 engine while Phase 10 was running, and the rest in one pass over the

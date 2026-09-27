@@ -4,7 +4,7 @@
 # from this file, not from package.json.
 overrides:
   gesso-components: file:vendor/gesso-components-0.3.0-e653fdbd.tgz
-  gesso-core: file:vendor/gesso-core-0.3.0-4764fa8b.tgz
+  gesso-core: file:vendor/gesso-core-0.3.0-8620990d.tgz
   gesso-devtools: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
   gesso-framework: file:vendor/gesso-framework-0.3.0-11c31f77.tgz
   gesso-testing: file:vendor/gesso-testing-0.3.0-66905088.tgz
