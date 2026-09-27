@@ -215,6 +215,33 @@ describe('the borders a cell draws', () => {
     expect(shapesOn('boxed')).toHaveLength(4);
   });
 
+  it('boxes a merge round the whole of it, and not round its first cell', async () => {
+    h = await mount(d => {
+      d.setCell(1, 1, 'merged');
+      d.merges.add({ firstRow: 1, lastRow: 2, firstColumn: 1, lastColumn: 3 });
+      d.setFormat(1, 1, {
+        number: GENERAL,
+        paint: {
+          ...PLAIN,
+          borders: {
+            top: { width: 1, color: '' },
+            right: { width: 1, color: '' },
+            bottom: { width: 1, color: '' },
+            left: { width: 1, color: '' }
+          }
+        }
+      });
+      d.setNote(1, 1, 'A note, marked in the merge’s own corner.');
+    });
+    const shapes = shapesOn('merged');
+    const right = Math.max(...shapes.map(shape => shape.x + shape.width));
+    const bottom = Math.max(...shapes.map(shape => shape.y + shape.height));
+    expect(right).toBe(3 * COLUMN_WIDTH);
+    expect(bottom).toBe(2 * ROW_HEIGHT);
+    // No rule stands anywhere but the rim: nothing ends at a column's edge inside it.
+    expect(shapes.some(shape => shape.x + shape.width === COLUMN_WIDTH)).toBe(false);
+  });
+
   /**
    * Outline over a range means the rim of the *block*, not a box
    * round every cell in it. Only the application worker knows where

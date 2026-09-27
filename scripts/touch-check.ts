@@ -117,6 +117,20 @@ async function main(): Promise<void> {
       }
     };
 
+    // Onto the ledger: the seeded workbook opens on its dashboard, whose
+    // figures are merged tiles. A tap on the tab is a tap like any other.
+    const tab = await page.evaluate<Point | null>(`(() => {
+      const el = [...document.querySelectorAll('[role="tab"]')].find(el => el.getAttribute('aria-label') === 'Sales');
+      if (!el) { return null; }
+      const r = el.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+    if (tab === null) {
+      throw new Error('There is no Sales tab to tap.');
+    }
+    await tap(tab);
+    await sleep(300);
+
     // A tap selects.
     await tap(await cell('C', '5'));
     check('a tap selects the cell under it', (await nameBox()) === 'C5', `the name box says ${await nameBox()}`);
@@ -163,7 +177,13 @@ async function main(): Promise<void> {
         // Already gone.
       }
     }
-    rmSync(profile, { recursive: true, force: true });
+    // Chrome may still be writing its profile as it goes; a temporary
+    // directory left behind is not worth failing a passing run over.
+    try {
+      rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      console.log(`  (left ${profile} behind)`);
+    }
   }
   if (failures.length > 0) {
     console.log(`\nFAIL\n${failures.map(failure => `  - ${failure}`).join('\n')}`);

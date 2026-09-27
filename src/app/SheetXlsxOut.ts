@@ -147,7 +147,11 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
 
   const definedNames: XlsxOutName[] = [];
   for (const entry of document.book.names.all()) {
-    const sheet = entry.range.start.sheet ?? names[0];
+    // A name written without a sheet means the sheet of the formula
+    // that reads it, where an Excel name belongs to one sheet. So it
+    // goes out on the sheet whose formulas use it — the first, when
+    // none does.
+    const sheet = entry.range.start.sheet ?? names[sheetUsing(document, entry.name)] ?? names[0];
     if (sheet === undefined) {
       continue;
     }
@@ -165,6 +169,23 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
     book: { sheets, formats, names: definedNames, active: document.active, iteration: document.book.iteration },
     leftOut: [...leftOut]
   };
+}
+
+/** The first sheet with a formula that says a name, by index; 0 when none does. */
+function sheetUsing(document: SheetDocument, name: string): number {
+  const said = new RegExp(`(^|[^A-Za-z0-9_.!$])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^A-Za-z0-9_.(])`, 'i');
+  for (let index = 0; index < document.sheetCount; index++) {
+    const page = document.pageAt(index);
+    if (page === undefined) {
+      continue;
+    }
+    for (const cell of page.sheet.entries()) {
+      if (cell.input.startsWith('=') && said.test(cell.input.replace(/"[^"]*"/g, '""'))) {
+        return index;
+      }
+    }
+  }
+  return 0;
 }
 
 /** The platform's deflate, for the zip: the other half of `platformInflate`. */

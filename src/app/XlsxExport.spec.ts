@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { parseAddress } from '../sheet/A1';
+
 import { GENERAL, PLAIN, type CellFormat } from '../sheet/Format';
 import { openXlsx } from '../sheet/Xlsx';
 import { excelFormula, xlsxParts, writeXlsx } from '../sheet/XlsxWrite';
@@ -103,6 +105,27 @@ describe('a workbook written as an .xlsx', () => {
         'xl/worksheets/sheet1.xml'
       ]);
     }
+  });
+
+  /**
+   * A name written without a sheet means the sheet of the formula that
+   * reads it; an Excel name belongs to one sheet. It used to go out on
+   * the first sheet, which was right only while the name was used there.
+   */
+  it('puts a name on the sheet whose formulas use it', async () => {
+    const document = new SheetDocument();
+    document.renameSheet(0, 'Cover');
+    document.activate(document.addSheet('Data'));
+    document.setCell(0, 0, '2');
+    document.setCell(1, 0, '3');
+    document.defineName('Figures', parseAddress('A1:A2')!);
+    document.setCell(2, 0, '=SUM(Figures)');
+    document.sheet.recalculate();
+    const workbook = xlsxParts(xlsxOfDocument(document, ROWS).book).find(part => part.name === 'xl/workbook.xml')!.text;
+    expect(workbook).toContain('<definedName name="Figures">Data!$A$1:$A$2</definedName>');
+    const back = await roundTrip(document);
+    back.activate(1);
+    expect(back.sheet.value(2, 0)).toBe(5);
   });
 
   it('says what it cannot carry', () => {

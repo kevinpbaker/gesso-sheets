@@ -10,7 +10,7 @@ import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
-import { seed } from './SheetSeed';
+import { SHEET, seed } from './SheetSeed';
 import type { SheetValidation } from './SheetContract';
 
 /**
@@ -382,7 +382,11 @@ describe('the rules bar over the seeded workbook', () => {
   let h: Harness;
 
   beforeEach(async () => {
-    h = await mount(document => seed(document));
+    // Onto the sales sheet, where the seed's rules are; it opens on the dashboard.
+    h = await mount(document => {
+      seed(document);
+      document.activate(SHEET.sales);
+    });
   });
 
   afterEach(() => {

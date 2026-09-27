@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { SheetDocument } from './SheetDocument';
-import { seed } from './SheetSeed';
+import { SHEET, seed } from './SheetSeed';
+
+/** Where the seed puts things, as its own layout has them. */
+const TOTAL_ROW = 27;
+const ROLLUP_ROW = 8;
+const GLANCE_COUNT = 12;
 
 /**
  * The seed, end to end through the engine.
@@ -42,10 +47,10 @@ describe('the seeded workbook', () => {
     expect(seeded().sheet.pending).toBe(0);
   });
 
-  it('opens on the sheet with the orders on it', () => {
+  it('opens on the dashboard, in front of four more sheets', () => {
     const document = seeded();
-    expect(document.active).toBe(0);
-    expect(document.sheets().map(entry => entry.name)).toEqual(['Sales', 'Reference', 'Summary']);
+    expect(document.active).toBe(SHEET.dashboard);
+    expect(document.sheets().map(entry => entry.name)).toEqual(['Dashboard', 'Sales', 'Forecast', 'Reference', 'Summary']);
   });
 
   it('holds no errors anywhere, on any sheet', () => {
@@ -62,84 +67,126 @@ describe('the seeded workbook', () => {
    */
   it('prices an order by looking its region up on another sheet', () => {
     const document = seeded();
+    document.activate(SHEET.sales);
     // North, at the list price Reference holds for it.
     expect(document.sheet.value(3, 5)).toBe(48);
     expect(document.sheet.value(3, 1)).toBe('Dana Okonjo');
     expect(document.sheet.value(3, 6)).toBe(180 * 48);
   });
 
+  it('pays commission by the tier an order reaches, found by an approximate lookup', () => {
+    const document = seeded();
+    document.activate(SHEET.sales);
+    // 180 × 48 = 8,640, which is past 5,000 and short of 15,000: 3%.
+    expect(document.sheet.value(3, 10)).toBe(259.2);
+  });
+
   it('totals a column through a name rather than an address', () => {
     const document = seeded();
+    document.activate(SHEET.sales);
     let units = 0;
-    for (let row = 3; row <= 12; row++) {
+    for (let row = 3; row < TOTAL_ROW; row++) {
       units += document.sheet.value(row, 4) as number;
     }
-    expect(document.sheet.value(13, 4)).toBe(units);
+    expect(document.sheet.value(TOTAL_ROW, 4)).toBe(units);
   });
 
   /**
-   * The share column reads the total through an absolute reference,
-   * so the ten of them add up to one — and go on doing so when a unit
-   * count changes, which is the cascade this seed exists to show.
+   * The share column reads the total through an absolute reference, so
+   * the shares add up to one — and go on doing so when a unit count
+   * changes, which is the cascade this seed exists to show.
    */
   it('shares add to a whole, before and after an edit', () => {
     const document = seeded();
+    document.activate(SHEET.sales);
     const share = (): number => {
       let total = 0;
-      for (let row = 3; row <= 12; row++) {
+      for (let row = 3; row < TOTAL_ROW; row++) {
         total += document.sheet.value(row, 7) as number;
       }
       return Math.round(total * 1000) / 1000;
     };
     expect(share()).toBe(1);
-
     document.setCell(3, 4, '900');
     document.sheet.recalculate();
-
     expect(share()).toBe(1);
     expect(document.sheet.value(3, 6)).toBe(900 * 48);
   });
 
-  it('cascades one edit into the cells that read it, transitively', () => {
-    const document = seeded();
-    const before = document.sheet.value(13, 6) as number;
-
-    document.setCell(3, 4, '240');
-    document.sheet.recalculate();
-
-    expect(document.sheet.value(13, 6)).not.toBe(before);
-  });
-
   /**
-   * An edit on `Reference` has to reach `Sales`, which reads it, and
-   * then `Summary`, which reads `Sales` — two hops across three
-   * sheets, in an order nothing here declares.
+   * An edit on `Reference` has to reach `Sales`, which reads it, then
+   * the dashboard, which reads `Sales`, and then the forecast, which
+   * reads the dashboard — three hops across four sheets, in an order
+   * nothing here declares.
    */
-  it('carries an edit across two sheets in one recalculation', () => {
+  it('carries a price edit across four sheets in one recalculation', () => {
     const document = seeded();
-    document.activate(2);
-    const before = document.sheet.value(8, 3) as number;
+    document.activate(SHEET.forecast);
+    const before = document.sheet.value(24, 1) as number;
+    document.activate(SHEET.dashboard);
+    const year = document.sheet.value(4, 0) as number;
 
-    document.activate(1);
-    // North's list price, doubled.
+    document.activate(SHEET.reference);
     document.setCell(1, 2, '96.00');
     document.sheet.recalculate();
 
-    document.activate(2);
-    expect(document.sheet.value(8, 3)).toBeGreaterThan(before);
+    document.activate(SHEET.dashboard);
+    expect(document.sheet.value(4, 0)).toBeGreaterThan(year);
+    document.activate(SHEET.forecast);
+    expect(document.sheet.value(24, 1)).toBeGreaterThan(before);
+  });
+
+  it('spills the months, the regions and the largest orders from one formula each', () => {
+    const document = seeded();
+    const sheet = document.sheet;
+    expect(sheet.spillOf(8, 0)).toEqual({ rows: 12, columns: 1 });
+    expect([sheet.value(8, 0), sheet.value(19, 0)]).toEqual(['Oct 25', 'Sep 26']);
+    expect(sheet.spillOf(8, 4)).toEqual({ rows: 5, columns: 1 });
+    expect(sheet.value(8, 4)).toBe('Central');
+    expect(sheet.spillOf(24, 0)).toEqual({ rows: 5, columns: 7 });
+    // The largest order of the year, at the top of the block.
+    expect(sheet.value(24, 6)).toBe(720 * 61.25);
+    // And the months' revenue adds up to the year's.
+    let months = 0;
+    for (let row = 8; row <= 19; row++) {
+      months += sheet.value(row, 1) as number;
+    }
+    expect(Math.round(months * 100) / 100).toBe(Math.round((sheet.value(4, 0) as number) * 100) / 100);
+  });
+
+  it('projects twelve months from one formula, and follows the scenario', () => {
+    const document = seeded();
+    document.activate(SHEET.forecast);
+    const sheet = document.sheet;
+    expect(sheet.spillOf(11, 1)).toEqual({ rows: 12, columns: 1 });
+    const base = sheet.value(24, 1) as number;
+    document.setCell(2, 1, 'High');
+    sheet.recalculate();
+    expect(sheet.value(3, 1)).toBe(0.04);
+    expect(sheet.value(24, 1)).toBeGreaterThan(base);
+    expect(document.setCell(2, 1, 'Hopeful')).toBe('A scenario is Low, Base or High.');
   });
 
   it('answers a lookup that cannot succeed with words instead of an error', () => {
     const document = seeded();
-    document.activate(2);
-    expect(document.sheet.value(18, 1)).toBe('not on file');
+    document.activate(SHEET.summary);
+    const last = document.sheet.value(ROLLUP_ROW + 3 + GLANCE_COUNT, 1);
+    expect(last).toBe('not on file');
   });
 
-  it('names the region that took the largest order', () => {
+  it('draws three charts on the dashboard, one of them from another sheet', () => {
     const document = seeded();
-    document.activate(2);
-    // East's 610 units at 44.75 is the largest order on the sheet.
-    expect(document.sheet.value(14, 1)).toBe('East');
+    expect(document.charts.map(chart => chart.kind)).toEqual(['line', 'column', 'pie']);
+    expect(document.charts[2].range.start.sheet).toBe('Summary');
+    document.activate(SHEET.forecast);
+    expect(document.charts).toHaveLength(1);
+  });
+
+  it('keeps notes on the cells worth one', () => {
+    const document = seeded();
+    expect(document.noteAt(4, 0)).toMatch(/all 24 orders/);
+    document.activate(SHEET.forecast);
+    expect(document.noteAt(2, 1)).toMatch(/Low, Base or High/);
   });
 
   /**
@@ -149,19 +196,19 @@ describe('the seeded workbook', () => {
   it('keeps each sheet’s rules on that sheet', () => {
     const document = seeded();
     expect(document.conditional).toHaveLength(3);
+    document.activate(SHEET.sales);
+    expect(document.conditional).toHaveLength(4);
     expect(document.validations).toHaveLength(2);
-
-    document.activate(1);
+    document.activate(SHEET.reference);
     expect(document.conditional).toHaveLength(0);
-
-    document.activate(2);
+    document.activate(SHEET.summary);
     expect(document.conditional).toHaveLength(1);
   });
 
   it('refuses a review it does not know, and keeps the one that was there', () => {
     const document = seeded();
+    document.activate(SHEET.sales);
     const before = document.sheet.input(3, 9);
-
     expect(document.setCell(3, 9, 'Maybe')).toBe('A review is Approved, Pending or Held.');
     expect(document.sheet.input(3, 9)).toBe(before);
     expect(document.setCell(3, 9, 'Held')).toBeNull();
@@ -173,6 +220,7 @@ describe('the seeded workbook', () => {
    */
   it('lets an unusual unit count through and marks it', () => {
     const document = seeded();
+    document.activate(SHEET.sales);
     expect(document.setCell(4, 4, '9000')).toBeNull();
     expect(document.sheet.value(4, 4)).toBe(9000);
   });
@@ -186,6 +234,20 @@ describe('the seeded workbook', () => {
       for (const width of widths) {
         expect(width, `sheet ${sheet}`).toBeGreaterThan(0);
       }
+    }
+  });
+
+  it('gives every sheet as many columns as the workbook has', () => {
+    // The window is as wide as the widths add up to, so a sheet with
+    // six of them is a row six columns wide — and a chart placed past
+    // the sixth is laid out in it at no width at all.
+    const document = new SheetDocument();
+    document.columnWidths = Array.from({ length: 40 }, () => 96);
+    document.book.extent = { rows: 1000, columns: 40 };
+    seed(document);
+    for (let sheet = 0; sheet < document.sheets().length; sheet++) {
+      document.activate(sheet);
+      expect(document.columnWidths, `sheet ${sheet}`).toHaveLength(40);
     }
   });
 });

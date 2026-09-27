@@ -179,15 +179,31 @@ export class ConditionalPainter {
     let low = Number.POSITIVE_INFINITY;
     let high = Number.NEGATIVE_INFINITY;
     let scanned = 0;
-    for (const cell of sheet.entries()) {
-      scanned++;
-      if (!covers(rule.range, cell.row, cell.column)) {
-        continue;
-      }
-      const value = sheet.value(cell.row, cell.column);
+    const take = (row: number, column: number): void => {
+      const value = sheet.value(row, column);
       if (typeof value === 'number' && Number.isFinite(value)) {
         low = Math.min(low, value);
         high = Math.max(high, value);
+      }
+    };
+    for (const cell of sheet.entries()) {
+      scanned++;
+      if (covers(rule.range, cell.row, cell.column)) {
+        take(cell.row, cell.column);
+      }
+      // The cells an array spilled into hold nothing of their own, so
+      // they are not among the entries; their values are the formula's,
+      // and a scale over a spilled column has to see all of them.
+      const spill = sheet.spillOf(cell.row, cell.column);
+      if (spill !== null) {
+        for (let r = 0; r < spill.rows; r++) {
+          for (let c = 0; c < spill.columns; c++) {
+            if ((r !== 0 || c !== 0) && covers(rule.range, cell.row + r, cell.column + c)) {
+              scanned++;
+              take(cell.row + r, cell.column + c);
+            }
+          }
+        }
       }
     }
     this.stats.scans++;

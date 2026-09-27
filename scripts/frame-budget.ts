@@ -188,6 +188,27 @@ async function main(): Promise<void> {
       30_000
     );
 
+    // Onto the ledger. The seeded workbook opens on its dashboard,
+    // which carries three charts of its own — not an idle sheet — and
+    // freezes nothing, so the chart put up below would scroll away
+    // with the row it hangs off. The orders sheet is plain rows under
+    // a frozen heading, which is what these runs were written against.
+    const tab = await waitFor(
+      'the Sales tab',
+      async () =>
+        (await devtools.evaluate<{ x: number; y: number } | null>(
+          `(() => {
+             const el = [...document.querySelectorAll('[role="tab"]')].find(el => el.getAttribute('aria-label') === 'Sales');
+             if (!el) { return null; }
+             const box = el.getBoundingClientRect();
+             return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+           })()`
+        )) ?? undefined,
+      30_000
+    );
+    await devtools.click(tab.x, tab.y);
+    await sleep(500);
+
     // --------------------------------------------------------------
     // A scroll with nothing else going on
     // --------------------------------------------------------------

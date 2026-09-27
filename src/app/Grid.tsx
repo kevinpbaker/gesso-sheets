@@ -309,11 +309,11 @@ export function Grid(
    * for almost every cell on the screen and pushes nothing at all.
    */
   const refreshShapes = (mounted: MountedCell): void => {
-    const width = columnWidths.get(mounted.column)?.value ?? COLUMN_WIDTH;
+    const box = shapeBox(mounted.row, mounted.column);
     const next = bordersOf(
       mounted.paint.value,
-      width,
-      heightNow(mounted.row),
+      box.width,
+      box.height,
       isFlagged(mounted.row, mounted.column),
       noteOf(mounted.row, mounted.column) !== ''
     );
@@ -492,6 +492,43 @@ export function Grid(
     return null;
   };
 
+  /**
+   * What a cell's borders and marks are drawn round: the cell, or the
+   * whole merge when it anchors one. The anchor is drawn the merge's
+   * size, so a box round it drawn the width of its own column put a
+   * rule down the middle of the merge, and a note's mark half way
+   * along its top.
+   */
+  const shapeBox = (row: number, column: number): { width: number; height: number } => {
+    const merge = mergeAt(row, column);
+    if (merge === null || merge.firstRow !== row || merge.firstColumn !== column) {
+      return { width: widths.value[column] ?? COLUMN_WIDTH, height: heightNow(row) };
+    }
+    let width = 0;
+    for (let at = merge.firstColumn; at <= merge.lastColumn; at++) {
+      width += widths.value[at] ?? COLUMN_WIDTH;
+    }
+    let height = 0;
+    for (let at = merge.firstRow; at <= merge.lastRow; at++) {
+      height += heightNow(at);
+    }
+    return { width, height };
+  };
+  /** Whether a column or row that moved is under the cell's shapes. */
+  const underShapes = (mounted: MountedCell, moved: ReadonlySet<number>, axis: 'row' | 'column'): boolean => {
+    const merge = mergeAt(mounted.row, mounted.column);
+    if (merge === null) {
+      return moved.has(mounted[axis]);
+    }
+    const [first, last] = axis === 'row' ? [merge.firstRow, merge.lastRow] : [merge.firstColumn, merge.lastColumn];
+    for (const at of moved) {
+      if (at >= first && at <= last) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const hidden = internalState<ReadonlySet<number>>(new Set<number>());
   /**
    * The rows that are not the default height: dragged, or fitted to
@@ -572,7 +609,7 @@ export function Grid(
     // A bottom border is drawn at the foot of the cell, so a row that
     // changed height redraws the borders in it, as a column does.
     for (const mounted of cells.values()) {
-      if (moved.has(mounted.row)) {
+      if (underShapes(mounted, moved, 'row')) {
         refreshShapes(mounted);
       }
     }
@@ -614,7 +651,7 @@ export function Grid(
     // column that changed width has to redraw the borders in it —
     // and only in it.
     for (const mounted of cells.values()) {
-      if (moved.has(mounted.column)) {
+      if (underShapes(mounted, moved, 'column')) {
         refreshShapes(mounted);
       }
     }
@@ -1555,11 +1592,12 @@ export function Grid(
     const value = values.for(key, { row, column });
     const standing = standings.for(key, { row, column });
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
+    const box = shapeBox(row, column);
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(
       bordersOf(
         paint.value,
-        columnWidths.get(column)?.value ?? widths.value[column] ?? COLUMN_WIDTH,
-        heightNow(row),
+        box.width,
+        box.height,
         isFlagged(row, column),
         noteOf(row, column) !== ''
       )
@@ -2518,8 +2556,27 @@ export function Grid(
     return low;
   };
 
+  /**
+   * Set when the anchors were asked for before the window could answer.
+   *
+   * A grid mounted over a workbook that is already open — the route
+   * moving from `/` to `/d/main` mounts a second one — hears the
+   * geometry and the charts before the window has been told how many
+   * rows there are. Until it has, every row starts at offset 0, the
+   * search above lands every chart on the last row, and the charts
+   * hang off a row nobody will scroll to. So the map waits, and is
+   * built the first time a render asks for it with the window caught
+   * up.
+   */
+  let anchorsStale = false;
+
   const rebuildAnchors = (): void => {
     anchored.clear();
+    if (sheetWindow !== undefined && rowCount.value > 1 && sheetWindow.rowOffsetOf(rowCount.value) === 0) {
+      anchorsStale = charts.value.entries.length > 0;
+      return;
+    }
+    anchorsStale = false;
     for (const chart of charts.value.entries) {
       const row = rowAtOffset(chart.y);
       const held = anchored.get(row);
@@ -2529,6 +2586,14 @@ export function Grid(
         held.push(chart);
       }
     }
+  };
+
+  /** The anchors, built now if they were asked for too early. */
+  const anchors = (): Map<number, SheetChart[]> => {
+    if (anchorsStale) {
+      rebuildAnchors();
+    }
+    return anchored;
   };
 
   const chartHandlers = {
@@ -2570,7 +2635,7 @@ export function Grid(
    * uses.
    */
   const chartsOn = (row: number): UiElement[] => {
-    const here = anchored.get(row);
+    const here = anchors().get(row);
     if (here === undefined || sheetWindow === undefined) {
       return [];
     }
@@ -2681,7 +2746,7 @@ export function Grid(
      * tall in a browser, which is exactly the height of one row.
      */
     const spans =
-      anchored.has(row) || merges.value.some(rect => rect.firstRow === row && rect.lastRow > row);
+      anchors().has(row) || merges.value.some(rect => rect.firstRow === row && rect.lastRow > row);
     return Row(
       {
         role: 'row',
@@ -2903,7 +2968,7 @@ export function Grid(
          * chart reaches back about twelve rows, and a sheet holds a
          * handful of charts.
          */
-        for (const [row, here] of anchored) {
+        for (const [row, here] of anchors()) {
           if (row >= firstRow) {
             continue;
           }

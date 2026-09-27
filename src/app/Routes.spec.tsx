@@ -8,6 +8,7 @@ import { isProofPath, PROOF_PATH } from '../route';
 import { AppRoot, ROUTES, SHEET } from './Routes';
 import { COMMANDS, menusFor, MENUS, PROOF_ONLY, SEPARATOR, type CommandId } from './SheetCommands';
 import { SheetDocument } from './SheetDocument';
+import { InMemorySheetLibrary } from './SheetLibrary';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
 
@@ -30,10 +31,17 @@ interface Harness {
   served: ServedForTest;
 }
 
-async function mount(): Promise<Harness> {
+async function mount(seed?: (document: SheetDocument) => void): Promise<Harness> {
   const document = new SheetDocument();
   document.sheet.recalculate();
-  const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
+  const service = new SheetService(
+    document,
+    seed === undefined ? { rowCount: 200, columnCount: 20 } : { rowCount: 200, columnCount: 20, library: new InMemorySheetLibrary(), seed }
+  );
+  if (seed !== undefined) {
+    service.openDocument('');
+    await service.settled;
+  }
   const served = serveForTest([sheetChannel(service)]);
   const ui = renderTest(createComponent(AppRoot), {
     channels: served.registry,
@@ -85,6 +93,30 @@ describe('the two routes', () => {
     const plain = h.ui.getAllByRole('button').length;
     await go(PROOF_PATH);
     expect(h.ui.getAllByRole('button').length).toBe(plain + 1);
+  });
+
+  it('keeps the charts when the next route mounts the grid again', async () => {
+    // Lower than a row, so a chart anchored to the wrong one is not on
+    // screen: the grid a new route mounts heard the charts before its
+    // window knew how many rows there were, and hung them all off the
+    // last.
+    h = await mount(document => {
+      for (let row = 0; row < 6; row++) {
+        document.setCell(row, 0, String(row * row));
+      }
+      document.addChart({
+        kind: 'line',
+        title: 'Squares',
+        range: { start: { row: 0, column: 0, rowAbsolute: false, columnAbsolute: false }, end: { row: 5, column: 0, rowAbsolute: false, columnAbsolute: false } },
+        place: { x: 200, y: 100, width: 300, height: 200 },
+        legend: false
+      });
+    });
+    expect(h.ui.getAllByRole('image')).toHaveLength(1);
+    await go(PROOF_PATH);
+    expect(h.ui.getAllByRole('image')).toHaveLength(1);
+    await go('/');
+    expect(h.ui.getAllByRole('image')).toHaveLength(1);
   });
 
   it('hands an unknown url the spreadsheet rather than an apology', async () => {
