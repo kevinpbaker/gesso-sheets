@@ -6,6 +6,7 @@ import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
 import { SheetService } from './SheetService';
+import { spawnScriptWorker } from '../script/browserWorker';
 
 /**
  * The sheet, on its own thread.
@@ -31,7 +32,7 @@ import { SheetService } from './SheetService';
  * neither worker.
  */
 const library = new OpfsSheetLibrary(COLUMN_COUNT);
-const service = new SheetService(new SheetDocument(), { library, seed });
+const service = new SheetService(new SheetDocument(), { library, seed, scripts: spawnScriptWorker });
 
 serveChannels([sheetChannel(service)]);
 

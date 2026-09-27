@@ -634,6 +634,40 @@ export interface SheetChartSeries {
   readonly read: number;
 }
 
+/**
+ * The workbook's scripts, and what the last run came to.
+ *
+ * Its own key, since it changes when somebody saves a script or runs
+ * one, which is rarely, and the editor is the only reader.
+ */
+export interface SheetScripts {
+  readonly entries: readonly SheetScript[];
+  /** The script running now, by name, or the empty string. */
+  readonly running: string;
+  /** What the last attempt to save a script said, or the empty string. */
+  readonly refused: string;
+  /** How the last run ended, or null before there has been one. */
+  readonly last: SheetScriptRun | null;
+}
+
+export interface SheetScript {
+  readonly name: string;
+  readonly source: string;
+  /** The empty string for a script written here, or the file it came with. */
+  readonly from: string;
+}
+
+export interface SheetScriptRun {
+  /** Which run, so the same outcome twice is still news. */
+  readonly serial: number;
+  readonly name: string;
+  readonly outcome: 'done' | 'failed' | 'timeout' | 'stopped' | 'refused';
+  /** The sentence the editor shows: what it did, or why it did not. */
+  readonly text: string;
+  /** What the script logged. */
+  readonly log: readonly string[];
+}
+
 export interface SheetCommands {
   /**
    * The range the render worker has mounted, on the sheet it is
@@ -864,6 +898,8 @@ export interface SheetCommands {
   stress(cells: number): void;
   /** The proof page's other instrument; see `SheetService.chartStress`. */
   chartStress(points: number): void;
+  /** And the third; see `SheetService.scriptStress`. */
+  scriptStress(): void;
   /**
    * Repeats the top row of the selection down it, or the left column
    * across it.
@@ -1000,6 +1036,20 @@ export interface SheetCommands {
    */
   filterToSelection(): void;
   clearFilter(): void;
+  /**
+   * Saves a script: a new one when `was` is empty, or the one called
+   * `was`, renamed to `name` if that differs. A script keeps where it
+   * came from when it is edited, so a file's script does not become
+   * the person's by having a character changed.
+   */
+  saveScript(was: string, name: string, source: string): void;
+  removeScript(name: string): void;
+  /**
+   * Runs a script. `confirmed` is the person having said yes to a
+   * file's script this time; a typed one runs without it.
+   */
+  runScript(name: string, confirmed: boolean): void;
+  stopScript(): void;
 }
 
 /** What a border command draws. */
@@ -1135,6 +1185,7 @@ export interface SheetView {
   readonly charts: SheetCharts;
   /** What those charts draw; see `SheetSeriesView` for why it is apart. */
   readonly series: SheetSeriesView;
+  readonly scripts: SheetScripts;
 }
 
 /** What the controls read to draw themselves. */
@@ -1226,5 +1277,6 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   notes: { cells: {} },
   rowFit: { serial: 0, rows: [] },
   charts: { entries: [], selected: 0 },
-  series: { charts: {} }
+  series: { charts: {} },
+  scripts: { entries: [], running: '', refused: '', last: null }
 });

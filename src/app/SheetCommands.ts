@@ -45,6 +45,7 @@ export type CommandId =
   | 'gotoCell'
   | 'recalculate'
   | 'chartStress'
+  | 'scriptStress'
   | 'shortcuts'
   | 'menuBar'
   | 'sheetTabs'
@@ -98,6 +99,7 @@ export type CommandId =
   | 'stopIterating'
   | 'showFormulas'
   | 'editNote'
+  | 'scripts'
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
@@ -269,6 +271,12 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
     id: 'chartStress',
     label: `Chart ${CHART_POINTS.toLocaleString('en-US')} points`
   },
+  /**
+   * A script that never ends, on its own worker, for the proof to
+   * scroll over until its time limit ends it: the claim that a script
+   * is the other thing that must not reach the frame.
+   */
+  scriptStress: { id: 'scriptStress', label: 'Run a script that never ends' },
   shortcuts: { id: 'shortcuts', label: 'Keyboard shortcuts…', accelerator: { key: '/', ctrl: true } },
   menuBar: { id: 'menuBar', label: 'Go to the menu bar', accelerator: { key: 'F10' }, hidden: true },
   /**
@@ -435,6 +443,11 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
   fitRows: { id: 'fitRows', label: 'Fit rows to contents' },
   iterate: { id: 'iterate', label: 'Work out circular formulas by iteration' },
+  /**
+   * No key. Excel's Alt+F11 opens its VBA editor, and a key that opened
+   * this one would be a key somebody pressed expecting that.
+   */
+  scripts: { id: 'scripts', label: 'Scripts…' },
   /**
    * Every formula instead of its answer, for checking a sheet somebody
    * else wrote. Ctrl+` is Excel's key and Chrome's is nothing, so it is
@@ -723,13 +736,16 @@ export const MENUS: readonly MenuDefinition[] = [
       'iterate',
       'stopIterating',
       SEPARATOR,
+      'scripts',
+      SEPARATOR,
       'hideRows',
       'showRows',
       'hideColumns',
       'showColumns',
       SEPARATOR,
       'recalculate',
-      'chartStress'
+      'chartStress',
+      'scriptStress'
     ]
   },
   {
@@ -756,7 +772,7 @@ export const MENUS: readonly MenuDefinition[] = [
  * it, `commandFor` still answers F9 with it, and the specs that keep
  * the two tables honest still see every row.
  */
-export const PROOF_ONLY: readonly CommandId[] = ['recalculate', 'chartStress'];
+export const PROOF_ONLY: readonly CommandId[] = ['recalculate', 'chartStress', 'scriptStress'];
 
 /** Whether a route offers a command at all. */
 export function offers(id: CommandId, proof: boolean): boolean {

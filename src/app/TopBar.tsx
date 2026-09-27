@@ -38,6 +38,7 @@ import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
 import { NoteDialog } from './NoteDialog';
+import { ScriptDialog } from './ScriptDialog';
 import { PasteHint, Shortcuts } from './Shortcuts';
 
 /**
@@ -233,6 +234,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   let noteAt = { row: 0, column: 0 };
   const closeNote = (): void => {
     noteOpen.value = false;
+    edit.focusSheet();
+  };
+  /** Whether Data ▸ Scripts is open. */
+  const scriptsOpen = internalState(false);
+  const closeScripts = (): void => {
+    scriptsOpen.value = false;
     edit.focusSheet();
   };
 
@@ -579,6 +586,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           sheet.send.stress(STRESS_CELLS);
         }
         break;
+      case 'scriptStress':
+        if (proof) {
+          sheet.send.scriptStress();
+        }
+        break;
       case 'chartStress':
         if (proof) {
           sheet.send.chartStress(CHART_POINTS);
@@ -586,6 +598,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'shortcuts':
         shortcutsOpen.value = true;
+        return;
+      case 'scripts':
+        scriptsOpen.value = true;
         return;
       case 'editNote': {
         const at = sheet.view.editor.value;
@@ -793,6 +808,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   edit.provideDismiss(() => {
     if (noteOpen.value) {
       closeNote();
+      return true;
+    }
+    if (scriptsOpen.value) {
+      closeScripts();
       return true;
     }
     if (shortcutsOpen.value) {
@@ -1072,6 +1091,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           closeNote();
         }}
         onClose={closeNote}
+      />
+      <ScriptDialog
+        open={scriptsOpen}
+        scripts={sheet.view.scripts}
+        onSave={(was: string, name: string, source: string) => sheet.send.saveScript(was, name, source)}
+        onRemove={(name: string) => sheet.send.removeScript(name)}
+        onRun={(name: string, confirmed: boolean) => sheet.send.runScript(name, confirmed)}
+        onStop={() => sheet.send.stopScript()}
+        onClose={closeScripts}
       />
     </column>
   );

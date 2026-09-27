@@ -139,3 +139,52 @@ export function formulaSpans(text: string, caret?: number): readonly UiTextSpan[
 
 /** The wash behind a matched pair of brackets. */
 const BRACKET = '#c7c7c7';
+
+/**
+ * A script's text, with the references in its strings coloured as a
+ * formula's are.
+ *
+ * The script editor is a text field with the formula editor's colouring
+ * and nothing more: a `'B2:B9'` handed to `sheet.range` is drawn in the
+ * colour a formula would draw `B2:B9` in, the same range the same
+ * colour wherever it is written. Only strings are looked in, because
+ * outside one `A1` is a variable's name and not a cell.
+ */
+export function scriptSpans(text: string): readonly UiTextSpan[] | undefined {
+  const colours = new Map<string, string>();
+  const marks: { start: number; end: number; color: string }[] = [];
+  for (const literal of text.matchAll(/(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g)) {
+    const content = literal[2];
+    // Scanned as a formula, after an `=` that is not in the text; the
+    // quote it stands in for is what puts the offsets back in step.
+    const offset = literal.index ?? 0;
+    for (const reference of scanFormula(`=${content}`).references) {
+      const key = `${reference.from.row}:${reference.from.column}:${reference.to.row}:${reference.to.column}`;
+      let color = colours.get(key);
+      if (color === undefined) {
+        color = PALETTE[colours.size % PALETTE.length];
+        colours.set(key, color);
+      }
+      marks.push({ start: offset + reference.start, end: offset + reference.end, color });
+    }
+  }
+  if (marks.length === 0) {
+    return undefined;
+  }
+  const runs: UiTextSpan[] = [];
+  let at = 0;
+  for (const mark of marks) {
+    if (mark.start < at) {
+      continue;
+    }
+    if (mark.start > at) {
+      runs.push({ text: text.slice(at, mark.start) });
+    }
+    runs.push({ text: text.slice(mark.start, mark.end), color: mark.color });
+    at = mark.end;
+  }
+  if (at < text.length) {
+    runs.push({ text: text.slice(at) });
+  }
+  return runs;
+}

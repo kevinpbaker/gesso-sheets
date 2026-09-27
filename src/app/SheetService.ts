@@ -1,6 +1,6 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
-import { formatRange, relativeRef } from '../sheet/A1';
+import { formatRange, MAX_SHEETS, relativeRef } from '../sheet/A1';
 import {
   DEFAULT_CHART_HEIGHT,
   DEFAULT_CHART_WIDTH,
@@ -55,6 +55,8 @@ import {
   type SheetCharts,
   type SheetConditionalRule,
   type SheetSeriesView,
+  type SheetScripts,
+  type SheetScriptRun,
   type SheetValidationRule,
   type SheetWindow
 } from './SheetContract';
@@ -65,9 +67,11 @@ import { sortRect } from './SheetSort';
 import { NO_STATS, type SheetStats } from './Statistics';
 import { SheetDocument } from './SheetDocument';
 import { cellKey, columnName } from '../sheet/A1';
-import { snapshotOf, applySnapshot, parseSnapshot, type SheetSnapshot } from './SheetFile';
+import { snapshotOf, applySnapshot, parseSnapshot, SCRIPT_SOURCE_LIMIT, type SheetSnapshot } from './SheetFile';
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
+import { DEFAULT_LIMITS, ScriptHost, type Script, type ScriptRunResult, type ScriptWorker } from '../script/ScriptHost';
+import type { ScriptBook, ScriptBookSheet, ScriptFormat, ScriptOp, ScriptValue } from '../script/protocol';
 import { exportCsv, importCsv } from './SheetCsv';
 import { guessOf, placeOf } from './alignment';
 import { platformInflate, reportOfXlsx, snapshotOfXlsx } from './SheetXlsx';
@@ -125,6 +129,13 @@ export interface SheetServiceOptions {
   readonly seed?: (document: SheetDocument) => void;
   /** The clock a document's `used` is read from. */
   readonly now?: () => number;
+  /**
+   * Starts a worker for one script run; see `src/script`. Without one,
+   * scripts can be written and saved and not run.
+   */
+  readonly scripts?: () => ScriptWorker;
+  /** How long a run may take, in milliseconds; five seconds unless a spec says otherwise. */
+  readonly scriptMilliseconds?: number;
 }
 
 /** The view of a document before one has been opened. */
@@ -182,6 +193,7 @@ export class SheetService {
   readonly rowFit: Observable<SheetRowFit>;
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
+  readonly scripts: Observable<SheetScripts>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0 };
@@ -268,6 +280,9 @@ export class SheetService {
   private rowFitPending: Set<number> | 'all' | null = null;
   private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0 });
   private readonly seriesSubject = new BehaviorSubject<SheetSeriesView>({ charts: {} });
+  private readonly scriptsSubject = new BehaviorSubject<SheetScripts>({ entries: [], running: '', refused: '', last: null });
+  private readonly scriptHost: ScriptHost | null;
+  private scriptRuns = 0;
   /**
    * Which chart has the handles round it.
    *
@@ -397,6 +412,19 @@ export class SheetService {
     this.rowFit = this.rowFitSubject;
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
+    this.scripts = this.scriptsSubject;
+    const { rowCount, columnCount: columns } = this.geometrySubject.value;
+    this.scriptHost =
+      options.scripts === undefined
+        ? null
+        : new ScriptHost(options.scripts, {
+            ...DEFAULT_LIMITS,
+            milliseconds: options.scriptMilliseconds ?? DEFAULT_LIMITS.milliseconds,
+            rows: rowCount,
+            columns
+          });
+    // Seeded from the document, as the names are.
+    this.publishScripts('');
     this.publishStats();
     this.publishActiveFormat();
     this.publishActiveRules();
@@ -1509,36 +1537,38 @@ export class SheetService {
    */
   private applyToSelection(change: (format: CellFormat) => CellFormat, label?: string): void {
     const rect = rectOf(this.document.selection);
+    this.document.transact(() => this.formatCells(rect, change), label);
+    this.afterFormat();
+  }
+
+  /** Formats a rectangle of the active sheet: as regions where it can, and cell by cell where it cannot. */
+  private formatCells(rect: Rect, change: (format: CellFormat) => CellFormat): void {
     const { rowCount, columnCount } = this.geometrySubject.value;
     const lastRow = Math.min(rect.lastRow, rowCount - 1);
     const lastColumn = Math.min(rect.lastColumn, columnCount - 1);
     const allRows = rect.firstRow === 0 && lastRow >= rowCount - 1;
     const allColumns = rect.firstColumn === 0 && lastColumn >= columnCount - 1;
-
-    this.document.transact(() => {
-      if (allRows && allColumns) {
-        this.document.formatRegion('sheet', 0, change);
-        return;
+    if (allRows && allColumns) {
+      this.document.formatRegion('sheet', 0, change);
+      return;
+    }
+    if (allRows) {
+      for (let column = rect.firstColumn; column <= lastColumn; column++) {
+        this.document.formatRegion('column', column, change);
       }
-      if (allRows) {
-        for (let column = rect.firstColumn; column <= lastColumn; column++) {
-          this.document.formatRegion('column', column, change);
-        }
-        return;
-      }
-      if (allColumns) {
-        for (let row = rect.firstRow; row <= lastRow; row++) {
-          this.document.formatRegion('row', row, change);
-        }
-        return;
-      }
+      return;
+    }
+    if (allColumns) {
       for (let row = rect.firstRow; row <= lastRow; row++) {
-        for (let column = rect.firstColumn; column <= lastColumn; column++) {
-          this.document.setFormat(row, column, change(this.document.formatAt(row, column)));
-        }
+        this.document.formatRegion('row', row, change);
       }
-    }, label);
-    this.afterFormat();
+      return;
+    }
+    for (let row = rect.firstRow; row <= lastRow; row++) {
+      for (let column = rect.firstColumn; column <= lastColumn; column++) {
+        this.document.setFormat(row, column, change(this.document.formatAt(row, column)));
+      }
+    }
   }
 
   /**
@@ -1959,6 +1989,226 @@ export class SheetService {
    * read a file. The seed is written straight back, so what is on disk
    * from the second run onwards is a file this build wrote.
    */
+  // ---------------------------------------------------------------------
+  // Scripts
+  // ---------------------------------------------------------------------
+
+  saveScript(was: string, name: string, source: string): void {
+    const scripts = this.document.scripts;
+    const trimmed = name.trim();
+    const at = scripts.findIndex(script => script.name === was);
+    if (trimmed === '') {
+      this.publishScripts('A script needs a name.');
+      return;
+    }
+    if (trimmed.length > 64) {
+      this.publishScripts('A script’s name is at most 64 characters.');
+      return;
+    }
+    if (scripts.some((script, index) => index !== at && script.name.toUpperCase() === trimmed.toUpperCase())) {
+      this.publishScripts(`There is already a script called ${trimmed}.`);
+      return;
+    }
+    if (source.length > SCRIPT_SOURCE_LIMIT) {
+      this.publishScripts('That script is too long to keep.');
+      return;
+    }
+    if (at < 0) {
+      scripts.push({ name: trimmed, source, origin: { kind: 'typed' } });
+    } else {
+      // Where it came from stays with it.
+      scripts[at] = { ...scripts[at], name: trimmed, source };
+    }
+    this.publishScripts('');
+    this.persist();
+  }
+
+  removeScript(name: string): void {
+    const at = this.document.scripts.findIndex(script => script.name === name);
+    if (at < 0) {
+      return;
+    }
+    this.document.scripts.splice(at, 1);
+    this.publishScripts('');
+    this.persist();
+  }
+
+  /**
+   * The proof's script: one that never ends, run until its time limit
+   * ends it, so the scroll measured over it has a worker at full tilt
+   * behind it the whole time. Saved under a name of its own, like any
+   * other script, because it is one.
+   */
+  scriptStress(): void {
+    if (!this.document.scripts.some(script => script.name === PROOF_SCRIPT)) {
+      this.saveScript('', PROOF_SCRIPT, 'let turns = 0;\nfor (;;) {\n  turns++;\n}\n');
+    }
+    this.runScript(PROOF_SCRIPT, false);
+  }
+
+  stopScript(): void {
+    this.scriptHost?.stop();
+  }
+
+  /**
+   * Runs a script on its own worker and applies what it did as one
+   * step of undo.
+   *
+   * The run starts from the workbook's values as they are, so a
+   * recalculation still in slices is finished first: a script reading
+   * a total half way through would read a number nobody saw. The host
+   * has already checked every change against the limits by the time
+   * it comes back, and `applyScript` writes them as typing would.
+   */
+  runScript(name: string, confirmed: boolean): void {
+    const script = this.document.scripts.find(each => each.name === name);
+    const host = this.scriptHost;
+    if (script === undefined) {
+      return;
+    }
+    if (host === null) {
+      this.finishScript(script, { outcome: 'refused', reason: 'Scripts cannot run here.' });
+      return;
+    }
+    if (this.document.sheet.pending > 0) {
+      this.document.book.recalculate();
+    }
+    const document = this.document;
+    const run = host.run(script, this.scriptBook(), { confirmed });
+    if (host.running) {
+      this.scriptsSubject.next({ ...this.scriptsSubject.value, running: script.name });
+      // In the status bar as well as the editor, which may be closed:
+      // a run is somebody's code working on their workbook, and they
+      // should be able to see that it is.
+      this.report(`Running ${script.name}…`);
+    }
+    void run.then(result => {
+      // Another workbook was opened while it ran; its run was ended.
+      if (document !== this.document) {
+        return;
+      }
+      this.finishScript(script, result);
+    });
+  }
+
+  /** The workbook as a script starts from it: every sheet's values. */
+  private scriptBook(): ScriptBook {
+    const sheets: ScriptBookSheet[] = [];
+    for (let index = 0; index < this.document.sheetCount; index++) {
+      const page = this.document.pageAt(index);
+      if (page === undefined) {
+        continue;
+      }
+      const cells: Record<string, ScriptValue> = {};
+      const put = (row: number, column: number): void => {
+        const value = scriptValueOf(page.sheet.value(row, column));
+        if (value !== null) {
+          cells[`${row}:${column}`] = value;
+        }
+      };
+      for (const entry of page.sheet.entries()) {
+        const spill = page.sheet.spillOf(entry.row, entry.column);
+        if (spill === null) {
+          put(entry.row, entry.column);
+          continue;
+        }
+        // A spilled array's cells have values and no input of their own.
+        for (let row = 0; row < spill.rows; row++) {
+          for (let column = 0; column < spill.columns; column++) {
+            put(entry.row + row, entry.column + column);
+          }
+        }
+      }
+      sheets.push({ name: page.sheet.name, cells });
+    }
+    return { sheets, active: this.document.active };
+  }
+
+  private finishScript(script: Script, result: ScriptRunResult): void {
+    const base = { serial: ++this.scriptRuns, name: script.name };
+    let last: SheetScriptRun;
+    const adding = result.outcome === 'done' ? result.ops.filter(op => op.kind === 'addSheet').length : 0;
+    if (result.outcome === 'done' && this.document.sheetCount + adding > MAX_SHEETS) {
+      // Checked before anything is written, because a run is all or nothing.
+      last = { ...base, outcome: 'refused', text: `${script.name} would make more than ${MAX_SHEETS} sheets, so nothing was changed.`, log: result.log };
+    } else if (result.outcome === 'done') {
+      const { changed, refused, sheets } = this.applyScript(script, result.ops);
+      const parts = [changed === 0 ? `${script.name} ran and changed nothing.` : `${script.name} changed ${changed === 1 ? 'one cell' : `${changed} cells`}.`];
+      if (refused > 0) {
+        parts.push(`${refused === 1 ? 'One write was' : `${refused} writes were`} refused by a rule on the cell.`);
+      }
+      if (sheets > 0) {
+        parts.push(`It added ${sheets === 1 ? 'a sheet' : `${sheets} sheets`}, which undo leaves in place.`);
+      }
+      last = { ...base, outcome: 'done', text: parts.join(' '), log: result.log };
+    } else if (result.outcome === 'failed') {
+      last = { ...base, outcome: 'failed', text: `${script.name} stopped with an error, and nothing was changed: ${result.message}`, log: result.log };
+    } else if (result.outcome === 'timeout') {
+      last = { ...base, outcome: 'timeout', text: `${script.name} ran out of time, and nothing was changed.`, log: [] };
+    } else if (result.outcome === 'stopped') {
+      last = { ...base, outcome: 'stopped', text: `${script.name} was stopped, and nothing was changed.`, log: [] };
+    } else {
+      last = { ...base, outcome: 'refused', text: result.reason, log: [] };
+    }
+    this.scriptsSubject.next({ ...this.scriptsSubject.value, running: '', last });
+    this.report(last.text);
+  }
+
+  /**
+   * A run's changes, as one step of undo.
+   *
+   * Each write goes through `setCell`, as typing does, so a string is
+   * read the way a typed one is and a rule on the cell can refuse it.
+   * Each format goes through the same regions-or-cells path the
+   * toolbar uses. A sheet the run added is added here, in order, so a
+   * write's sheet index means the sheet the script meant.
+   */
+  private applyScript(script: Script, ops: readonly ScriptOp[]): { changed: number; refused: number; sheets: number } {
+    const showing = this.document.active;
+    let changed = 0;
+    let refused = 0;
+    let sheets = 0;
+    this.painter.invalidate();
+    this.document.transact(() => {
+      for (const op of ops) {
+        if (op.kind === 'addSheet') {
+          this.document.addSheet(op.name);
+          this.document.columnWidths = this.defaultWidths();
+          sheets++;
+          continue;
+        }
+        this.document.activate(op.sheet);
+        if (op.kind === 'write') {
+          if (this.document.setCell(op.row, op.column, inputOfScriptValue(op.value)) === null) {
+            changed++;
+          } else {
+            refused++;
+          }
+        } else {
+          const change = formatChangeOf(op.change);
+          this.formatCells(op, format => applyChange(format, change));
+          changed += (op.lastRow - op.firstRow + 1) * (op.lastColumn - op.firstColumn + 1);
+        }
+      }
+    }, `script ${script.name}`);
+    this.document.activate(Math.min(showing, this.document.sheetCount - 1));
+    this.publishSheet();
+    this.afterEdit();
+    return { changed, refused, sheets };
+  }
+
+  private publishScripts(refused: string): void {
+    this.scriptsSubject.next({
+      ...this.scriptsSubject.value,
+      entries: this.document.scripts.map(script => ({
+        name: script.name,
+        source: script.source,
+        from: script.origin.kind === 'file' ? script.origin.file : ''
+      })),
+      refused
+    });
+  }
+
   async restore(seed?: (document: SheetDocument) => void): Promise<void> {
     let stored: SheetSnapshot | null;
     try {
@@ -1994,6 +2244,7 @@ export class SheetService {
      * Two paths that have to publish the same thing are one path.
      */
     this.publishSheet();
+    this.publishScripts('');
     if (stored === null) {
       this.persist();
     }
@@ -2036,11 +2287,17 @@ export class SheetService {
       return;
     }
     this.enqueue(async () => {
-      const snapshot = parseSnapshot(text, this.geometrySubject.value.columnCount);
-      if (snapshot === null) {
+      const parsed = parseSnapshot(text, this.geometrySubject.value.columnCount);
+      if (parsed === null) {
         this.report(`${fileName} was not opened: it is not a workbook this can read.`);
         return;
       }
+      // Every script in a file is the file's, whatever the file says
+      // about itself: see `SheetSnapshot.scripts`.
+      const snapshot: SheetSnapshot =
+        parsed.scripts === undefined
+          ? parsed
+          : { ...parsed, scripts: parsed.scripts.map(script => ({ ...script, origin: { kind: 'file', file: fileName } })) };
       const entries = (await this.library?.entries()) ?? [];
       const known = handle === null ? undefined : entries.find(each => each.file?.handle === handle);
       const entry: DocumentEntry = {
@@ -2235,6 +2492,9 @@ export class SheetService {
       this.elsewhere = this.release === null;
     }
     this.restored = false;
+    // A run belongs to the workbook it started in. What it would write
+    // is not wanted in the next one, so it is ended, not waited for.
+    this.scriptHost?.stop();
     const document = new SheetDocument();
     document.columnWidths = this.defaultWidths();
     document.book.extent = { rows: this.geometrySubject.value.rowCount, columns: this.geometrySubject.value.columnCount };
@@ -2260,6 +2520,7 @@ export class SheetService {
     await this.library?.put(entry);
     this.publishSheet();
     this.publishNames('');
+    this.publishScripts('');
     this.publishPalette();
     if (stored === null) {
       this.persist();
@@ -3076,3 +3337,30 @@ const PASTE_LABELS: Readonly<Record<SheetPasteMode, string>> = {
   formats: 'paste formats',
   transposed: 'paste transposed'
 };
+
+/** What the proof's script is called. */
+const PROOF_SCRIPT = 'Never ends';
+
+/** A cell's value as a script reads it: an error is its code. */
+function scriptValueOf(value: CellValue): ScriptValue {
+  return typeof value === 'object' && value !== null ? value.code : value;
+}
+
+/** What a script's value is as typed: `TRUE`, `12`, or the text itself. */
+function inputOfScriptValue(value: ScriptValue): string {
+  return value === null ? '' : typeof value === 'boolean' ? (value ? 'TRUE' : 'FALSE') : String(value);
+}
+
+/** A script's format, in the toolbar's terms: the number formats are the toolbar's buttons. */
+function formatChangeOf(format: ScriptFormat): SheetFormatChange {
+  const { number, ...paint } = format;
+  const numbers: Record<NonNullable<ScriptFormat['number']>, NonNullable<SheetFormatChange['number']>> = {
+    general: { kind: 'general' },
+    number: { kind: 'number', places: 2, thousands: true },
+    currency: { kind: 'currency', places: 2, symbol: '$' },
+    percent: { kind: 'percent', places: 0 },
+    date: { kind: 'date', pattern: 'ymd' },
+    text: { kind: 'text' }
+  };
+  return number === undefined ? paint : { ...paint, number: numbers[number] };
+}

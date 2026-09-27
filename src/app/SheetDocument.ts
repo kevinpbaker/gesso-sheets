@@ -13,6 +13,7 @@ import type { SheetSelection } from './SheetContract';
 import { literalOf, Workbook } from '../sheet/Workbook';
 import { validate } from '../sheet/Validation';
 import { shiftIndex, shiftRange, type Shift } from '../sheet/Shift';
+import type { Script } from '../script/ScriptHost';
 
 /**
  * One change to one cell, and what it replaced.
@@ -353,6 +354,16 @@ export class SheetDocument {
 
   private readonly undoStack: Step[] = [];
   private readonly redoStack: Step[] = [];
+
+  /**
+   * The workbook's scripts, in the order they were written.
+   *
+   * The workbook's rather than a sheet's, as the names are. Changing
+   * one is not an edit on the undo stack: undo is for what a sheet
+   * holds, and a script is closer to a file kept beside it. What a
+   * script's *run* changes is one step of undo like any other.
+   */
+  scripts: Script[] = [];
 
   constructor() {
     // Which rows show is the document's to know and `SUBTOTAL`'s to

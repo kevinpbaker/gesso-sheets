@@ -2723,7 +2723,7 @@ one step of undo. Both need the UI of Phase 30; the host already
 returns a run's writes as one list. **Undefended, and written down:**
 memory, since a browser cannot cap a worker's.
 
-### Phase 30 — Scripts
+### Phase 30 — Scripts — **done**
 
 The API the security model allows, typed, in a script editor that is a
 text field with the formula editor's colouring and nothing more:
@@ -2740,6 +2740,59 @@ stopped by its time limit with the workbook unchanged. A script that
 tries each forbidden reach and gets nothing. And `pnpm proof` with a
 script running on its worker, held to the recalculating budget: a
 script is the other thing that must not reach the frame.
+
+**Met, with the proof's own drift written down.** The API is
+`src/script/api.ts`. It adds `sheet.range(…)` with `.values`,
+`.write`, `.format` and `.clear`, and `workbook.sheets`, `.sheet(name)`
+and `.addSheet(name)`. The editor is `ScriptDialog.tsx`, under Data ▸
+Scripts…. `SCRIPTS.md` lists every reach again, the new ones included.
+
+- **The exit, through the sheet.** `ScriptRuns.spec.ts` runs the real
+  worker behind a `SheetService`. A script fills B1:B3 from A2:A3,
+  makes it bold currency, and one undo takes back all six cells and
+  both formats. `for (;;) {}` is ended at its limit with nothing
+  written and the undo stack as it was. A script that probes twelve
+  globals finds each `undefined`, and `import(…)` fails. A file's
+  script is refused until confirmed. With the transaction taken away,
+  the undo spec fails. With the opened file's own record of where its
+  scripts came from believed, the file spec fails.
+- **The editor.** `ScriptEditor.spec.tsx` covers four things through
+  the render tree: Ctrl+Enter runs, a failure shows its message and
+  log, a file's script asks every time, and the field stays inside the
+  dialog. The last one was found in Chrome, where a long line pushed
+  the field past the dialog's edge. The field wraps now, and the spec
+  fails if it stops wrapping. The references in a script's strings
+  are coloured as a formula's are, in `scriptSpans`.
+- **In Chrome.** A script typed into the editor ran on the nested
+  worker. It doubled a column, and one Ctrl+Z took it all back. The
+  probe found every global `undefined`, the endless loop was ended at
+  five seconds, and a run after it went through. `vite build` puts the
+  worker in a chunk of its own, 90 kB with `ses`.
+- **The proof.** A proof-only item, *Run a script that never ends*,
+  runs `for (;;)` until the time limit ends it. The proof checks that
+  the status bar still says it is running when the scroll ends, and
+  that it then says it ran out of time. At a load average near 7, the
+  median frame was 8.1 ms against 7.0 ms for the run before, inside
+  the budget of 4. The status bar saying a run is going, or how it
+  ended, was added for the proof. It stays because a person can close
+  the editor during a run.
+- **Two things the proof taught, neither about scripts.** Every run in
+  it is a little slower than the one before. Three extra scrolls in
+  the same state went 7.3, 8.0 and 8.2 ms. So a run added ahead of the
+  200% run put that run over its budget. And any extra run between the
+  zoom and the freeze took the freeze from about fifty frames drawn to
+  one, with or without a script in it; a Note dialog opened there
+  instead took it to 23. So the script run goes last, after the
+  freeze, and is measured against the zoom run. Separately, the freeze
+  read the first live region for its status, which a script's message
+  now is, so it looks for the recalculation's own words instead. At
+  this load, the colour-scale and 200% checks fail on main as well,
+  which is load and not this phase.
+
+**Not done:** Tab in the editor moves focus rather than indenting.
+Stop is covered by the specs and not yet tried in Chrome. A `monospace`
+font with ligatures draws `=>` as one glyph. **Undefended, as
+`SCRIPTS.md` says:** memory.
 
 ---
 

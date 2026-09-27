@@ -247,7 +247,7 @@ async function main(): Promise<void> {
       'the recalculation to finish',
       async () => {
         const text = await devtools.evaluate<string>(
-          `document.querySelector('[aria-live]')?.textContent ?? ''`
+          `[...document.querySelectorAll('[aria-live]')].map(el => el.textContent ?? '').find(text => /^(Ready|[\\d,]+ to do)/.test(text)) ?? ''`
         );
         const count = evaluatedIn(text);
         return count >= CELLS ? count : undefined;
@@ -561,7 +561,7 @@ async function main(): Promise<void> {
     for (let index = 1; index < during.length; index++) {
       worstGap = Math.max(worstGap, during[index].at - during[index - 1].at);
     }
-    const settled = await devtools.evaluate<string>(`document.querySelector('[aria-live]')?.textContent ?? ''`);
+    const settled = await devtools.evaluate<string>(`[...document.querySelectorAll('[aria-live]')].map(el => el.textContent ?? '').find(text => /^(Ready|[\\d,]+ to do)/.test(text)) ?? ''`);
 
     console.log(
       `  blocking the main thread for five seconds…\n` +
@@ -582,6 +582,58 @@ async function main(): Promise<void> {
       2 * CELLS
     );
 
+    // --------------------------------------------------------------
+    // The same scroll, over a script that never ends
+    // --------------------------------------------------------------
+    //
+    // Phase 30's exit. A script runs on a worker of its own, started
+    // by the application worker, and loops until its five-second time
+    // limit ends it. Last of all, after the freeze, and measured
+    // against the zoom, which is the run it follows in state. Anywhere
+    // earlier it moved the runs after it: every run in this proof is a
+    // little slower than the one before, one more ahead of the zoom
+    // pushed the zoom over its budget, and one more between the zoom
+    // and the freeze took the freeze from fifty frames to one — with
+    // or without a script in it, so that one is the freeze's to answer
+    // and not this run's. The scroll has to start and finish inside those
+    // five seconds, or part of it measured nothing behind it — so the
+    // time is checked, and so is how the run ended, read off the
+    // Scripts dialog afterwards.
+    await openMenu(devtools, 'Data');
+    const scriptStarted = Date.now();
+    await chooseItem(devtools, 'Run a script that never ends');
+    const scripting = report(
+      'scrolling while a script runs',
+      await scrollRun(devtools, 'scrolling while a script runs'),
+      failures
+    );
+    const scriptElapsed = Date.now() - scriptStarted;
+    const stillRunning = await devtools.evaluate<boolean>(`(document.body.textContent ?? '').includes('Running Never ends')`);
+    if (!stillRunning) {
+      failures.push('the status bar did not say the script was running when the scroll ended');
+    }
+    check(
+      failures,
+      `the script was still running when the scroll ended (${scriptElapsed}ms of its 5,000)`,
+      scriptElapsed < 5_000,
+      5_000
+    );
+    check(
+      failures,
+      `a script running: median frame ${scripting.median.toFixed(2)}ms against ${zoomed.median.toFixed(2)}ms without one`,
+      scripting.median - zoomed.median <= BUDGET.costOfRecalculating,
+      BUDGET.costOfRecalculating
+    );
+    // How it ended, from the status bar, where a run says so while
+    // the editor is closed. Not from the editor: a dialog opened and
+    // closed just before the freeze below changes what the freeze
+    // measures, which is a question for the engine and not this run.
+    await waitFor(
+      'the script to be ended by its time limit',
+      async () =>
+        (await devtools.evaluate<boolean>(`(document.body.textContent ?? '').includes('Never ends ran out of time')`)) ? true : undefined,
+      10_000
+    );
   } finally {
     if (process.env.PROOF_KEEP === undefined) {
       devtools?.close();

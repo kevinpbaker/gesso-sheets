@@ -19,6 +19,7 @@ import {
 } from '../sheet/Format';
 import { COLUMN_WIDTH, MAX_ROW_HEIGHT, MIN_ROW_HEIGHT } from './dimensions';
 import type { SheetDocument } from './SheetDocument';
+import type { Script } from '../script/ScriptHost';
 
 /**
  * A sheet as it is written down.
@@ -63,6 +64,17 @@ export interface SheetSnapshot {
    * means off.
    */
   readonly iteration?: { readonly count: number; readonly delta: number };
+  /**
+   * The workbook's scripts, as source and where each came from.
+   *
+   * Absent in a file written before there were any, which reads as
+   * none. Where each came from is written down for the library's own
+   * copy, which only this sheet writes. A file somebody opens is
+   * another matter, and `SheetService.openFile` marks every script in
+   * it as the file's, whatever the file says: a file that could say
+   * "typed here" would be a file that could skip the question.
+   */
+  readonly scripts?: readonly Script[];
 }
 
 /**
@@ -247,7 +259,8 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       lastRow: Math.max(entry.range.start.row, entry.range.end.row),
       lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
     }) : { name: entry.name, formula: entry.formula }),
-    ...(document.book.iteration === null ? {} : { iteration: { ...document.book.iteration } })
+    ...(document.book.iteration === null ? {} : { iteration: { ...document.book.iteration } }),
+    ...(document.scripts.length === 0 ? {} : { scripts: document.scripts.map(script => ({ ...script })) })
   };
 }
 
@@ -265,6 +278,7 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   // find `Data` if `Data` exists by the time it is parsed.
   document.restoreSheets(snapshot.sheets.map(stored => stored.name));
   document.book.iteration = snapshot.iteration ?? null;
+  document.scripts = (snapshot.scripts ?? []).map(script => ({ ...script }));
   for (const [index, stored] of snapshot.sheets.entries()) {
     document.activate(index);
     document.setSheetColour(index, stored.colour);
@@ -403,9 +417,50 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
     sheets,
     active: Number.isInteger(active) && (active as number) >= 0 && (active as number) < sheets.length ? (active as number) : 0,
     names: namesFrom(source.names),
-    ...iterationFrom(source.iteration)
+    ...iterationFrom(source.iteration),
+    ...scriptsFrom(source.scripts)
   };
 }
+
+/**
+ * A file's scripts, keeping the ones that are a name and some source.
+ *
+ * A script's source is only text here, never run, so the check is on
+ * shape and size and not on what the code says. An origin that is not
+ * one of the two reads as the file's, never as typed here.
+ */
+function scriptsFrom(stored: unknown): { scripts?: Script[] } {
+  if (!Array.isArray(stored)) {
+    return {};
+  }
+  const scripts: Script[] = [];
+  for (const entry of stored) {
+    if (typeof entry !== 'object' || entry === null) {
+      continue;
+    }
+    const held = entry as Record<string, unknown>;
+    if (typeof held.name !== 'string' || held.name.trim() === '' || typeof held.source !== 'string') {
+      continue;
+    }
+    const name = held.name.trim().slice(0, 64);
+    if (scripts.some(script => script.name.toUpperCase() === name.toUpperCase())) {
+      continue;
+    }
+    const origin = held.origin as Record<string, unknown> | undefined;
+    scripts.push({
+      name,
+      source: held.source.slice(0, SCRIPT_SOURCE_LIMIT),
+      origin:
+        origin?.kind === 'typed'
+          ? { kind: 'typed' }
+          : { kind: 'file', file: typeof origin?.file === 'string' ? origin.file.slice(0, 200) : 'a file' }
+    });
+  }
+  return scripts.length === 0 ? {} : { scripts };
+}
+
+/** The longest script a file can hold: a quarter of a million characters. */
+export const SCRIPT_SOURCE_LIMIT = 250_000;
 
 /** Iterative calculation from a file: a sensible count and a positive step, or off. */
 function iterationFrom(source: unknown): { iteration?: { count: number; delta: number } } {

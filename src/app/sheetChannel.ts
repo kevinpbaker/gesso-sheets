@@ -36,7 +36,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       notes: service.notes,
       rowFit: service.rowFit,
       charts: service.charts,
-      series: service.chartSeries
+      series: service.chartSeries,
+      scripts: service.scripts
     },
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
@@ -97,6 +98,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       fitRows: (serial, heights) => service.fitRows(serial, heights),
       stress: cells => service.stress(cells),
       chartStress: points => service.chartStress(points),
+      scriptStress: () => service.scriptStress(),
       fillDown: () => service.fillDown(),
       fillRight: () => service.fillRight(),
       find: (query, matchCase, wholeCell, inFormulas) => service.find(query, matchCase, wholeCell, inFormulas),
@@ -124,7 +126,11 @@ export function sheetChannel(service: SheetService): ServedChannel {
       unmergeCells: () => service.unmergeCells(),
       measureColumns: (first, last) => service.measureColumns(first, last),
       filterToSelection: () => service.filterToSelection(),
-      clearFilter: () => service.clearFilter()
+      clearFilter: () => service.clearFilter(),
+      saveScript: (was, name, source) => service.saveScript(was, name, source),
+      removeScript: name => service.removeScript(name),
+      runScript: (name, confirmed) => service.runScript(name, confirmed),
+      stopScript: () => service.stopScript()
     }
   });
 }
