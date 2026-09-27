@@ -34,7 +34,9 @@ Excel reaches for, done but for what it left to
 anything: a file's rules, where the cursor is, a gesture, a finger,
 a preference. [Part Five](#part-five--scripting) is scripting: `LET`
 and `LAMBDA` first, then scripts that act on the workbook, behind a
-written security model.
+written security model. [Part Six](#part-six--functions-in-script) is
+functions written in JavaScript that a formula calls, run by an
+interpreter inside the evaluator.
 `pnpm proof` is the frame budget: it drives the built application in headless
 Chrome and fails the build when scrolling stops being free.
 
@@ -2810,13 +2812,161 @@ cannot ask another worker for an answer and wait. So a script function
 would need an interpreter inside the evaluator itself — QuickJS
 compiled to WebAssembly is the usual one — with its own time and memory
 limits, on the thread that holds the workbook. That is a large piece
-of machinery for something `LAMBDA` does most of. It waits until
-somebody needs what `LAMBDA` cannot do.
+of machinery for something `LAMBDA` does most of, so it is a part of
+its own: [Part Six](#part-six--functions-in-script).
 
 **VBA.** An `.xlsm`'s macros are VBA, a different language with a large
 runtime, and running a stranger's is the security problem everybody
 already knows. The import will say *this file had macros, and they
 were not kept* rather than dropping them without a word.
+
+---
+
+# Part six — functions in script
+
+`=TAX(B2, 0.2)` where `TAX` is JavaScript somebody wrote in the sheet:
+the third kind of scripting from Part Five's list, and the one it left
+out. `LAMBDA` covers a calculation the formula language can already
+say. This is for what it cannot say well: a loop with state, parsing a
+string, a date rule with exceptions, a checksum.
+
+**Why not the script worker.** The recalculation is synchronous. A
+formula evaluated in a slice on the application worker needs its
+answer before the next cell, and a worker can only answer with a
+message, later. Making the recalculation wait for messages would make
+every cell able to be *pending*, which is a rewrite of the dependency
+graph for a worse result: a sheet that fills in while you watch it.
+
+**So the interpreter is inside the evaluator.** QuickJS, compiled to
+WebAssembly, on the application worker. A call is synchronous, so a
+script function is like a built-in one: it recalculates, spills and
+has dependents. Its isolation is stronger than the script worker's,
+not weaker. The interpreter has its own heap and its own global
+object, and nothing of the host exists in it unless it is handed in.
+It also has what a browser worker does not: a **memory limit**, and an
+interrupt handler that can end a call at a deadline. The gap
+`SCRIPTS.md` leaves open for scripts is closed for functions.
+
+## The rules Part Six runs under
+
+Part Five's two rules still hold, and the first needs rewording.
+Scripting's rule was that nothing in a file runs by itself. But a
+formula runs whenever its inputs change, and nobody chooses each time.
+So the rules become:
+
+1. **A function sees its arguments and returns a value.** It reads no
+   cell it was not handed, writes nothing, and reaches nothing. That
+   leaves it only two ways to be hostile: spending its time and memory
+   budget, which are bounded, and returning a wrong answer, which any
+   formula can do.
+2. **A file's functions are off until the person turns them on.** Off,
+   a call is an error value that says why. Turned on is remembered in
+   this browser's library, not in the file, so a file cannot say that
+   it has been trusted.
+3. **It holds the recalculation's budget.** A function is called from
+   inside a recalculation slice, so a slow one is a slow slice. There
+   is a limit per call and a limit per slice, and the proof measures a
+   scroll over a hundred thousand calls.
+
+---
+
+### Phase 31 — The interpreter, measured, and the model written — **done**
+
+Before a formula calls anything, two questions are answered: what
+QuickJS costs in this application, and what `SCRIPTS.md` says about
+functions.
+
+- **The spike.** `quickjs-emscripten` in the application worker's
+  bundle. Measured: how much it adds to the bundle, how long the first
+  call takes to be ready, and what a call costs with a number in and a
+  number out, and with a 100-row range in. Checked, in the real
+  interpreter and not in a description of it: a deadline ends a call
+  that loops, a memory limit ends one that allocates, and neither
+  harms the next call. A call cannot reach `fetch`, `globalThis` of
+  the worker, or anything else the host has. There is no
+  `Math.random`, and no `Date.now` whose answer changes, because a
+  function whose value moves on its own is not a function a
+  dependency graph can trust.
+- **The model.** A section of `SCRIPTS.md` for functions: where they
+  run, what they can reach, the limits, what an argument and a result
+  can be, and where they come from. The same shape the scripts'
+  section has, with a spec per answer.
+
+**Exit:** the numbers, written down here, and a decision on them. If a
+call costs more than a few microseconds, or the bundle more than a
+megabyte, Part Six stops at this phase and says so.
+
+**Met, and Part Six goes on.** `src/script/CellFunctions.ts` wraps
+QuickJS for the evaluator to call. `CellFunctions.spec.ts` has 13 specs
+against the real interpreter, and `SCRIPTS.md` has a section for
+functions.
+
+| | Node | Chrome worker |
+|---|---|---|
+| Two numbers in, one out | 1.4–1.9 µs a call | 1.8 µs a call |
+| A 100-row range in, one out | 54–56 µs | 53 µs |
+| Interpreter loaded | — | 10.6 ms, once per thread |
+| A module defined | 0.5–0.7 ms | 10.9 ms the first time |
+
+- **The bundle.** `quickjs-emscripten-core` and one build,
+  `@jitl/quickjs-wasmfile-release-sync` 0.32.0, rather than the
+  umbrella package, which depends on four. The application worker grows
+  by 52 kB of JavaScript. The WebAssembly is a file of its own, 503 kB
+  and 236 kB compressed, fetched when the interpreter is first loaded.
+  That is 0.55 MB in all, against a limit of a megabyte, and Phase 32
+  can load it only for a workbook that has functions.
+- **A call was 5 µs, and is 1.4 µs in Node and 1.8 µs in Chrome.** The
+  first version sent every call's arguments and result as JSON. Now a
+  call with no range passes one handle per argument, to a handle kept
+  for each function, and a number or a string comes back directly. A
+  range still crosses as JSON, which costs about half a microsecond a
+  cell. Phase 32 should measure that against a `SUM` of the same range
+  before deciding whether it matters.
+- **The limits hold, and leave the next call working.** An endless loop
+  was ended at 50.4 ms in Chrome. A runaway allocation hit the memory
+  limit, and endless recursion hit the stack limit, each as an error in
+  the call. A module that loops while it is being defined is refused.
+- **The stack limit was the one surprise.** At 256 kB, endless
+  recursion overflowed the host thread's own stack, as a `RangeError`,
+  before QuickJS's check fired: in Node at 512 kB, and in Chrome at
+  256 kB. Measured in Chrome at every step from 32 kB, 224 kB was the
+  largest that held. The limit is 128 kB, about 740 calls deep, because
+  a call from the evaluator will arrive with frames already under it.
+  The spec asserts the interpreter's own "stack overflow".
+- **What a function reaches.** Only its arguments. None of the host's
+  globals exist inside the interpreter, checked in Node and in Chrome.
+  There is no `Math.random`, and `Date` will not say what time it is,
+  so a function's value cannot change on its own.
+
+### Phase 32 — Functions a formula calls
+
+The workbook gains a module of functions, written in the script
+editor as a script of a second kind: `function TAX(amount, rate) {
+return amount * rate; }`. Each top-level function becomes a name a
+formula can call, as a named `LAMBDA` is. A range argument arrives as
+rows; an array returned spills; a thrown error is `#VALUE!` with the
+message in the formula bar's explanation; a call past its deadline or
+its memory is an error of its own, and the recalculation goes on. A
+function edited is every cell that calls it recalculated.
+
+**Exit:** a sheet whose column calls a script function, right, and
+recalculating when the function is edited. A function that loops, and
+one that allocates, each an error in its cell with the sheet
+responsive. And `pnpm proof` scrolling over 100,000 calls held to the
+recalculating budget.
+
+### Phase 33 — Functions from files
+
+A `.gsheet` keeps its functions. Opened from a file, they are off: a
+call shows an error that says the workbook's functions are off, and a
+bar says how to turn them on. Turned on is kept in the library for
+that document. An `.xlsx` gets the values the functions computed,
+since Excel cannot run them, and the formulas that call them as
+written, which Excel will show as `#NAME?` if it recalculates.
+
+**Exit:** a file with functions opened with them off and the sheet
+otherwise working; turned on, the same values as the file it was saved
+from; reopened, still on; opened in another browser, off again.
 
 ---
 

@@ -183,3 +183,111 @@ Each new capability is an entry in `api.ts`, in the list of what a
 script can reach above, in the host's checks, and in a spec. A
 capability that reaches past the workbook is a change to this document
 first.
+
+---
+
+# Functions in cells
+
+`=TAX(B2, 0.2)`, where `TAX` is JavaScript written in the workbook:
+Part Six. Everything above is about scripts, which somebody runs.
+This is about functions, which a formula calls whenever its inputs
+change, with nobody choosing each time. That difference is why
+functions get a sandbox of their own and a narrower reach.
+`src/script/CellFunctions.ts` is the interpreter's side, and
+`CellFunctions.spec.ts` has a spec per answer.
+
+## Where it runs
+
+**In QuickJS, compiled to WebAssembly, on the application worker.**
+The recalculation is synchronous and needs each answer before the next
+cell, so a worker, which can only answer later, will not do. The
+interpreter runs inside the thread that recalculates, and a call is an
+ordinary synchronous call into it.
+
+It is still a separate world. The interpreter has its own heap and its
+own global object, and the host's objects do not exist in it. A
+workbook's functions are one module in one context. Defining them again
+makes a fresh context, so nothing the last version left in the global
+object survives.
+
+## What it can reach
+
+**Its arguments, and nothing else.** A function is given values and
+returns a value, and both cross as plain data: numbers, strings, true
+or false, nothing, or rows of them. It reads no cell it was not handed.
+It writes nothing. It cannot see the workbook, the sheet, or the cell
+it is in.
+
+Checked in the real interpreter, from inside a function. In Node,
+`fetch`, `XMLHttpRequest`, `WebSocket`, `self`, `postMessage`,
+`importScripts`, `indexedDB`, `Worker`, `performance`, `console`,
+timers, `process`, `require`, and QuickJS's own `std` and `os` modules
+are all `undefined`. In a Chrome worker, `fetch`, `self`,
+`postMessage`, `importScripts`, `indexedDB`, `navigator`, `location`,
+`Worker`, `WebSocket`, `XMLHttpRequest` and `caches` are too. `import(…)`
+has no loader to answer it and fails. `eval` is the interpreter's own,
+and reaches nothing new.
+
+**Nothing that changes on its own.** A dependency graph trusts that a
+function given the same arguments gives the same answer. So there is no
+`Math.random`. `Date` makes a date from what it is told, and refuses to
+say what the time is now: `Date.now()` and `new Date()` throw.
+
+## How much it can do
+
+The interpreter enforces three limits, and each is checked by a spec
+that exceeds it and then makes another call, which works:
+
+- **Time.** 50 ms per call, ended by the interpreter's interrupt
+  handler. Measured in Chrome: an endless loop ended at 50.4 ms.
+  Defining the module runs under the same deadline, so a module that
+  loops at the top level is refused rather than hanging the thread.
+- **Memory.** 32 MB for the workbook's functions together, which a
+  browser worker cannot give a script. An allocation past it is an
+  error in the call. The gap this document leaves open for scripts is
+  closed for functions.
+- **Stack.** 128 kB, about 740 calls deep. The limit is set below what
+  the host thread survives. At 256 kB, endless recursion overflowed the
+  host's own stack in Chrome and in Node, before the interpreter's
+  check fired, which is an error on the workbook's thread rather than
+  in a cell. 224 kB was the largest that held in Chrome with nothing
+  else on the stack, and a call from the evaluator arrives with the
+  evaluator's frames under it.
+
+A result that is not a value (an object, a function) is an error, not a
+value. Phase 32 turns each failure into an error value in the cell, and
+adds a budget per recalculation slice as well as per call.
+
+## Where functions come from
+
+The same two places as scripts, and the same rule underneath: nothing
+in a file runs by itself. A formula runs every time, so the rule
+cannot be *ask each time*. It becomes this:
+
+- Functions **written here** are on.
+- Functions that came **with a file** are off until the person turns
+  them on for that workbook. Off, a call is an error that says why.
+- Turned on is remembered in this browser's library, **never in the
+  file**. A file cannot say it has been trusted, including a file this
+  sheet saved, because a file on disk is one anybody could have edited
+  since.
+
+What makes turning them on a smaller decision than running a script is
+the reach above. A hostile function can spend its time and memory,
+which are bounded, and it can return a wrong answer, which any formula
+can do. It cannot write a cell, read one it was not given, or send
+anything anywhere.
+
+## What is left undefended
+
+- **Wrong answers.** A function can compute anything from its
+  arguments, including something misleading. That is true of every
+  formula, and the defence is the same: the formula is there to read.
+- **Time, within the limits.** Five thousand cells each spending most
+  of 50 ms is minutes of recalculation. The budget per slice in Phase 32
+  bounds how much of that the thread spends before it hands back, and
+  the error values say which cells are slow.
+- **QuickJS itself.** The interpreter and its WebAssembly build are the
+  boundary, and they are someone else's code, `quickjs-emscripten`
+  0.32.0. It is pinned, and a bump is a change to this section's
+  claims.

@@ -15,9 +15,11 @@
     "touch": "node --experimental-strip-types scripts/touch-check.ts"
   },
   "dependencies": {
+    "@jitl/quickjs-wasmfile-release-sync": "0.32.0",
     "gesso-components": "file:vendor/gesso-components-0.3.0-e653fdbd.tgz",
     "gesso-core": "file:vendor/gesso-core-0.3.0-8620990d.tgz",
     "gesso-framework": "file:vendor/gesso-framework-0.3.0-11c31f77.tgz",
+    "quickjs-emscripten-core": "0.32.0",
     "rxjs": "^7.8.2",
     "ses": "2.3.0"
   },
