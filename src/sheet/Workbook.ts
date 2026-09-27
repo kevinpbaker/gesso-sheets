@@ -16,6 +16,7 @@ import { parseTypedDate } from './Dates';
 import { DependencyGraph } from './DependencyGraph';
 import { Names } from './Names';
 import { evaluateArray, type WorkbookContext } from './Evaluator';
+import type { ScriptFunctions } from './ScriptFunctions';
 import { isArray, type ArrayValue } from './FunctionKit';
 import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
@@ -141,6 +142,13 @@ export class Workbook {
    * payment that depends on a balance that depends on it is written.
    */
   iteration: { readonly count: number; readonly delta: number } | null = null;
+
+  /**
+   * The functions the workbook's script defines, or null for none; see
+   * `ScriptFunctions`. Set by the app layer, which owns the interpreter,
+   * and followed by `scriptsChanged` so every formula reads them again.
+   */
+  scripts: ScriptFunctions | null = null;
 
   /**
    * How far a sheet goes, which is as far as an array may spill: one
@@ -942,14 +950,20 @@ export class Workbook {
     let evaluated = 0;
     /** A cap on how many times one call will rebuild its plan. */
     let plans = 0;
+    // A slice is bounded by time spent in scripts as well as by count:
+    // two thousand cells of arithmetic is a millisecond, and two
+    // thousand calls to a slow function is not.
+    const scripts = this.scripts;
+    scripts?.startSlice();
+    const within = (): boolean => evaluated < budget && !(scripts?.overBudget() ?? false);
 
-    while (this.dirty.size > 0 && evaluated < budget && plans < 64) {
+    while (this.dirty.size > 0 && within() && plans < 64) {
       if (this.plan === null) {
         this.plan = this.buildPlan();
         plans++;
       }
       const plan = this.plan;
-      while (plan.at < plan.order.length && evaluated < budget) {
+      while (plan.at < plan.order.length && within()) {
         const key = plan.order[plan.at++];
         // A cell can leave the dirty set between plans, when an edit
         // turned a formula into a literal.
@@ -1241,6 +1255,7 @@ export class Workbook {
       functions: this.functions,
       rangeForName: (name: string) => this.names.rangeOf(name),
       formulaForName: (name: string) => this.names.formulaOf(name),
+      scripts: this.scripts ?? undefined,
       book: this.asContext,
       onSheet: sheet,
       at: key === undefined ? undefined : { row: rowOf(key), column: columnOf(key) },
@@ -1267,6 +1282,16 @@ export class Workbook {
    * just what they answer.
    */
   namesChanged(): void {
+    this.rewireAll();
+  }
+
+  /**
+   * Re-reads every formula, because the script's functions changed:
+   * defined, edited, or gone. A formula calling one that was `#NAME?` a
+   * moment ago may have an answer now, and one whose function changed
+   * has a different answer.
+   */
+  scriptsChanged(): void {
     this.rewireAll();
   }
 

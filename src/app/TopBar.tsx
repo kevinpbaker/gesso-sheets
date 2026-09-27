@@ -1109,7 +1109,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       <ScriptDialog
         open={scriptsOpen}
         scripts={sheet.view.scripts}
-        onSave={(was: string, name: string, source: string) => sheet.send.saveScript(was, name, source)}
+        onSave={(was: string, name: string, source: string, kind: 'run' | 'functions') => sheet.send.saveScript(was, name, source, kind)}
         onRemove={(name: string) => sheet.send.removeScript(name)}
         onRun={(name: string, confirmed: boolean) => sheet.send.runScript(name, confirmed)}
         onStop={() => sheet.send.stopScript()}

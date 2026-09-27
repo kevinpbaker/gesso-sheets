@@ -12,6 +12,12 @@ export interface Script {
   readonly source: string;
   /** `typed` in this sheet, or brought in with a file, named. */
   readonly origin: { readonly kind: 'typed' } | { readonly kind: 'file'; readonly file: string };
+  /**
+   * `functions` for a script whose top-level functions a formula calls
+   * (Part Six), run by the interpreter on the application worker and
+   * never by this host. Absent, it is a script somebody runs.
+   */
+  readonly kind?: 'functions';
 }
 
 /** The worker, as the host sees it: something it can talk to and kill. */

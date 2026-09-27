@@ -130,13 +130,28 @@ export class CellFunctions {
   /**
    * Replaces the workbook's functions with what `source` defines.
    *
-   * A fresh context each time, so nothing the last module left in the
-   * global object survives into the next. Every top-level function the
-   * source declares becomes a name. The source runs once, under the
-   * same deadline a call has, so a module that loops is refused rather
-   * than hanging the thread.
+   * One source; `defineAll` is the same for several.
    */
   define(source: string): { readonly names: readonly string[] } | { readonly error: string } {
+    const [only] = this.defineAll([{ name: 'functions', source }]);
+    return only.error === null ? { names: only.names } : { error: only.error };
+  }
+
+  /**
+   * Replaces the workbook's functions with what these sources define,
+   * in order, in one context.
+   *
+   * A fresh context each time, so nothing the last module left in the
+   * global object survives into the next. Every top-level function a
+   * source declares becomes a name. Each source runs once, under the
+   * same deadline a call has, so one that loops is refused rather than
+   * hanging the thread. One that fails defines nothing, and the rest
+   * still do: a mistake in one script does not take the others' cells
+   * down with it.
+   */
+  defineAll(
+    sources: readonly { readonly name: string; readonly source: string }[]
+  ): { readonly name: string; readonly names: readonly string[]; readonly error: string | null }[] {
     this.releaseHandles();
     this.context?.dispose();
     this.context = null;
@@ -144,28 +159,32 @@ export class CellFunctions {
     const context = this.runtime.newContext();
     const prelude = context.evalCode(PRELUDE);
     if (prelude.error !== undefined) {
-      const message = String(context.dump(prelude.error)?.message ?? 'the prelude failed');
+      const message = String((context.dump(prelude.error) as { message?: unknown } | null)?.message ?? 'the prelude failed');
       prelude.error.dispose();
       context.dispose();
       throw new Error(message);
     }
     prelude.value.dispose();
-    const before = this.globals(context);
-
-    this.deadline = this.now() + this.limits.milliseconds;
-    const ran = context.evalCode(source, 'functions.js');
-    this.deadline = Number.POSITIVE_INFINITY;
-    if (ran.error !== undefined) {
-      const message = describe(context, ran.error);
-      ran.error.dispose();
-      context.dispose();
-      return { error: message };
-    }
-    ran.value.dispose();
-    const after = this.globals(context);
     this.context = context;
-    this.known = after.filter(name => !before.includes(name) && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(name));
-    return { names: this.known };
+
+    const known: string[] = [];
+    const outcomes = sources.map(({ name, source }) => {
+      const before = this.globals(context);
+      this.deadline = this.now() + this.limits.milliseconds;
+      const ran = context.evalCode(source, `${name}.js`);
+      this.deadline = Number.POSITIVE_INFINITY;
+      if (ran.error !== undefined) {
+        const message = describe(context, ran.error);
+        ran.error.dispose();
+        return { name, names: [], error: message };
+      }
+      ran.value.dispose();
+      const names = this.globals(context).filter(each => !before.includes(each) && /^[A-Za-z_][A-Za-z0-9_.]*$/.test(each));
+      known.push(...names);
+      return { name, names, error: null };
+    });
+    this.known = known;
+    return outcomes;
   }
 
   /** The global names that hold functions, in a context. */
@@ -279,12 +298,17 @@ export class CellFunctions {
     return value;
   }
 
+  /**
+   * What an error from the interpreter was. The message decides before
+   * the clock does: an allocation that reaches the limit can do so
+   * after the deadline has passed, having spent the time collecting.
+   */
   private failure(name: string, message: string, late: boolean): FunctionResult {
-    if (late || /interrupted/i.test(message)) {
-      return { ok: false, kind: 'deadline', message: `${name} ran past its ${this.limits.milliseconds}ms.` };
-    }
     if (/out of memory/i.test(message)) {
       return { ok: false, kind: 'memory', message: `${name} ran out of memory.` };
+    }
+    if (late || /interrupted/i.test(message)) {
+      return { ok: false, kind: 'deadline', message: `${name} ran past its ${this.limits.milliseconds}ms.` };
     }
     return { ok: false, kind: 'thrown', message };
   }

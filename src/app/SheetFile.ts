@@ -450,6 +450,7 @@ function scriptsFrom(stored: unknown): { scripts?: Script[] } {
     scripts.push({
       name,
       source: held.source.slice(0, SCRIPT_SOURCE_LIMIT),
+      ...(held.kind === 'functions' ? { kind: 'functions' as const } : {}),
       origin:
         origin?.kind === 'typed'
           ? { kind: 'typed' }

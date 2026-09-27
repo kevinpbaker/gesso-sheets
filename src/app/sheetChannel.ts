@@ -128,7 +128,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       measureColumns: (first, last) => service.measureColumns(first, last),
       filterToSelection: () => service.filterToSelection(),
       clearFilter: () => service.clearFilter(),
-      saveScript: (was, name, source) => service.saveScript(was, name, source),
+      saveScript: (was, name, source, kind) => service.saveScript(was, name, source, kind),
       removeScript: name => service.removeScript(name),
       runScript: (name, confirmed) => service.runScript(name, confirmed),
       stopScript: () => service.stopScript()

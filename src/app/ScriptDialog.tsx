@@ -23,7 +23,7 @@ import type { SheetScripts } from './SheetContract';
 export interface ScriptDialogProps {
   readonly open: boolean;
   readonly scripts: SheetScripts;
-  readonly onSave: (was: string, name: string, source: string) => void;
+  readonly onSave: (was: string, name: string, source: string, kind: 'run' | 'functions') => void;
   readonly onRemove: (name: string) => void;
   readonly onRun: (name: string, confirmed: boolean) => void;
   readonly onStop: () => void;
@@ -37,6 +37,14 @@ sheet.range("B2:B10").write(rows.map(([value]) => [typeof value === "number" ? v
 sheet.range("B2:B10").format({ bold: true });
 `;
 
+/** What a new functions script starts as: one function, and how a formula calls it. */
+export const FUNCTIONS_TEMPLATE = `// A formula calls these by name: =TAX(B2, 0.2)
+// A function sees its arguments and nothing else. A range arrives as rows.
+function TAX(amount, rate) {
+  return Math.round(amount * rate * 100) / 100;
+}
+`;
+
 export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentContext) {
   const focus = ctx.inject(FocusService);
   /** The script being edited, by the name it was saved under; empty for one not saved yet. */
@@ -45,24 +53,28 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
   const draftSource = internalState('');
   /** Run was pressed on a file's script, and the question is showing. */
   const confirming = internalState(false);
+  /** Whether the script being edited is run, or holds functions formulas call. */
+  const draftKind = internalState<'run' | 'functions'>('run');
 
   const scripts = (): SheetScripts => inputs.scripts.value;
   const fromOf = (name: string): string => scripts().entries.find(entry => entry.name === name)?.from ?? '';
 
-  const choose = (name: string): void => {
+  const choose = (name: string, kind: 'run' | 'functions' = 'run'): void => {
     const entry = scripts().entries.find(each => each.name === name);
+    const chosenKind = entry?.kind ?? kind;
+    draftKind.value = chosenKind;
     selected.value = entry?.name ?? '';
-    draftName.value = entry?.name ?? nextName();
-    draftSource.value = entry?.source ?? TEMPLATE;
+    draftName.value = entry?.name ?? nextName(chosenKind === 'functions' ? 'Functions' : 'Script');
+    draftSource.value = entry?.source ?? (chosenKind === 'functions' ? FUNCTIONS_TEMPLATE : TEMPLATE);
     confirming.value = false;
   };
-  const nextName = (): string => {
+  const nextName = (stem: string): string => {
     const taken = new Set(scripts().entries.map(entry => entry.name.toUpperCase()));
-    let number = scripts().entries.length + 1;
-    while (taken.has(`SCRIPT ${number}`)) {
+    let number = 1;
+    while (taken.has(`${stem} ${number}`.toUpperCase())) {
       number++;
     }
-    return `Script ${number}`;
+    return `${stem} ${number}`;
   };
 
   // Each time it opens: the first script, or a new one when there are none.
@@ -81,13 +93,18 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
     }
   });
 
-  const save = (): void => inputs.onSave.value(selected.value, draftName.value, draftSource.value);
+  const save = (): void => inputs.onSave.value(selected.value, draftName.value, draftSource.value, draftKind.value);
   const run = (confirmed: boolean): void => {
     save();
     confirming.value = false;
     inputs.onRun.value(draftName.value.trim(), confirmed);
   };
   const askToRun = (): void => {
+    // Functions are not run: Ctrl+Enter puts them to work by saving them.
+    if (draftKind.value === 'functions') {
+      save();
+      return;
+    }
     if (scripts().running !== '') {
       return;
     }
@@ -143,16 +160,22 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
     </button>
   );
 
-  const list = combineLatest([inputs.scripts, selected]).pipe(
-    map(([next, chosen]) => [
+  const list = combineLatest([inputs.scripts, selected, draftKind]).pipe(
+    map(([next, chosen, kind]) => [
       ...next.entries.map(entry => button(`script-${entry.name}`, entry.name, () => choose(entry.name), entry.name === chosen)),
-      button('new', 'New script', () => choose(''), chosen === '')
+      button('new', 'New script', () => choose(''), chosen === '' && kind === 'run'),
+      button('new-functions', 'New functions', () => choose('', 'functions'), chosen === '' && kind === 'functions')
     ])
   );
 
-  const origin = combineLatest([inputs.scripts, selected]).pipe(
-    map(([, chosen]) => {
+  const origin = combineLatest([inputs.scripts, selected, draftKind]).pipe(
+    map(([, chosen, kind]) => {
       const from = fromOf(chosen);
+      if (kind === 'functions') {
+        return from === ''
+          ? 'Functions a formula calls by name. Each sees only its arguments, and reaches nothing else.'
+          : `Came with ${from}. Its functions are off, so a formula that calls one says #NAME?.`;
+      }
       return from === ''
         ? 'Written here. It runs when you run it, on a worker of its own, and reaches this workbook and nothing else.'
         : `Came with ${from}. It runs only when you choose to, and asks each time.`;
@@ -181,11 +204,19 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
   );
 
   /** How the last run of this script went, and what it logged; or why a save was refused. */
-  const outcome = combineLatest([inputs.scripts, selected]).pipe(
-    map(([next, chosen]) => {
+  const outcome = combineLatest([inputs.scripts, selected, draftKind]).pipe(
+    map(([next, chosen, kind]) => {
       const lines: string[] = [];
+      const entry = next.entries.find(each => each.name === chosen);
       if (next.refused !== '') {
         lines.push(next.refused);
+      } else if (kind === 'functions') {
+        if (entry !== undefined && entry.from === '') {
+          lines.push(entry.defines.length === 0 ? 'Defines no function a formula can call yet.' : `Defines ${entry.defines.join(', ')}.`);
+        }
+        if (entry !== undefined && entry.problem !== '') {
+          lines.push(entry.problem);
+        }
       } else if (next.running !== '') {
         lines.push(`${next.running} is running…`);
       } else if (next.last !== null && next.last.name === (chosen === '' ? draftName.value.trim() : chosen)) {
@@ -211,7 +242,7 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
     })
   );
 
-  const actions = combineLatest([inputs.scripts, selected]).pipe(
+  const actions = combineLatest([inputs.scripts, selected, draftKind]).pipe(
     map(([next, chosen]) => [
       ...(chosen === '' ? [] : [button('remove', 'Delete', () => {
         inputs.onRemove.value(chosen);
@@ -220,7 +251,9 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
       <box key="gap" flex={1} minWidth={0} />,
       button('close', 'Close', () => inputs.onClose.value()),
       button('save', 'Save', save),
-      next.running === '' ? button('run', 'Run', askToRun) : button('stop', 'Stop', () => inputs.onStop.value())
+      ...(draftKind.value === 'functions'
+        ? []
+        : [next.running === '' ? button('run', 'Run', askToRun) : button('stop', 'Stop', () => inputs.onStop.value())])
     ])
   );
 
@@ -283,7 +316,11 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
           onInput={(event: UiTextChangeEvent) => (draftSource.value = event.value)}
           onKeyDown={onSourceKey}
         />,
-        Text({ text: 'Tab indents and Shift+Tab leaves. Ctrl+Enter runs.', fontSize: 11, color: 'textMuted' }),
+        Text({
+          text: draftKind.pipe(map(kind => `Tab indents and Shift+Tab leaves. Ctrl+Enter ${kind === 'functions' ? 'saves' : 'runs'}.`)),
+          fontSize: 11,
+          color: 'textMuted'
+        }),
         Text({ text: origin, fontSize: 11, color: 'textMuted', textWrap: 'word' }),
         <column gap={4}>{question}</column>,
         <column gap={4}>{outcome}</column>,

@@ -2,6 +2,7 @@ import { columnIndex, inBounds, keyOn, parseRef, rangeKeys, rowOf, type CellRef,
 import type { Ast, BinaryOperator, CallNode } from './Ast';
 import { FUNCTIONS, isSheetFunction, LIFTED, liveContext, type Argument, type FunctionContext } from './Functions';
 import { arrayOrValue, isArray, type ArrayValue } from './FunctionKit';
+import type { ScriptFunctions } from './ScriptFunctions';
 import {
   CALC,
   compareValues,
@@ -101,6 +102,12 @@ export interface EvaluationContext {
   locals?: Scope;
   /** How many `LAMBDA`s deep this evaluation is; see `MAX_DEPTH`. */
   depth?: number;
+  /**
+   * The functions the workbook's script defines, asked after every
+   * built-in and every name; see `ScriptFunctions`. Absent, a call
+   * nothing else knows is `#NAME?`, as it always was.
+   */
+  scripts?: ScriptFunctions;
 }
 
 /**
@@ -1075,13 +1082,38 @@ function boundCall(node: CallNode, context: EvaluationContext): Bound | undefine
   }
   const formula = context.formulaForName?.(node.name) ?? null;
   if (formula === null) {
-    return undefined;
+    return scriptCall(node, context);
   }
   const value = namedValue(formula, context);
   if (node.word !== undefined) {
     return value;
   }
   return isLambda(value) ? apply(value, node.args, context) : isError(value) ? value : VALUE;
+}
+
+/**
+ * A call to a function the workbook's script defines, or undefined when
+ * it defines none by that name.
+ *
+ * Brackets are required: a bare `TAX` is a name, and a script function
+ * is not a value a cell can hold. Each argument is evaluated as the
+ * cell's own formula would be, so a range arrives whole, as rows.
+ */
+function scriptCall(node: CallNode, context: EvaluationContext): Bound | undefined {
+  const scripts = context.scripts;
+  if (scripts === undefined || node.word !== undefined || !scripts.has(node.name)) {
+    return undefined;
+  }
+  const args: (CellValue | ArrayValue)[] = [];
+  for (const arg of node.args) {
+    const value = evaluateBound(arg, context);
+    if (isLambda(value)) {
+      return CALC;
+    }
+    args.push(value);
+  }
+  const at = context.at === undefined ? undefined : { sheet: context.onSheet ?? 0, ...context.at };
+  return scripts.call(node.name, args, at);
 }
 
 /**

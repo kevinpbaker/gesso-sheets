@@ -72,6 +72,8 @@ import { snapshotOf, applySnapshot, parseSnapshot, SCRIPT_SOURCE_LIMIT, type She
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
 import { DEFAULT_LIMITS, ScriptHost, type Script, type ScriptRunResult, type ScriptWorker } from '../script/ScriptHost';
+import { CellFunctions, loadInterpreter } from '../script/CellFunctions';
+import { SheetFunctions } from './SheetFunctions';
 import type { ScriptBook, ScriptBookSheet, ScriptFormat, ScriptOp, ScriptValue } from '../script/protocol';
 import { exportCsv, importCsv } from './SheetCsv';
 import { guessOf, placeOf } from './alignment';
@@ -285,6 +287,14 @@ export class SheetService {
   private readonly scriptHost: ScriptHost | null;
   private scriptRuns = 0;
   /**
+   * The interpreter for the workbook's functions, made the first time a
+   * workbook has any and kept: one runtime, redefined per document.
+   */
+  private sheetFunctions: SheetFunctions | null = null;
+  /** What each function script defines, or why it defines nothing, by script name. */
+  private functionReports = new Map<string, { names: readonly string[]; problem: string }>();
+  private functionsDefined: Promise<void> = Promise.resolve();
+  /**
    * Which chart has the handles round it.
    *
    * On the service rather than in the document, because selecting a
@@ -426,6 +436,9 @@ export class SheetService {
           });
     // Seeded from the document, as the names are.
     this.publishScripts('');
+    if (document.scripts.some(script => script.kind === 'functions')) {
+      this.defineFunctions();
+    }
     this.publishStats();
     this.publishActiveFormat();
     this.publishActiveRules();
@@ -2013,7 +2026,7 @@ export class SheetService {
   // Scripts
   // ---------------------------------------------------------------------
 
-  saveScript(was: string, name: string, source: string): void {
+  saveScript(was: string, name: string, source: string, kind?: 'run' | 'functions'): void {
     const scripts = this.document.scripts;
     const trimmed = name.trim();
     const at = scripts.findIndex(script => script.name === was);
@@ -2033,14 +2046,21 @@ export class SheetService {
       this.publishScripts('That script is too long to keep.');
       return;
     }
+    const functions = (kind ?? (at < 0 ? 'run' : scripts[at].kind === 'functions' ? 'functions' : 'run')) === 'functions';
+    const wasFunctions = at >= 0 && scripts[at].kind === 'functions';
+    const kept = { name: trimmed, source, ...(functions ? { kind: 'functions' as const } : {}) };
     if (at < 0) {
-      scripts.push({ name: trimmed, source, origin: { kind: 'typed' } });
+      scripts.push({ ...kept, origin: { kind: 'typed' } });
     } else {
       // Where it came from stays with it.
-      scripts[at] = { ...scripts[at], name: trimmed, source };
+      const { kind: _was, ...rest } = scripts[at];
+      scripts[at] = { ...rest, ...kept };
     }
     this.publishScripts('');
     this.persist();
+    if (functions || wasFunctions) {
+      this.defineFunctions();
+    }
   }
 
   removeScript(name: string): void {
@@ -2048,9 +2068,76 @@ export class SheetService {
     if (at < 0) {
       return;
     }
-    this.document.scripts.splice(at, 1);
+    const [gone] = this.document.scripts.splice(at, 1);
     this.publishScripts('');
     this.persist();
+    if (gone.kind === 'functions') {
+      this.defineFunctions();
+    }
+  }
+
+  /** Settles when the workbook's functions are defined, for whoever needs them to be. */
+  get functionsReady(): Promise<void> {
+    return this.functionsDefined;
+  }
+
+  /**
+   * Defines the workbook's function scripts in the interpreter, and has
+   * every formula read them again.
+   *
+   * Asynchronous only the first time, while the interpreter's
+   * WebAssembly loads; until then a call is `#NAME?`, and the moment it
+   * is ready the sheet recalculates. A workbook with no function
+   * scripts never loads it at all.
+   *
+   * A file's function scripts are not defined. Nothing in a file runs by
+   * itself, and a formula runs every time: turning a file's functions on
+   * is Phase 33's, and until then they say they are off.
+   */
+  private defineFunctions(): void {
+    const document = this.document;
+    const all = document.scripts.filter(script => script.kind === 'functions');
+    const reports = new Map<string, { names: readonly string[]; problem: string }>();
+    for (const script of all) {
+      if (script.origin.kind === 'file') {
+        reports.set(script.name, { names: [], problem: `Came with ${script.origin.file}. Its functions are off, so a formula that calls one says #NAME?.` });
+      }
+    }
+    const ours = all.filter(script => script.origin.kind === 'typed');
+    if (ours.length === 0) {
+      this.functionReports = reports;
+      this.publishScripts(this.scriptsSubject.value.refused);
+      if (document.book.scripts !== null) {
+        document.book.scripts = null;
+        document.book.scriptsChanged();
+        this.afterFunctions();
+      }
+      return;
+    }
+    this.functionsDefined = loadInterpreter().then(module => {
+      if (document !== this.document) {
+        return;
+      }
+      this.sheetFunctions ??= new SheetFunctions(new CellFunctions(module));
+      for (const outcome of this.sheetFunctions.define(ours.map(script => ({ name: script.name, source: script.source })))) {
+        reports.set(outcome.name, { names: outcome.names, problem: outcome.problem });
+      }
+      this.functionReports = reports;
+      document.book.scripts = this.sheetFunctions;
+      document.book.scriptsChanged();
+      this.publishScripts(this.scriptsSubject.value.refused);
+      this.afterFunctions();
+    });
+  }
+
+  /** What a changed set of functions has to republish: every value may have moved. */
+  private afterFunctions(): void {
+    this.painter.invalidate();
+    this.publishWindow();
+    this.publishEditor();
+    this.publishStatus();
+    this.redrawCharts();
+    this.pump();
   }
 
   /**
@@ -2084,6 +2171,10 @@ export class SheetService {
     const script = this.document.scripts.find(each => each.name === name);
     const host = this.scriptHost;
     if (script === undefined) {
+      return;
+    }
+    if (script.kind === 'functions') {
+      this.finishScript(script, { outcome: 'refused', reason: `${script.name} holds functions, which formulas call. It is not run.` });
       return;
     }
     if (host === null) {
@@ -2223,7 +2314,10 @@ export class SheetService {
       entries: this.document.scripts.map(script => ({
         name: script.name,
         source: script.source,
-        from: script.origin.kind === 'file' ? script.origin.file : ''
+        from: script.origin.kind === 'file' ? script.origin.file : '',
+        kind: script.kind === 'functions' ? ('functions' as const) : ('run' as const),
+        defines: this.functionReports.get(script.name)?.names ?? [],
+        problem: this.functionReports.get(script.name)?.problem ?? ''
       })),
       refused
     });
@@ -2265,6 +2359,7 @@ export class SheetService {
      */
     this.publishSheet();
     this.publishScripts('');
+    this.defineFunctions();
     if (stored === null) {
       this.persist();
     }
@@ -2540,7 +2635,9 @@ export class SheetService {
     await this.library?.put(entry);
     this.publishSheet();
     this.publishNames('');
+    this.functionReports = new Map();
     this.publishScripts('');
+    this.defineFunctions();
     this.publishPalette();
     if (stored === null) {
       this.persist();
@@ -3245,9 +3342,11 @@ export class SheetService {
     if (found === null) {
       return null;
     }
+    // A script function's own words, when the cell's error is its.
+    const said = this.document.book.scripts === null ? null : (this.sheetFunctions?.messageAt(this.document.active, row, column) ?? null);
     return {
       code: found.code,
-      meaning: found.meaning,
+      meaning: said ?? found.meaning,
       blame: found.blame === null ? null : addressOf(found.blame.row, found.blame.column)
     };
   }

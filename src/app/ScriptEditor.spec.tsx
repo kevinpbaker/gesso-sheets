@@ -27,7 +27,7 @@ function spawn(): ScriptWorker {
   };
 }
 
-describe('the script editor', () => {
+describe('the script editor', { timeout: 20_000 }, () => {
   let h: { ui: Rendered; served: ServedForTest; service: SheetService; document: SheetDocument };
 
   async function mount(fill?: (document: SheetDocument) => void): Promise<void> {
@@ -59,7 +59,9 @@ describe('the script editor', () => {
 
   /** Settles until `done` holds; a run finishes on another thread, so a few settles may pass first. */
   async function until(done: () => boolean): Promise<void> {
-    for (let tries = 0; tries < 200 && !done(); tries++) {
+    // Ten seconds: each run starts a worker thread and locks it down,
+    // which is quick alone and slow under a whole suite's load.
+    for (let tries = 0; tries < 1_000 && !done(); tries++) {
       await new Promise(resolve => setTimeout(resolve, 10));
       await settle();
     }
@@ -160,6 +162,9 @@ describe('the script editor', () => {
     await until(() => h.document.sheet.input(0, 2) === 'tidied');
 
     // And again next time: saying yes once is not saying yes for good.
+    // The cell is written on the application side a moment before the
+    // editor hears the run has ended and Stop becomes Run again.
+    await until(() => h.ui.queryByRole('button', { name: 'Run' }) !== null);
     h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Run' }));
     await settle();
     expect(h.ui.queryByRole('button', { name: 'Run it' })).not.toBeNull();

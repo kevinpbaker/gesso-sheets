@@ -679,6 +679,12 @@ export interface SheetScript {
   readonly source: string;
   /** The empty string for a script written here, or the file it came with. */
   readonly from: string;
+  /** A script somebody runs, or one whose functions formulas call. */
+  readonly kind: 'run' | 'functions';
+  /** For functions: the names a formula can call, as the script spells them. */
+  readonly defines: readonly string[];
+  /** For functions: why one defines nothing, or less than it says. Empty when all is well. */
+  readonly problem: string;
 }
 
 export interface SheetScriptRun {
@@ -1072,7 +1078,7 @@ export interface SheetCommands {
    * came from when it is edited, so a file's script does not become
    * the person's by having a character changed.
    */
-  saveScript(was: string, name: string, source: string): void;
+  saveScript(was: string, name: string, source: string, kind?: 'run' | 'functions'): void;
   removeScript(name: string): void;
   /**
    * Runs a script. `confirmed` is the person having said yes to a
