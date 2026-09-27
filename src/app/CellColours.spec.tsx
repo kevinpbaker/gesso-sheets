@@ -124,6 +124,24 @@ describe('colouring a cell', () => {
     expect(h.document.formatAt(1, 1).paint.fill).toBe('#434343');
   });
 
+  it('takes any colour at all, from Custom colour…', async () => {
+    await mount();
+    await click('button', 'Fill colour');
+    await click('option', 'Custom colour…');
+    const field = h.ui.getByRole('textbox', { name: 'Fill colour as hex' });
+    h.ui.fireEvent.focus(field);
+    await press('a', { ctrl: true });
+    h.ui.fireEvent.type('#2e7d6b');
+    await settle();
+    // Nothing is painted until the colour is kept.
+    expect(h.document.formatAt(1, 1).paint.fill).toBe('');
+    await click('button', 'Use colour');
+    expect(h.document.formatAt(1, 1).paint.fill).toBe('#2e7d6b');
+    // And it is one of the recent colours from then on.
+    await click('button', 'Text colour');
+    expect(h.ui.getByRole('option', { name: 'recent #2e7d6b' })).toBeDefined();
+  });
+
   it('names the colour a cell has, in the tooltip', () => {
     expect(colourName('#c9daf8')).toBe('pale blue');
   });

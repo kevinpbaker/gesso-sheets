@@ -9,7 +9,7 @@ import {
   type UiTextChangeEvent,
   type UiTextSpan
 } from 'gesso-core';
-import { ColorPalette } from 'gesso-components';
+import { ColorPalette, ColorPicker, Dialog } from 'gesso-components';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { FindBar } from './FindBar';
@@ -157,6 +157,21 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const textAnchor = internalState<UiNode | null>(null);
   const fillAnchor = internalState<UiNode | null>(null);
   const recentColours = internalState<readonly string[]>([]);
+  /**
+   * The custom colour dialog: which of the two it is for, while it is
+   * open, and the colour as it is dragged — applied only when it is kept.
+   */
+  const customFor = internalState<'color' | 'fill' | null>(null);
+  const customColour = internalState('#000000');
+  const openCustom = (which: 'color' | 'fill'): void => {
+    const now = which === 'color' ? paint().color : paint().fill;
+    customColour.value = now === '' ? (which === 'color' ? '#000000' : '#ffffff') : now;
+    customFor.value = which;
+  };
+  const closeCustom = (): void => {
+    customFor.value = null;
+    edit.focusSheet();
+  };
   const paintWith = (change: { color: string } | { fill: string }): void => {
     const colour = 'color' in change ? change.color : change.fill;
     if (colour !== '') {
@@ -886,6 +901,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       closeNames();
       return true;
     }
+    if (customFor.value !== null) {
+      closeCustom();
+      return true;
+    }
     if (shortcutsOpen.value) {
       shortcutsOpen.value = false;
       return true;
@@ -1249,6 +1268,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         automaticLabel="Automatic"
         label="Text colour"
         onSelect={(colour: string) => paintWith({ color: colour })}
+        onCustom={() => openCustom('color')}
       />
       <ColorPalette
         open={fillPaletteOpen}
@@ -1259,6 +1279,59 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         automaticLabel="No fill"
         label="Fill colour"
         onSelect={(colour: string) => paintWith({ fill: colour })}
+        onCustom={() => openCustom('fill')}
+      />
+      <Dialog
+        open={customFor.pipe(map(which => which !== null))}
+        onClose={closeCustom}
+        title={customFor.pipe(map(which => (which === 'fill' ? 'Custom fill colour' : 'Custom text colour')))}
+        width={260}
+        content={
+          <column gap={12}>
+            <ColorPicker
+              value={customColour}
+              label={customFor.pipe(map(which => (which === 'fill' ? 'Fill colour' : 'Text colour')))}
+              width={224}
+              onChange={(colour: string) => (customColour.value = colour)}
+            />
+            <row gap={8} x="end">
+              <button
+                onClick={closeCustom}
+                label="Cancel"
+                paddingLeft={12}
+                paddingRight={12}
+                paddingTop={5}
+                paddingBottom={5}
+                borderRadius={6}
+                backgroundColor="controlBackground"
+                borderColor="controlBorder"
+                borderWidth={1}
+                cursor="pointer">
+                <text text="Cancel" fontSize={12} color="controlForeground" selectable={false} />
+              </button>
+              <button
+                onClick={() => {
+                  const which = customFor.value;
+                  customFor.value = null;
+                  if (which !== null) {
+                    paintWith(which === 'fill' ? { fill: customColour.value } : { color: customColour.value });
+                  }
+                }}
+                label="Use colour"
+                paddingLeft={12}
+                paddingRight={12}
+                paddingTop={5}
+                paddingBottom={5}
+                borderRadius={6}
+                backgroundColor="primary"
+                borderColor="controlBorder"
+                borderWidth={1}
+                cursor="pointer">
+                <text text="Use colour" fontSize={12} color="primaryForeground" selectable={false} />
+              </button>
+            </row>
+          </column>
+        }
       />
       <NamesDialog
         open={namesOpen}
