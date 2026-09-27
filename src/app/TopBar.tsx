@@ -930,6 +930,71 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * because a spec asks what a node's properties are and the
    * properties were right.
    */
+  /**
+   * The bar that says a file's functions are off — Phase 33.
+   *
+   * Shown while the workbook has function scripts from a file that
+   * nobody has turned on, and until somebody says Not now. Built once
+   * and switched in, for the reason the rules bar below is. Turn on is
+   * here and in the editor; the bar is where somebody who has only
+   * opened a file and seen `#NAME?` will look.
+   */
+  const functionsFrom = sheet.view.scripts.pipe(
+    map(scripts => scripts.entries.find(entry => entry.kind === 'functions' && entry.from !== '' && !entry.on)?.from ?? ''),
+    distinctUntilChanged()
+  );
+  const functionsDismissed = internalState('');
+  const functionsShown = combineLatest([functionsFrom, functionsDismissed]).pipe(
+    map(([from, dismissed]) => from !== '' && from !== dismissed),
+    distinctUntilChanged()
+  );
+  const barButton = (label: string, onClick: () => void) => (
+    <button
+      onClick={onClick}
+      label={label}
+      paddingLeft={9}
+      paddingRight={9}
+      paddingTop={3}
+      paddingBottom={3}
+      borderRadius={5}
+      backgroundColor="controlBackground"
+      borderColor="controlBorder"
+      borderWidth={1}
+      cursor="pointer">
+      <text text={label} fontSize={11} textWrap="none" color="controlForeground" selectable={false} />
+    </button>
+  );
+  const functionsBar = [
+    <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
+    <row
+      key="functions"
+      width={percent(100)}
+      y="center"
+      gap={8}
+      paddingLeft={8}
+      paddingRight={8}
+      paddingTop={4}
+      paddingBottom={4}
+      backgroundColor="surface"
+      role="region"
+      label="Functions from a file">
+      <text
+        text={functionsFrom.pipe(
+          map(from => `This workbook's functions came with ${from}, and are off, so a formula that calls one says #NAME?. Turn them on only for a file you trust.`)
+        )}
+        flex={1}
+        minWidth={0}
+        fontSize={11}
+        color="text"
+        textWrap="word"
+        selectable={false}
+      />
+      {barButton('Turn on', () => sheet.send.setFunctionsOn(true))}
+      {barButton('Scripts…', () => (scriptsOpen.value = true))}
+      {barButton('Not now', () => (functionsDismissed.value = sheet.view.scripts.value.entries.find(entry => entry.kind === 'functions' && entry.from !== '' && !entry.on)?.from ?? ''))}
+    </row>
+  ];
+
   const rulesBar = [
     <box key="rule" width={percent(100)} height={1} backgroundColor="border" />,
     <RulesBar
@@ -1105,6 +1170,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       {charting.pipe(map(open => (open ? chartBar : [])))}
       {recenting.pipe(map(open => (open ? recentBar : [])))}
       {notice.pipe(map(text => (text === '' ? [] : noticeRow(text))))}
+      {functionsShown.pipe(map(open => (open ? functionsBar : [])))}
       {finding.pipe(map(mode => (mode === 'closed' ? [] : findBar)))}
       <Shortcuts proof={proof} open={shortcutsOpen} onClose={() => (shortcutsOpen.value = false)} />
       <PasteHint open={pasteHint} onClose={() => (pasteHint.value = false)} />
@@ -1125,6 +1191,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         onRemove={(name: string) => sheet.send.removeScript(name)}
         onRun={(name: string, confirmed: boolean) => sheet.send.runScript(name, confirmed)}
         onStop={() => sheet.send.stopScript()}
+        onFunctionsOn={(on: boolean) => sheet.send.setFunctionsOn(on)}
         onClose={closeScripts}
       />
       <NamesDialog

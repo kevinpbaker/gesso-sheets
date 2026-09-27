@@ -27,10 +27,18 @@ export class SheetFunctions implements ScriptFunctions {
   private callable = new Map<string, string>();
   /** Why a cell's call failed, by `sheet:row:column`, while it has. */
   private readonly messages = new Map<string, string>();
+  /**
+   * Functions a file brought that are off, by the name a formula
+   * writes, and what a call to one says. Found by reading the source,
+   * never by running it: a script that is off does not run at all, not
+   * even its top level.
+   */
+  private blocked = new Map<string, string>();
   private spent = 0;
 
   constructor(
-    private readonly functions: CellFunctions,
+    /** The interpreter, or null for a workbook whose only functions are off, which needs none. */
+    private readonly functions: CellFunctions | null,
     /** How long a slice may spend in scripts before it hands the thread back. */
     private readonly sliceMilliseconds = 8,
     private readonly now: () => number = () => performance.now()
@@ -41,9 +49,22 @@ export class SheetFunctions implements ScriptFunctions {
    * made callable or why it made nothing.
    */
   define(
-    scripts: readonly { readonly name: string; readonly source: string }[]
+    scripts: readonly { readonly name: string; readonly source: string }[],
+    off: readonly { readonly name: string; readonly source: string; readonly file: string }[] = []
   ): { readonly name: string; readonly names: readonly string[]; readonly problem: string }[] {
-    const outcomes = this.functions.defineAll(scripts);
+    this.blocked = new Map();
+    for (const script of off) {
+      for (const name of declaredIn(script.source)) {
+        this.blocked.set(
+          name.toUpperCase(),
+          `${name} came with ${script.file}, and this workbook's functions from it are off. Turn them on from the bar above the sheet.`
+        );
+      }
+    }
+    if (this.functions === null && scripts.length > 0) {
+      throw new Error('Functions to define, and no interpreter to define them in.');
+    }
+    const outcomes = this.functions?.defineAll(scripts) ?? [];
     const seen = new Map<string, string>();
     const clashing = new Set<string>();
     for (const outcome of outcomes) {
@@ -79,7 +100,7 @@ export class SheetFunctions implements ScriptFunctions {
   }
 
   has(name: string): boolean {
-    return this.callable.has(name);
+    return this.callable.has(name) || this.blocked.has(name);
   }
 
   /** Why the call in this cell failed, or null when it did not. */
@@ -101,7 +122,12 @@ export class SheetFunctions implements ScriptFunctions {
     at: { readonly sheet: number; readonly row: number; readonly column: number } | undefined
   ): CellValue | ArrayValue {
     const script = this.callable.get(name);
-    if (script === undefined) {
+    const key = at === undefined ? null : `${at.sheet}:${at.row}:${at.column}`;
+    if (script === undefined || this.functions === null) {
+      const why = this.blocked.get(name);
+      if (why !== undefined && key !== null) {
+        this.messages.set(key, why);
+      }
       return NAME;
     }
     const given: FunctionValue[] = [];
@@ -115,7 +141,6 @@ export class SheetFunctions implements ScriptFunctions {
     const started = this.now();
     const result = this.functions.call(script, given);
     this.spent += this.now() - started;
-    const key = at === undefined ? null : `${at.sheet}:${at.row}:${at.column}`;
     const [value, message] = cellValueOf(script, result);
     if (key !== null) {
       if (message === null) {
@@ -126,6 +151,15 @@ export class SheetFunctions implements ScriptFunctions {
     }
     return value;
   }
+}
+
+/**
+ * The functions a source declares at its top level, read and not run:
+ * `function NAME(` at the start of a line. Close enough to say why a
+ * call does not work; nothing is run on the strength of it.
+ */
+function declaredIn(source: string): string[] {
+  return [...source.matchAll(/^\s*(?:async\s+)?function\s*\*?\s*([A-Za-z_][A-Za-z0-9_.]*)\s*\(/gm)].map(match => match[1]);
 }
 
 /** A cell value or an array as a function is handed it, or the error that stops the call. */

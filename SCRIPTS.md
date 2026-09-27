@@ -269,11 +269,34 @@ cannot be *ask each time*. It becomes this:
 
 - Functions **written here** are on.
 - Functions that came **with a file** are off until the person turns
-  them on for that workbook. Off, a call is an error that says why.
+  them on for that workbook: from a bar above the sheet, or in the
+  editor. Off, a call is `#NAME?`, and the formula bar says the
+  function came with the file and is off. A script that is off does not
+  run at all, not even its top level. The names in that message are
+  found by reading its text. A workbook whose only functions are off
+  never loads the interpreter.
 - Turned on is remembered in this browser's library, **never in the
   file**. A file cannot say it has been trusted, including a file this
   sheet saved, because a file on disk is one anybody could have edited
   since.
+- **What is remembered is the code, not the file.** Turning on keeps a
+  SHA-256 fingerprint of each script's name and source, on the
+  document's library entry. The same file opened again is on. The same
+  file coming back with a function changed is off again, because the
+  code that was trusted is not the code that is there. A function
+  edited here after it was turned on stays on, since the edit is the
+  person's own.
+- An `.xlsx` gets the values the functions computed, beside the
+  formulas as written, and not the scripts. LibreOffice 26.8 opening
+  one shows those values, and formulas that read them compute from
+  them.
+
+*Specs:* `FunctionFiles.spec.ts` covers a file's functions opened off
+with the rest of the sheet working, turned on to the values it was
+saved with, still on when reopened, off in another library, off again
+when the code changes, and on after an edit here.
+`ScriptEditor.spec.tsx` covers the bar, laid out, and Turn on and Not
+now.
 
 What makes turning them on a smaller decision than running a script is
 the reach above. A hostile function can spend its time and memory,

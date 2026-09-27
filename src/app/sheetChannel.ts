@@ -134,7 +134,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       saveScript: (was, name, source, kind) => service.saveScript(was, name, source, kind),
       removeScript: name => service.removeScript(name),
       runScript: (name, confirmed) => service.runScript(name, confirmed),
-      stopScript: () => service.stopScript()
+      stopScript: () => service.stopScript(),
+      setFunctionsOn: on => service.setFunctionsOn(on)
     }
   });
 }

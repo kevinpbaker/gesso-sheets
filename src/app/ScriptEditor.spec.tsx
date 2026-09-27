@@ -146,6 +146,36 @@ describe('the script editor', { timeout: 20_000 }, () => {
     expect(h.ui.queryByText('looking')).not.toBeNull();
   });
 
+  it('says above the sheet when a file’s functions are off, and turns them on from there', async () => {
+    await mount(document => {
+      document.scripts = [
+        { name: 'Taxes', source: 'function TAX(a, r) { return a * r; }', kind: 'functions', origin: { kind: 'file', file: 'budget.gsheet' } }
+      ];
+      document.setCell(0, 3, '=TAX(200, 0.2)');
+    });
+    await until(() => h.ui.queryByRole('region', { name: 'Functions from a file' }) !== null);
+    const bar = h.ui.getLayout(h.ui.getByRole('region', { name: 'Functions from a file' }));
+    // Laid out, and not a bar of zero height with every role in it right.
+    expect(bar.height).toBeGreaterThan(10);
+    expect(h.document.sheet.value(0, 3)).toMatchObject({ code: '#NAME?' });
+
+    h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Turn on' }));
+    await until(() => h.document.sheet.value(0, 3) === 40);
+    await until(() => h.ui.queryByRole('region', { name: 'Functions from a file' }) === null);
+  });
+
+  it('puts the bar away for Not now, with the functions still off', async () => {
+    await mount(document => {
+      document.scripts = [
+        { name: 'Taxes', source: 'function TAX(a, r) { return a * r; }', kind: 'functions', origin: { kind: 'file', file: 'budget.gsheet' } }
+      ];
+    });
+    await until(() => h.ui.queryByRole('region', { name: 'Functions from a file' }) !== null);
+    h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Not now' }));
+    await settle();
+    expect(h.ui.queryByRole('region', { name: 'Functions from a file' })).toBeNull();
+  });
+
   it('asks before running a script that came with a file, each time', async () => {
     await mount(document => {
       document.scripts = [{ name: 'Tidy', source: 'sheet.write("C1", "tidied")', origin: { kind: 'file', file: 'budget.gsheet' } }];

@@ -27,6 +27,8 @@ export interface ScriptDialogProps {
   readonly onRemove: (name: string) => void;
   readonly onRun: (name: string, confirmed: boolean) => void;
   readonly onStop: () => void;
+  /** Turns the functions a file brought on, or off, for this workbook in this browser. */
+  readonly onFunctionsOn: (on: boolean) => void;
   readonly onClose: () => void;
 }
 
@@ -172,9 +174,12 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
     map(([, chosen, kind]) => {
       const from = fromOf(chosen);
       if (kind === 'functions') {
+        const on = scripts().entries.find(entry => entry.name === chosen)?.on ?? false;
         return from === ''
           ? 'Functions a formula calls by name. Each sees only its arguments, and reaches nothing else.'
-          : `Came with ${from}. Its functions are off, so a formula that calls one says #NAME?.`;
+          : on
+            ? `Came with ${from}. Turned on for this workbook, in this browser.`
+            : `Came with ${from}. Its functions are off, so a formula that calls one says #NAME?.`;
       }
       return from === ''
         ? 'Written here. It runs when you run it, on a worker of its own, and reaches this workbook and nothing else.'
@@ -249,6 +254,13 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
         choose(scripts().entries.find(entry => entry.name !== chosen)?.name ?? '');
       })]),
       <box key="gap" flex={1} minWidth={0} />,
+      ...(() => {
+        const entry = next.entries.find(each => each.name === chosen);
+        if (draftKind.value !== 'functions' || entry === undefined || entry.from === '') {
+          return [];
+        }
+        return [entry.on ? button('off', 'Turn off', () => inputs.onFunctionsOn.value(false)) : button('on', 'Turn on', () => inputs.onFunctionsOn.value(true))];
+      })(),
       button('close', 'Close', () => inputs.onClose.value()),
       button('save', 'Save', save),
       ...(draftKind.value === 'functions'

@@ -298,6 +298,10 @@ export class SheetService {
   /** What each function script defines, or why it defines nothing, by script name. */
   private functionReports = new Map<string, { names: readonly string[]; problem: string }>();
   private functionsDefined: Promise<void> = Promise.resolve();
+  /** The function scripts defined now, by name: typed here, or from a file and turned on. */
+  private functionsOn = new Set<string>();
+  /** Trusted fingerprints for a document with no library entry to keep them on. */
+  private trustedHere: readonly string[] = [];
   /**
    * Which chart has the handles round it.
    *
@@ -2052,6 +2056,9 @@ export class SheetService {
     }
     const functions = (kind ?? (at < 0 ? 'run' : scripts[at].kind === 'functions' ? 'functions' : 'run')) === 'functions';
     const wasFunctions = at >= 0 && scripts[at].kind === 'functions';
+    // A file's functions that were on, edited here, stay on: the edit
+    // is the person's own. One that was off stays off, edited or not.
+    const stayOn = at >= 0 && wasFunctions && functions && scripts[at].origin.kind === 'file' && this.functionsOn.has(scripts[at].name);
     const kept = { name: trimmed, source, ...(functions ? { kind: 'functions' as const } : {}) };
     if (at < 0) {
       scripts.push({ ...kept, origin: { kind: 'typed' } });
@@ -2062,6 +2069,12 @@ export class SheetService {
     }
     this.publishScripts('');
     this.persist();
+    if (stayOn) {
+      const edited = scripts[at];
+      this.functionsDefined = this.functionsDefined.then(async () => {
+        await this.keepTrusted([...this.trustedFunctions(), await fingerprintOf(edited)]);
+      });
+    }
     if (functions || wasFunctions) {
       this.defineFunctions();
     }
@@ -2101,37 +2114,113 @@ export class SheetService {
   private defineFunctions(): void {
     const document = this.document;
     const all = document.scripts.filter(script => script.kind === 'functions');
-    const reports = new Map<string, { names: readonly string[]; problem: string }>();
-    for (const script of all) {
-      if (script.origin.kind === 'file') {
-        reports.set(script.name, { names: [], problem: `Came with ${script.origin.file}. Its functions are off, so a formula that calls one says #NAME?.` });
+    const previous = this.functionsDefined;
+    this.functionsDefined = (async () => {
+      await previous;
+      const trusted = new Set(this.trustedFunctions());
+      const on: Script[] = [];
+      const off: Script[] = [];
+      for (const script of all) {
+        if (script.origin.kind === 'typed' || trusted.has(await fingerprintOf(script))) {
+          on.push(script);
+        } else {
+          off.push(script);
+        }
       }
-    }
-    const ours = all.filter(script => script.origin.kind === 'typed');
-    if (ours.length === 0) {
-      this.functionReports = reports;
-      this.publishScripts(this.scriptsSubject.value.refused);
-      if (document.book.scripts !== null) {
-        document.book.scripts = null;
-        document.book.scriptsChanged();
-        this.afterFunctions();
-      }
-      return;
-    }
-    this.functionsDefined = loadInterpreter().then(module => {
       if (document !== this.document) {
         return;
       }
-      this.sheetFunctions ??= new SheetFunctions(new CellFunctions(module));
-      for (const outcome of this.sheetFunctions.define(ours.map(script => ({ name: script.name, source: script.source })))) {
+      const reports = new Map<string, { names: readonly string[]; problem: string }>();
+      const blocked = off.map(script => ({
+        name: script.name,
+        source: script.source,
+        file: script.origin.kind === 'file' ? script.origin.file : 'a file'
+      }));
+      for (const script of blocked) {
+        reports.set(script.name, {
+          names: [],
+          problem: `Came with ${script.file}. Its functions are off, so a formula that calls one says #NAME?.`
+        });
+      }
+      if (on.length === 0 && off.length === 0) {
+        this.functionReports = reports;
+        this.publishScripts(this.scriptsSubject.value.refused);
+        if (document.book.scripts !== null) {
+          document.book.scripts = null;
+          document.book.scriptsChanged();
+          this.afterFunctions();
+        }
+        return;
+      }
+      // A workbook whose only functions are off never loads the
+      // interpreter: nothing of them runs, so there is nothing to run
+      // them in.
+      let adapter: SheetFunctions;
+      if (on.length > 0) {
+        const module = await loadInterpreter();
+        if (document !== this.document) {
+          return;
+        }
+        adapter = this.sheetFunctions ??= new SheetFunctions(new CellFunctions(module));
+      } else {
+        adapter = new SheetFunctions(null);
+      }
+      for (const outcome of adapter.define(on.map(script => ({ name: script.name, source: script.source })), blocked)) {
         reports.set(outcome.name, { names: outcome.names, problem: outcome.problem });
       }
       this.functionReports = reports;
-      document.book.scripts = this.sheetFunctions;
+      this.functionsOn = new Set(on.map(script => script.name));
+      document.book.scripts = adapter;
       document.book.scriptsChanged();
       this.publishScripts(this.scriptsSubject.value.refused);
       this.afterFunctions();
+    })();
+  }
+
+  /** The fingerprints this document's functions were turned on as, from the library's entry. */
+  private trustedFunctions(): readonly string[] {
+    const held = this.entry?.trustedFunctions ?? this.trustedHere;
+    return Array.isArray(held) ? held.filter((each): each is string => typeof each === 'string') : [];
+  }
+
+  /**
+   * Turns on, or off, the functions this workbook's file brought.
+   *
+   * On is the fingerprints of every function script from a file, as it
+   * reads now, kept on the document's entry in the library. Off takes
+   * them away again. Either way the functions are defined afresh and
+   * every formula reads them again.
+   */
+  setFunctionsOn(on: boolean): void {
+    const document = this.document;
+    const fromFiles = document.scripts.filter(script => script.kind === 'functions' && script.origin.kind === 'file');
+    this.functionsDefined = this.functionsDefined.then(async () => {
+      const prints = await Promise.all(fromFiles.map(fingerprintOf));
+      if (document !== this.document) {
+        return;
+      }
+      const kept = new Set(this.trustedFunctions());
+      for (const print of prints) {
+        if (on) {
+          kept.add(print);
+        } else {
+          kept.delete(print);
+        }
+      }
+      await this.keepTrusted([...kept]);
     });
+    this.defineFunctions();
+  }
+
+  /** Writes the trusted fingerprints to the document's entry, or keeps them here without one. */
+  private async keepTrusted(prints: readonly string[]): Promise<void> {
+    if (this.entry === null) {
+      this.trustedHere = prints;
+      return;
+    }
+    const { trustedFunctions: _was, ...rest } = this.entry;
+    this.entry = prints.length === 0 ? rest : { ...rest, trustedFunctions: prints };
+    await this.library?.put(this.entry);
   }
 
   /** What a changed set of functions has to republish: every value may have moved. */
@@ -2366,7 +2455,8 @@ export class SheetService {
         from: script.origin.kind === 'file' ? script.origin.file : '',
         kind: script.kind === 'functions' ? ('functions' as const) : ('run' as const),
         defines: this.functionReports.get(script.name)?.names ?? [],
-        problem: this.functionReports.get(script.name)?.problem ?? ''
+        problem: this.functionReports.get(script.name)?.problem ?? '',
+        on: script.kind !== 'functions' || script.origin.kind === 'typed' || this.functionsOn.has(script.name)
       })),
       refused
     });
@@ -2468,7 +2558,11 @@ export class SheetService {
         id: known?.id ?? this.library?.newId() ?? 'file',
         name: baseName(fileName),
         used: this.now(),
-        file: { handle, name: fileName }
+        file: { handle, name: fileName },
+        // What was turned on is this browser's decision about this
+        // document, and the file coming back does not undo it. The
+        // fingerprints still have to match what the file now says.
+        ...(known?.trustedFunctions === undefined ? {} : { trustedFunctions: known.trustedFunctions })
       };
       await this.swapTo(entry, snapshot);
       // Written through at once: the file is the source, and a copy
@@ -2685,6 +2779,8 @@ export class SheetService {
     this.publishSheet();
     this.publishNames('');
     this.functionReports = new Map();
+    this.functionsOn = new Set();
+    this.trustedHere = [];
     this.publishScripts('');
     this.defineFunctions();
     this.publishPalette();
@@ -3424,7 +3520,8 @@ export class SheetService {
       return null;
     }
     // A script function's own words, when the cell's error is its.
-    const said = this.document.book.scripts === null ? null : (this.sheetFunctions?.messageAt(this.document.active, row, column) ?? null);
+    const scripts = this.document.book.scripts;
+    const said = scripts instanceof SheetFunctions ? scripts.messageAt(this.document.active, row, column) : null;
     return {
       code: found.code,
       meaning: said ?? found.meaning,
@@ -3612,4 +3709,15 @@ function absoluteRange(range: RangeRef): RangeRef {
     start: { ...range.start, rowAbsolute: true, columnAbsolute: true },
     end: { ...range.end, rowAbsolute: true, columnAbsolute: true }
   };
+}
+
+/**
+ * What a script's code is, as a fingerprint: SHA-256 of its name and its
+ * source. What turning a file's functions on remembers, so that
+ * different code under the same name is not already trusted.
+ */
+async function fingerprintOf(script: Script): Promise<string> {
+  const bytes = new TextEncoder().encode(`${script.name}\n${script.source}`);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return [...digest].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }

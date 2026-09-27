@@ -31,6 +31,15 @@ export interface DocumentEntry {
    * and there is nothing to save back to.
    */
   readonly file: DocumentFile | null;
+  /**
+   * The function scripts somebody turned on for this document, as
+   * fingerprints of what each said when they did: SHA-256 of its name
+   * and its source. Kept here, in this browser's library, and never in
+   * the file, so a file cannot say it has been trusted; and kept as
+   * what the code *was*, so a file that comes back changed is off
+   * again. Absent is none.
+   */
+  readonly trustedFunctions?: readonly string[];
 }
 
 export interface DocumentFile {

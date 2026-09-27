@@ -685,6 +685,8 @@ export interface SheetScript {
   readonly defines: readonly string[];
   /** For functions: why one defines nothing, or less than it says. Empty when all is well. */
   readonly problem: string;
+  /** For functions from a file: whether they are turned on. Always true for any other script. */
+  readonly on: boolean;
 }
 
 export interface SheetScriptRun {
@@ -1093,6 +1095,12 @@ export interface SheetCommands {
    */
   runScript(name: string, confirmed: boolean): void;
   stopScript(): void;
+  /**
+   * Turns on, or off, the functions this workbook's file brought. The
+   * decision is kept in this browser's library for this document,
+   * never in the file.
+   */
+  setFunctionsOn(on: boolean): void;
 }
 
 /** What a border command draws. */

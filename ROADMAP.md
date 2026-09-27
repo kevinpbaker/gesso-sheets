@@ -3007,7 +3007,7 @@ workbook, not just those that call it. That is `namesChanged`'s rule
 too, and it is cheap below a few hundred thousand formulas. The
 formula bar does not offer script functions as you type.
 
-### Phase 33 — Functions from files
+### Phase 33 — Functions from files — **done**
 
 A `.gsheet` keeps its functions. Opened from a file, they are off: a
 call shows an error that says the workbook's functions are off, and a
@@ -3019,6 +3019,42 @@ written, which Excel will show as `#NAME?` if it recalculates.
 **Exit:** a file with functions opened with them off and the sheet
 otherwise working; turned on, the same values as the file it was saved
 from; reopened, still on; opened in another browser, off again.
+
+**Met, with one thing stricter than planned.** `FunctionFiles.spec.ts`
+runs the exit with the real interpreter and an in-memory library. A
+file saved from one workbook opens in another with `=TAX(A1, 0.2)` as
+`#NAME?`, and the cells beside it as they were. The formula bar says
+*TAX came with budget.gsheet, and this workbook's functions from it are
+off*. Turned on, the cell is 40, as it was where the file was written.
+The file opened again is still 40, a second library opens it off, and
+Turn off makes it `#NAME?` again.
+
+- **Stricter: turned on means this code, not this file.** The library
+  entry keeps a SHA-256 fingerprint of each function script's name and
+  source, not a flag. The same file coming back with `TAX` changed is
+  off again, although the file was turned on. A flag would have handed
+  the trust to whatever the file said next. A function edited here after
+  it was turned on stays on, because the edit is the person's own.
+- **Nothing of it runs while it is off,** not even its top level. The
+  names a call's message mentions are read from the source text. A
+  workbook whose only functions are off never loads the interpreter,
+  and a spec checks that no interpreter exists after opening one with
+  `this.ran = true` at its top level.
+- **The bar.** *This workbook's functions came with budget.gsheet, and
+  are off…*, with Turn on, Scripts… and Not now, shown above the sheet
+  while any file's functions are off. It is built once and switched in,
+  and the spec checks that it has a height, which is the rules bar's old
+  failure. The editor has Turn on and Turn off for a file's function
+  script.
+- **`.xlsx`.** A formula calling a script function goes out as written,
+  with the value it computed: `<f>TAX(A1, 0.2)</f><v>40</v>`. The
+  script does not go out. LibreOffice 26.8, converting the file with its
+  default settings, reads `200,40,41` for `200`, `=TAX(A1, 0.2)` and
+  `=B1+1`.
+
+**Not done:** Excel's behaviour on recalculating such a file was not
+checked, since there is no Excel here; the formula names a function
+Excel does not have, which Excel shows as `#NAME?`.
 
 ---
 

@@ -149,7 +149,7 @@ describe('scripts are kept with the workbook', () => {
     service.saveScript('', 'one', '');
     expect(scripts().refused).toBe('There is already a script called one.');
     service.saveScript('One', 'First', 'sheet.write("A1", 2)');
-    expect(scripts().entries).toEqual([{ name: 'First', source: 'sheet.write("A1", 2)', from: '', kind: 'run', defines: [], problem: '' }]);
+    expect(scripts().entries).toEqual([{ name: 'First', source: 'sheet.write("A1", 2)', from: '', kind: 'run', defines: [], problem: '', on: true }]);
     expect(service.snapshot().scripts).toEqual([
       { name: 'First', source: 'sheet.write("A1", 2)', origin: { kind: 'typed' } }
     ]);
@@ -170,7 +170,7 @@ describe('scripts are kept with the workbook', () => {
     service.openFile('budget.gsheet', file, null);
     await service.settled;
     expect(scripts().entries).toEqual([
-      { name: 'Tidy', source: 'sheet.write("A1", "tidied")', from: 'budget.gsheet', kind: 'run', defines: [], problem: '' }
+      { name: 'Tidy', source: 'sheet.write("A1", "tidied")', from: 'budget.gsheet', kind: 'run', defines: [], problem: '', on: true }
     ]);
 
     const refused = await run('Tidy');
