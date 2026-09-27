@@ -28,6 +28,9 @@ importers:
       rxjs:
         specifier: ^7.8.2
         version: 7.8.2
+      ses:
+        specifier: 2.3.0
+        version: 2.3.0
     devDependencies:
       '@types/node':
         specifier: ^26.6.2
@@ -55,6 +58,15 @@ importers:
         version: 4.1.11(@types/node@26.6.2)(vite@8.3.0(@types/node@26.6.2))
 
 packages:
+
+  '@endo/cache-map@1.1.0':
+    resolution: {integrity: sha512-owFGshs/97PDw9oguZqU/px8Lv1d0KjAUtDUiPwKHNXRVUE/jyettEbRoTbNJR1OaI8biMn6bHr9kVJsOh6dXw==}
+
+  '@endo/env-options@1.1.11':
+    resolution: {integrity: sha512-p9OnAPsdqoX4YJsE98e3NBVhIr2iW9gNZxHhAI2/Ul5TdRfoOViItzHzTqrgUVopw6XxA1u1uS6CykLMDUxarA==}
+
+  '@endo/immutable-arraybuffer@2.0.0':
+    resolution: {integrity: sha512-xvfJvo4CgETh6UjSKwhNsFLZrqrTf2k4ZFpcprEN2UtCQRSOk+CcLP70kFbrOesB2Z/c1z9MaUZDS1JY6IlnUg==}
 
   '@jridgewell/sourcemap-codec@1.6.0':
     resolution: {integrity: sha512-T7jf+5zgsZHwNJ4lvQ7/aezbyk0nNX+zJVWpmHA7VYsEx7a7qr5Rg5IbtJFqkgze5Y2sruq1RUY8Q837Od7iFw==}
@@ -516,6 +528,9 @@ packages:
   rxjs@7.8.2:
     resolution: {integrity: sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==}
 
+  ses@2.3.0:
+    resolution: {integrity: sha512-qd3iWzDqGKllI2FmExKsWLrJwt+6COWb8jUdzaCn8Cq5OTeoXdQ62Gn/xLy0GWLORC3du6yBAVe/V0B0dLVKew==}
+
   siginfo@2.0.0:
     resolution: {integrity: sha512-ybx0WO1/8bSBLEWXZvEd7gMW3Sn3JFlW3TvX1nREbDLRNQNaeNN8WK0meBwPdAaOI7TtRRRJn/Es1zhrrCHu7g==}
 
@@ -645,6 +660,12 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@endo/cache-map@1.1.0': {}
+
+  '@endo/env-options@1.1.11': {}
+
+  '@endo/immutable-arraybuffer@2.0.0': {}
 
   '@jridgewell/sourcemap-codec@1.6.0': {}
 
@@ -967,6 +988,12 @@ snapshots:
   rxjs@7.8.2:
     dependencies:
       tslib: 2.8.1
+
+  ses@2.3.0:
+    dependencies:
+      '@endo/cache-map': 1.1.0
+      '@endo/env-options': 1.1.11
+      '@endo/immutable-arraybuffer': 2.0.0
 
   siginfo@2.0.0: {}
 

@@ -2663,7 +2663,7 @@ the count of POI's files that have one.
 `ISOMITTED`, which nothing here writes yet. Also a name scoped to one
 sheet: this workbook's names belong to the workbook, as they did before.
 
-### Phase 29 — The security model, written
+### Phase 29 — The security model, written — **done**
 
 Before any script runs, a document in this file says what a script is
 and what stops it. It answers each of these questions.
@@ -2687,6 +2687,41 @@ and what stops it. It answers each of these questions.
 
 **Exit:** the document, reviewed, and a spec per question that fails
 if the answer stops being true.
+
+**Met, with the document to review.** The model is `SCRIPTS.md`, and
+`src/script/` holds its host and worker. `Scripts.spec.ts` has 19
+specs, one `describe` per question. They run the real worker on a Node
+worker thread, where `fetch`, `process`, `require` and the rest really
+exist, so a spec that finds one missing is finding the worker's doing.
+
+- **One thing went differently from the plan: nothing is removed.**
+  The plan said the worker's globals would be deleted before a script
+  ran. That cannot work, because `import(…)` is syntax: a worker
+  without `fetch` can still load code from anywhere. The worker
+  instead runs SES's `lockdown()` and evaluates the script in a
+  `Compartment` whose only globals are `sheet` and `console`. SES
+  rejects `import(…)` and `eval` in the source. `ses` 2.3.0 is the
+  sheet's first dependency that is somebody else's security boundary,
+  and the document says so.
+- **The specs are checked the other way round.** With `lockdown()` and
+  the compartment replaced by a plain `new Function`, 10 of the 19
+  fail. The rest still pass, as they should: they are about the host,
+  or `self` and `require`, which a Node thread lacks anyway.
+- **In Chrome**, the same file loaded through Vite as a module worker
+  ran the API, found `fetch`, `self`, `postMessage`, `importScripts`,
+  `indexedDB` and `navigator` all `undefined`, rejected `import(…)`
+  and the `Function`-constructor escape, and had an infinite loop
+  terminated at the time limit.
+- **The host believes nothing.** It counts a run's writes again and
+  refuses the whole run over one write outside the sheet, a value no
+  cell holds, too many writes, or a malformed report. There are specs
+  with workers that lie. A file's script is refused without starting a
+  worker unless the run is confirmed.
+
+**Not done:** stopping a run from the chrome, and applying a run as
+one step of undo. Both need the UI of Phase 30; the host already
+returns a run's writes as one list. **Undefended, and written down:**
+memory, since a browser cannot cap a worker's.
 
 ### Phase 30 — Scripts
 
