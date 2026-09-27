@@ -310,7 +310,7 @@ export function Grid(
    */
   const refreshShapes = (mounted: MountedCell): void => {
     const box = shapeBox(mounted.row, mounted.column);
-    const next = bordersOf(
+    const next = box === null ? NO_SHAPES : bordersOf(
       mounted.paint.value,
       box.width,
       box.height,
@@ -497,12 +497,16 @@ export function Grid(
    * whole merge when it anchors one. The anchor is drawn the merge's
    * size, so a box round it drawn the width of its own column put a
    * rule down the middle of the merge, and a note's mark half way
-   * along its top.
+   * along its top. A cell the merge covers draws nothing: its own
+   * borders would be rules inside the merge, where Excel draws none.
    */
-  const shapeBox = (row: number, column: number): { width: number; height: number } => {
+  const shapeBox = (row: number, column: number): { width: number; height: number } | null => {
     const merge = mergeAt(row, column);
-    if (merge === null || merge.firstRow !== row || merge.firstColumn !== column) {
+    if (merge === null) {
       return { width: widths.value[column] ?? COLUMN_WIDTH, height: heightNow(row) };
+    }
+    if (merge.firstRow !== row || merge.firstColumn !== column) {
+      return null;
     }
     let width = 0;
     for (let at = merge.firstColumn; at <= merge.lastColumn; at++) {
@@ -1022,7 +1026,9 @@ export function Grid(
         map(([where, how]) => (where === 1 ? SELECTED_WASH : how.fill === '' ? 'background' : how.fill))
       ),
       borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
-      borderWidth: state.pipe(map(where => (where === 2 ? 2 : 1))),
+      // A covered cell draws no grid line: it is inside the merge, and
+      // a box of no width with a border is still a line down it.
+      borderWidth: covered ? 0 : state.pipe(map(where => (where === 2 ? 2 : 1))),
       /**
        * A covered cell gives up its width only to the anchor's own row.
        *
@@ -1594,7 +1600,7 @@ export function Grid(
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
     const box = shapeBox(row, column);
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(
-      bordersOf(
+      box === null ? NO_SHAPES : bordersOf(
         paint.value,
         box.width,
         box.height,

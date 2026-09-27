@@ -242,6 +242,52 @@ describe('the borders a cell draws', () => {
     expect(shapes.some(shape => shape.x + shape.width === COLUMN_WIDTH)).toBe(false);
   });
 
+  it('draws no rule inside a merge whose covered cells were boxed', async () => {
+    const boxed: CellFormat = {
+      number: GENERAL,
+      paint: {
+        ...PLAIN,
+        borders: {
+          top: { width: 1, color: '' },
+          right: { width: 1, color: '' },
+          bottom: { width: 1, color: '' },
+          left: { width: 1, color: '' }
+        }
+      }
+    };
+    h = await mount(d => {
+      d.setCell(1, 1, 'anchor');
+      for (let row = 1; row <= 2; row++) {
+        for (let column = 1; column <= 3; column++) {
+          d.setFormat(row, column, boxed);
+        }
+      }
+      d.merges.add({ firstRow: 1, lastRow: 2, firstColumn: 1, lastColumn: 3 });
+    });
+    const anchor = h.ui.getByRole('cell', { name: 'anchor' });
+    const grid = h.ui.getLayout(h.ui.getByRole('grid'));
+    const inside = h.ui.getAllByRole('cell').filter(cell => {
+      if (cell === anchor) {
+        return false;
+      }
+      const box = h.ui.getLayout(cell);
+      const left = grid.x + GUTTER_WIDTH + COLUMN_WIDTH;
+      const top = grid.y + HEADER_HEIGHT + ROW_HEIGHT;
+      // The covered cells come to nothing on one axis: no width in the
+      // anchor's row, where they sit just past its span, and no height
+      // in the row under it.
+      const inRows = box.y >= top && box.y < top + 2 * ROW_HEIGHT;
+      const inColumns = box.x >= left && box.x <= left + 3 * COLUMN_WIDTH;
+      return inRows && inColumns && (box.width === 0 || box.height === 0);
+    });
+    // Two covered cells beside the anchor, and three in the row under it.
+    expect(inside.length).toBeGreaterThanOrEqual(5);
+    for (const cell of inside) {
+      expect(cell.decorations ?? []).toHaveLength(0);
+      expect(cell.properties.get('borderWidth')).toBe(0);
+    }
+  });
+
   /**
    * Outline over a range means the rim of the *block*, not a box
    * round every cell in it. Only the application worker knows where
