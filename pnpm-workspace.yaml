@@ -3,9 +3,9 @@
 # Written by scripts/vendor-gesso.sh. pnpm 11 reads overrides only
 # from this file, not from package.json.
 overrides:
-  gesso-components: file:vendor/gesso-components-0.3.0-e5dc7e9f.tgz
-  gesso-core: file:vendor/gesso-core-0.3.0-8620990d.tgz
-  gesso-devtools: file:vendor/gesso-devtools-0.3.0-64dfd3bc.tgz
-  gesso-framework: file:vendor/gesso-framework-0.3.0-11c31f77.tgz
-  gesso-testing: file:vendor/gesso-testing-0.3.0-66905088.tgz
-  gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.3.0-54f7caab.tgz
+  gesso-components: file:vendor/gesso-components-0.4.0-d9873e31.tgz
+  gesso-core: file:vendor/gesso-core-0.4.0-976e1e08.tgz
+  gesso-devtools: file:vendor/gesso-devtools-0.4.0-0a324ff5.tgz
+  gesso-framework: file:vendor/gesso-framework-0.4.0-e634626c.tgz
+  gesso-testing: file:vendor/gesso-testing-0.4.0-0021b8cd.tgz
+  gesso-vite-plugin: file:vendor/gesso-vite-plugin-0.4.0-0a5c363f.tgz
