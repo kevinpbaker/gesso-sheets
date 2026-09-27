@@ -1,6 +1,6 @@
 import { combineLatest, map } from 'rxjs';
 
-import { Column, percent, Text, type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } from 'gesso-core';
+import { Column, editorFor, percent, Text, type UiKeyboardEvent, type UiNode, type UiTextChangeEvent } from 'gesso-core';
 import { Dialog } from 'gesso-components';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
@@ -105,6 +105,25 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
       askToRun();
     }
   };
+
+  /**
+   * Tab indents, as it does in any editor of code; Shift+Tab still
+   * moves the keyboard back out, so the field is never a trap, and the
+   * line under it says both.
+   */
+  const onSourceKey = (event: UiKeyboardEvent): void => {
+    const plain = event.modifiers.ctrl !== true && event.modifiers.meta !== true && event.modifiers.alt !== true;
+    if (event.key === 'Tab' && plain && event.modifiers.shift !== true && sourceNode !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      const model = editorFor(sourceNode);
+      model.insertText('  ');
+      draftSource.value = model.text;
+      return;
+    }
+    onKey(event);
+  };
+  let sourceNode: UiNode | null = null;
 
   const button = (key: string, label: string, onClick: () => void, chosen = false) => (
     <button
@@ -241,6 +260,7 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
           ref={(node: UiNode | null) => {
             // After the dialog has placed the keyboard on the first
             // thing it holds, which here is a script's name in the list.
+            sourceNode = node;
             if (node !== null) {
               queueMicrotask(() => focus.focus(node));
             }
@@ -261,8 +281,9 @@ export function ScriptDialog(inputs: Inputs<ScriptDialogProps>, ctx: ComponentCo
           role="textbox"
           label="Script"
           onInput={(event: UiTextChangeEvent) => (draftSource.value = event.value)}
-          onKeyDown={onKey}
+          onKeyDown={onSourceKey}
         />,
+        Text({ text: 'Tab indents and Shift+Tab leaves. Ctrl+Enter runs.', fontSize: 11, color: 'textMuted' }),
         Text({ text: origin, fontSize: 11, color: 'textMuted', textWrap: 'word' }),
         <column gap={4}>{question}</column>,
         <column gap={4}>{outcome}</column>,

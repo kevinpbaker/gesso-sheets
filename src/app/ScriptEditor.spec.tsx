@@ -121,6 +121,19 @@ describe('the script editor', () => {
     expect(h.document.formatAt(1, 1).paint.bold).toBe(false);
   });
 
+  it('indents with Tab, and lets Shift+Tab leave', async () => {
+    await mount();
+    await openScripts();
+    await replaceSource('if (true) {\n');
+    await press('Tab');
+    const field = h.ui.getByRole('textbox', { name: 'Script' });
+    expect(field).toHaveText('if (true) {\n  ');
+    expect(h.ui.runtime.input.focus.focusedNode).toBe(field);
+    await press('Tab', { shift: true });
+    expect(h.ui.runtime.input.focus.focusedNode).not.toBe(field);
+    expect(field).toHaveText('if (true) {\n  ');
+  });
+
   it('shows why a script failed, and what it logged', async () => {
     await mount();
     await openScripts();

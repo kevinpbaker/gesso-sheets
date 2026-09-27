@@ -2779,18 +2779,25 @@ Scripts…. `SCRIPTS.md` lists every reach again, the new ones included.
 - **Two things the proof taught, neither about scripts.** Every run in
   it is a little slower than the one before. Three extra scrolls in
   the same state went 7.3, 8.0 and 8.2 ms. So a run added ahead of the
-  200% run put that run over its budget. And any extra run between the
-  zoom and the freeze took the freeze from about fifty frames drawn to
-  one, with or without a script in it; a Note dialog opened there
-  instead took it to 23. So the script run goes last, after the
-  freeze, and is measured against the zoom run. Separately, the freeze
-  read the first live region for its status, which a script's message
-  now is, so it looks for the recalculation's own words instead. At
-  this load, the colour-scale and 200% checks fail on main as well,
-  which is load and not this phase.
+  200% run put that run over its budget, and the script run goes last,
+  measured against the zoom run. The second was a bug in the freeze.
+  Its recalculation now finishes before the block starts, within 150
+  ms of the click, so it drew nothing. The fifty frames it reported
+  had been the previous scroll still settling. Anything slower before
+  it, such as an extra scroll, a dialog or a wait, left it one frame.
+  An engine watchdog on the render worker's own `requestAnimationFrame`
+  was tried and made no difference: unpatched Gesso drew 77 frames once
+  there was something to draw. So the freeze now marks a copied block
+  first. Its dashed outline steps on a render-worker timer every
+  110 ms, so the block has something to draw from start to end.
+  Separately, the freeze read the first live region for its status,
+  which a script's message now is, so it looks for the recalculation's
+  own words instead. At a load average near 7, the colour-scale and
+  200% checks fail on main as well. At 2.3 the whole proof passes.
 
-**Not done:** Tab in the editor moves focus rather than indenting.
-Stop is covered by the specs and not yet tried in Chrome. A `monospace`
+**Not done:** Stop is covered by the specs and not yet tried in
+Chrome. Tab indents by two spaces, and Shift+Tab leaves the field; there
+is no dedent. A `monospace`
 font with ligatures draws `=>` as one glyph. **Undefended, as
 `SCRIPTS.md` says:** memory.
 

@@ -531,6 +531,23 @@ async function main(): Promise<void> {
     // That distinction is worth stating precisely, because the
     // overclaim — "the sheet keeps scrolling at sixty" — is both
     // untrue and unnecessary.
+    // Something to draw for the whole five seconds, that the main
+    // thread plays no part in: a copied block's dashed outline, which
+    // the render worker steps on its own timer every 110ms. The
+    // recalculation below used to be the thing drawn; it now finishes
+    // in less time than the block takes to start, so what the freeze
+    // drew was whatever the run before it left settling, and a freeze
+    // after anything slower than a scroll drew one frame.
+    const grid = await devtools.evaluate<{ x: number; y: number }>(
+      `(() => {
+         const box = document.querySelector('[role="grid"]').getBoundingClientRect();
+         return { x: box.x + 60, y: box.y + 60 };
+       })()`
+    );
+    await devtools.click(grid.x, grid.y);
+    await devtools.press('c', 67, 2);
+    await sleep(300);
+
     await devtools.evaluate('globalThis.gessosheetProof.reset()');
     const blockButton = await devtools.evaluate<{ x: number; y: number }>(
       `(() => {
@@ -589,13 +606,9 @@ async function main(): Promise<void> {
     // Phase 30's exit. A script runs on a worker of its own, started
     // by the application worker, and loops until its five-second time
     // limit ends it. Last of all, after the freeze, and measured
-    // against the zoom, which is the run it follows in state. Anywhere
-    // earlier it moved the runs after it: every run in this proof is a
-    // little slower than the one before, one more ahead of the zoom
-    // pushed the zoom over its budget, and one more between the zoom
-    // and the freeze took the freeze from fifty frames to one — with
-    // or without a script in it, so that one is the freeze's to answer
-    // and not this run's. The scroll has to start and finish inside those
+    // against the zoom, which is the run it follows in state: every run
+    // in this proof is a little slower than the one before, and one more
+    // ahead of the zoom pushed the zoom over its budget. The scroll has to start and finish inside those
     // five seconds, or part of it measured nothing behind it — so the
     // time is checked, and so is how the run ended, read off the
     // Scripts dialog afterwards.
