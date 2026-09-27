@@ -335,13 +335,14 @@ describe('the top bar from the keyboard', () => {
     });
 
     // Chosen with the keyboard, like everything else in this file.
-    // It is the last entry in the menu, which ArrowUp reaches by
-    // wrapping — and a menu that did not wrap would fail here rather
-    // than quietly choosing something else, because only this command
-    // writes a sentence under the bar.
+    // It is the second last entry in the menu, above Names…, which
+    // ArrowUp reaches by wrapping — and a menu that did not wrap would
+    // fail here rather than quietly choosing something else, because
+    // only this command writes a sentence under the bar.
     const chooseName = async (): Promise<void> => {
       await press('F10');
       await press('i');
+      await press('ArrowUp');
       await press('ArrowUp');
       await press('Enter');
       await h.served.settle();

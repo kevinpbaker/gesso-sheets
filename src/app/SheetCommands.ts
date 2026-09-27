@@ -78,6 +78,7 @@ export type CommandId =
   | 'deleteRows'
   | 'deleteColumns'
   | 'defineName'
+  | 'manageNames'
   | 'insertChart'
   | 'borderAll'
   | 'borderOutline'
@@ -345,6 +346,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * worse than no shortcut at all.
    */
   defineName: { id: 'defineName', label: 'Name the selection…' },
+  manageNames: { id: 'manageNames', label: 'Names…' },
 
   /**
    * Formats that think, and what a cell is allowed to hold.
@@ -625,7 +627,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'insertChart',
       SEPARATOR,
       'editNote',
-      'defineName'
+      'defineName',
+      'manageNames'
     ]
   },
   {

@@ -37,6 +37,7 @@ import { ICONS } from './icons';
 import { Toolbar, type ToolbarItem } from './Toolbar';
 import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
+import { NamesDialog } from './NamesDialog';
 import { NoteDialog } from './NoteDialog';
 import { ScriptDialog } from './ScriptDialog';
 import { PasteHint, Shortcuts } from './Shortcuts';
@@ -234,6 +235,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   let noteAt = { row: 0, column: 0 };
   const closeNote = (): void => {
     noteOpen.value = false;
+    edit.focusSheet();
+  };
+  /** Whether Insert ▸ Names is open. */
+  const namesOpen = internalState(false);
+  const closeNames = (): void => {
+    namesOpen.value = false;
     edit.focusSheet();
   };
   /** Whether Data ▸ Scripts is open. */
@@ -602,6 +609,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'scripts':
         scriptsOpen.value = true;
         return;
+      case 'manageNames':
+        namesOpen.value = true;
+        return;
       case 'editNote': {
         const at = sheet.view.editor.value;
         noteAt = { row: at.row, column: at.column };
@@ -812,6 +822,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     }
     if (scriptsOpen.value) {
       closeScripts();
+      return true;
+    }
+    if (namesOpen.value) {
+      closeNames();
       return true;
     }
     if (shortcutsOpen.value) {
@@ -1100,6 +1114,13 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         onRun={(name: string, confirmed: boolean) => sheet.send.runScript(name, confirmed)}
         onStop={() => sheet.send.stopScript()}
         onClose={closeScripts}
+      />
+      <NamesDialog
+        open={namesOpen}
+        names={sheet.view.names}
+        onSave={(was: string, name: string, refersTo: string) => sheet.send.saveName(was, name, refersTo)}
+        onRemove={(name: string) => sheet.send.removeName(name)}
+        onClose={closeNames}
       />
     </column>
   );

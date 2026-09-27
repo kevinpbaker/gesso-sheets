@@ -7,7 +7,8 @@ import { columnName, MAX_COLUMNS as MAX_COLUMNS_HERE, MAX_ROWS as MAX_ROWS_HERE,
 import { Notes, type Note } from '../sheet/Notes';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
-import { isNamedRange, type DefinedName, type NameProblem } from '../sheet/Names';
+import { isNamedRange, nameProblem, type DefinedName, type NameProblem } from '../sheet/Names';
+import { FormulaSyntaxError, parseFormula } from '../sheet/Parser';
 import { Sheet } from '../sheet/Sheet';
 import type { SheetSelection } from './SheetContract';
 import { literalOf, Workbook } from '../sheet/Workbook';
@@ -974,6 +975,60 @@ export class SheetDocument {
       column: this.selection.column,
       before,
       after: this.sheet.names.all()
+    });
+    this.sheet.namesChanged();
+    return null;
+  }
+
+  /**
+   * Saves a name from the Names dialog: `was` is the name being edited,
+   * empty for a new one, and `refersTo` is what it holds as written —
+   * `=Sales!$A$4:$A$27` for a range, anything else for a formula.
+   *
+   * One step on the undo stack however much it did, so a rename is one
+   * Ctrl+Z and not two. Formulas that read the old name are left
+   * reading it: they say `#NAME?` until it is back, as in Excel.
+   */
+  saveName(was: string, name: string, refersTo: string): NameProblem | null {
+    const problem = nameProblem(name);
+    if (problem !== null) {
+      return problem;
+    }
+    const text = refersTo.trim().replace(/^=/, '');
+    let tree;
+    try {
+      tree = text === '' ? null : parseFormula(text);
+    } catch (error) {
+      if (!(error instanceof FormulaSyntaxError)) {
+        throw error;
+      }
+      tree = null;
+    }
+    if (tree === null) {
+      return 'formula';
+    }
+    const names = this.sheet.names;
+    const before = names.all();
+    if (was.trim() !== '' && was.trim().toUpperCase() !== name.trim().toUpperCase()) {
+      names.remove(was);
+    }
+    const refused =
+      tree.kind === 'ref'
+        ? names.define(name, { start: tree.ref, end: tree.ref })
+        : tree.kind === 'range'
+          ? names.define(name, tree.range)
+          : names.defineFormula(name, `=${text}`);
+    if (refused !== null) {
+      names.restore(before);
+      return refused;
+    }
+    this.record({
+      kind: 'names',
+      sheet: this.activeSheet,
+      row: this.selection.row,
+      column: this.selection.column,
+      before,
+      after: names.all()
     });
     this.sheet.namesChanged();
     return null;

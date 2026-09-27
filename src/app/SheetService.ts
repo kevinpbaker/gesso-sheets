@@ -1,6 +1,6 @@
 import { BehaviorSubject, type Observable } from 'rxjs';
 
-import { formatRange, MAX_SHEETS, relativeRef } from '../sheet/A1';
+import { formatRange, MAX_SHEETS, relativeRef, type RangeRef } from '../sheet/A1';
 import {
   DEFAULT_CHART_HEIGHT,
   DEFAULT_CHART_WIDTH,
@@ -1774,6 +1774,16 @@ export class SheetService {
     this.afterEdit();
   }
 
+  saveName(was: string, name: string, refersTo: string): void {
+    const problem = this.document.saveName(was, name, refersTo);
+    if (problem !== null) {
+      this.publishNames(nameProblemText(problem));
+      return;
+    }
+    this.publishNames('');
+    this.afterEdit();
+  }
+
   removeName(name: string): void {
     if (this.document.removeName(name)) {
       this.publishNames('');
@@ -1785,6 +1795,7 @@ export class SheetService {
     this.namesSubject.next({
       entries: this.document.sheet.names.ranges().map(entry => ({
         name: entry.name,
+        refersTo: `=${formatRange(absoluteRange(entry.range))}`,
         firstRow: Math.min(entry.range.start.row, entry.range.end.row),
         firstColumn: Math.min(entry.range.start.column, entry.range.end.column),
         lastRow: Math.max(entry.range.start.row, entry.range.end.row),
@@ -3400,5 +3411,14 @@ function sourceParts(
     names: headers ? make(seriesFrom, across.last, across.along[0], across.along[0]) : null,
     categories: labels ? make(across.first, across.first, dataFrom, across.along[1]) : null,
     values: make(seriesFrom, across.last, dataFrom, across.along[1])
+  };
+}
+
+/** A name's range as Excel writes one in a name: `$A$4:$A$27`, pinned both ways. */
+function absoluteRange(range: RangeRef): RangeRef {
+  return {
+    ...range,
+    start: { ...range.start, rowAbsolute: true, columnAbsolute: true },
+    end: { ...range.end, rowAbsolute: true, columnAbsolute: true }
   };
 }

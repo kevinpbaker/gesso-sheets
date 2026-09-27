@@ -221,6 +221,8 @@ export interface SheetFormulaName {
 
 export interface SheetName {
   readonly name: string;
+  /** What it holds, as the Names dialog shows it and takes it back: `=Sales!$A$4:$A$27`. */
+  readonly refersTo: string;
   readonly firstRow: number;
   readonly firstColumn: number;
   readonly lastRow: number;
@@ -1038,6 +1040,12 @@ export interface SheetCommands {
    * as `defineName` is.
    */
   defineFormulaName(name: string, formula: string): void;
+  /**
+   * The Names dialog's save: `was` is the name being edited, empty for
+   * a new one; `refersTo` a range or a formula, as written. Refused on
+   * the names view, as the name box's gesture is.
+   */
+  saveName(was: string, name: string, refersTo: string): void;
   removeName(name: string): void;
   unmergeCells(): void;
   /**
