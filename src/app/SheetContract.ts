@@ -632,6 +632,28 @@ export interface SheetChartSeries {
    * bounded by the chart's width is the exit criterion, visible.
    */
   readonly read: number;
+  /**
+   * Where the chart's numbers come from, in the three parts it reads
+   * them as, so the grid can outline them while the chart is selected —
+   * as Excel does: the series' names, the categories along the axis,
+   * and the values. Null for a chart whose sheet is gone.
+   */
+  readonly source: SheetChartSource | null;
+}
+
+export interface SheetChartSource {
+  /** The sheet the cells are on, by index, which is the tabs' `active` when it is this one. */
+  readonly sheet: number;
+  readonly names: SheetRect | null;
+  readonly categories: SheetRect | null;
+  readonly values: SheetRect | null;
+}
+
+export interface SheetRect {
+  readonly firstRow: number;
+  readonly lastRow: number;
+  readonly firstColumn: number;
+  readonly lastColumn: number;
 }
 
 /**

@@ -52,6 +52,7 @@ import {
   type SheetTabs,
   type SheetValidation,
   type SheetChartSeries,
+  type SheetRect,
   type SheetCharts,
   type SheetConditionalRule,
   type SheetSeriesView,
@@ -2720,7 +2721,12 @@ export class SheetService {
       // notices.
       limit: chart.place.width
     });
-    return { categories: read.categories, series: read.series, read: read.read };
+    return {
+      categories: read.categories,
+      series: read.series,
+      read: read.read,
+      source: at === null ? null : { sheet: at, ...sourceParts(rect, byColumn, headers, labels) }
+    };
   }
 
   /**
@@ -3363,4 +3369,36 @@ function formatChangeOf(format: ScriptFormat): SheetFormatChange {
     text: { kind: 'text' }
   };
   return number === undefined ? paint : { ...paint, number: numbers[number] };
+}
+
+/**
+ * A chart's range cut into what it reads: a row (or column) of series
+ * names, a column (or row) of categories, and the values between — the
+ * same cut `seriesFrom` makes, as rectangles.
+ */
+function sourceParts(
+  rect: SheetRect,
+  byColumn: boolean,
+  headers: boolean,
+  labels: boolean
+): { names: SheetRect | null; categories: SheetRect | null; values: SheetRect | null } {
+  // Along a series is down a column when the series run by column.
+  const across = byColumn
+    ? { first: rect.firstColumn, last: rect.lastColumn, along: [rect.firstRow, rect.lastRow] as const }
+    : { first: rect.firstRow, last: rect.lastRow, along: [rect.firstColumn, rect.lastColumn] as const };
+  const seriesFrom = across.first + (labels ? 1 : 0);
+  const dataFrom = across.along[0] + (headers ? 1 : 0);
+  const make = (seriesFirst: number, seriesLast: number, alongFirst: number, alongLast: number): SheetRect | null => {
+    if (seriesLast < seriesFirst || alongLast < alongFirst) {
+      return null;
+    }
+    return byColumn
+      ? { firstRow: alongFirst, lastRow: alongLast, firstColumn: seriesFirst, lastColumn: seriesLast }
+      : { firstRow: seriesFirst, lastRow: seriesLast, firstColumn: alongFirst, lastColumn: alongLast };
+  };
+  return {
+    names: headers ? make(seriesFrom, across.last, across.along[0], across.along[0]) : null,
+    categories: labels ? make(across.first, across.first, dataFrom, across.along[1]) : null,
+    values: make(seriesFrom, across.last, dataFrom, across.along[1])
+  };
 }

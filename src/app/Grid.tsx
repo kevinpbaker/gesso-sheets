@@ -57,6 +57,7 @@ import {
   type SheetRowFit,
   type SheetMerge,
   type SheetChart,
+  type SheetChartSource,
   type SheetCharts,
   type SheetSelection,
   type SheetSeriesView,
@@ -907,6 +908,21 @@ export function Grid(
    */
   let landing: { firstRow: number; lastRow: number; firstColumn: number; lastColumn: number } | null = null;
 
+  /** The charts on this sheet, and what they draw; fed below, read by the outlines as well. */
+  const charts = internalState<SheetCharts>({ entries: [], selected: 0 });
+  const series = internalState<SheetSeriesView>({ charts: {} });
+  /** Which sheet is showing, for whether a chart's cells are on it. */
+  let activeSheet = 0;
+  /** The selected chart's cells, when they are on the sheet showing; see `paintOutlines`. */
+  const chartSource = (): SheetChartSource | null => {
+    const selected = charts.value.selected;
+    if (selected === 0) {
+      return null;
+    }
+    const source = series.value.charts[String(selected)]?.source ?? null;
+    return source !== null && source.sheet === activeSheet ? source : null;
+  };
+
   const paintOutlines = (draft: string | null): void => {
     const references = draft === null ? [] : colouredReferences(draft);
     const rows = new Map<number, DecorationShape[]>();
@@ -946,6 +962,38 @@ export function Grid(
         outlineSegments(reference.range, reference.color, row, shapes);
       }
     }
+    /**
+     * The selected chart's cells, in the three colours Excel draws them
+     * in: the series' names red, the categories purple, the values
+     * blue. Only while the chart is selected and its cells are on the
+     * sheet in view — a chart of another sheet's cells has nothing here
+     * to point at — and only the rows the window has, because the proof
+     * page's chart reads fifty thousand of them.
+     */
+    const source = chartSource();
+    if (source !== null) {
+      const range = sheetWindow.range$.value;
+      for (const [part, color] of [
+        [source.names, CHART_NAMES],
+        [source.categories, CHART_CATEGORIES],
+        [source.values, CHART_VALUES]
+      ] as const) {
+        if (part === null) {
+          continue;
+        }
+        const box = { start: { row: part.firstRow, column: part.firstColumn }, end: { row: part.lastRow, column: part.lastColumn } };
+        const first = Math.max(part.firstRow, frozen.value.rows > 0 ? 0 : range.firstRow);
+        const last = Math.min(part.lastRow, range.lastRow);
+        for (let row = first; row <= last; row++) {
+          let shapes = rows.get(row);
+          if (shapes === undefined) {
+            shapes = [];
+            rows.set(row, shapes);
+          }
+          outlineSegments(box, color, row, shapes);
+        }
+      }
+    }
     for (const row of outlinedRows) {
       if (!rows.has(row)) {
         outlineFor(row).shapes.next(NO_SHAPES);
@@ -959,6 +1007,12 @@ export function Grid(
 
   ctx.effect(edit.draft, paintOutlines);
   const repaintOutlines = (): void => paintOutlines(edit.draftNow());
+  ctx.effect(sheet.view.sheets, tabs => {
+    if (tabs.active !== activeSheet) {
+      activeSheet = tabs.active;
+      repaintOutlines();
+    }
+  });
 
   const buildCell = (
     row: number,
@@ -2528,8 +2582,6 @@ export function Grid(
     );
   };
 
-  const charts = internalState<SheetCharts>({ entries: [], selected: 0 });
-  const series = internalState<SheetSeriesView>({ charts: {} });
   /** How many rows the sheet has, for the anchor search to bound itself. */
   const rowCount = internalState(0);
   /**
@@ -3301,9 +3353,11 @@ export function Grid(
           };
     rebuildAnchors();
     sheetWindow?.invalidate();
+    repaintOutlines();
   });
   ctx.effect(sheet.view.series, value => {
     series.value = value;
+    repaintOutlines();
     // The rectangle did not move, so nothing has to be rebuilt: the
     // chart's `paint` inputs carry this object and the engine
     // repaints because it changed.
@@ -3755,6 +3809,10 @@ const SELECT_ALL = 'Select all';
  * family and everywhere.
  */
 const OUTLINE = 2;
+/** The selected chart's parts, in Excel's colours for them. */
+const CHART_NAMES = '#ea4335';
+const CHART_CATEGORIES = '#b061f5';
+const CHART_VALUES = '#4285f4';
 
 function sameWidths(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((width, index) => width === b[index]);

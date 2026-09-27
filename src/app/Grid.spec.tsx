@@ -929,6 +929,62 @@ describe('colouring a formula as it is typed', () => {
  * `getByRole`, deliberately, because an outlined range costs no nodes
  * at all.
  */
+/**
+ * The cells a selected chart reads, outlined as Excel outlines them: the
+ * series' names red, the categories purple, the values blue.
+ */
+describe('outlining the cells a selected chart reads', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const colours = (row: number): string[] => {
+    const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
+    const shapes = (found?.decorations ?? []) as readonly { color: string }[];
+    return [...new Set(shapes.map(shape => shape.color))].sort();
+  };
+
+  async function settle(): Promise<void> {
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  /** A1:C4: a heading row, months down A, two series in B and C. */
+  async function charted(): Promise<void> {
+    h = await mount(document => {
+      ['Month', 'Sales', 'Cost'].forEach((text, column) => document.setCell(0, column, text));
+      ['Jan', 'Feb', 'Mar'].forEach((text, at) => {
+        document.setCell(at + 1, 0, text);
+        document.setCell(at + 1, 1, String((at + 1) * 10));
+        document.setCell(at + 1, 2, String((at + 1) * 4));
+      });
+    });
+    h.service.setSelection(0, 0, 3, 2);
+    h.service.insertChart('column');
+    await settle();
+  }
+
+  it('outlines the names, the categories and the values while it is selected', async () => {
+    await charted();
+    expect(colours(0)).toEqual(['#ea4335']);
+    expect(colours(1)).toEqual(['#4285f4', '#b061f5']);
+    expect(colours(3)).toEqual(['#4285f4', '#b061f5']);
+    expect(colours(4)).toEqual([]);
+  });
+
+  it('takes the outlines away when the chart is let go', async () => {
+    await charted();
+    h.service.selectChart(0);
+    await settle();
+    expect(colours(0)).toEqual([]);
+    expect(colours(2)).toEqual([]);
+  });
+});
+
 describe('outlining the cells a formula names', () => {
   let h: Harness;
 
