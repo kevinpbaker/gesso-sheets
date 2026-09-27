@@ -2435,13 +2435,16 @@ export function Grid(
    * it does not cover the row below — which is usually the row being
    * read. For the cell under the pointer, or else for the selected cell,
    * so the keyboard reaches a note as well as the mouse does.
+   *
+   * Past the whole of a merge, not past its first column: a note on a
+   * merged figure was drawn over the second half of the figure.
    */
   const notePopup = (row: number, column: number): UiElement =>
     Box(
       {
         key: 'note',
         position: 'absolute',
-        left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + sheetWindow.widthOf(column) + 4,
+        left: GUTTER_WIDTH + sheetWindow.offsetOf(column) + (shapeBox(row, column)?.width ?? sheetWindow.widthOf(column)) + 4,
         top: 0,
         zIndex: 4,
         maxWidth: 260,

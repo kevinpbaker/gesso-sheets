@@ -190,6 +190,18 @@ describe('notes on the sheet', () => {
     expect(shown('A1')).toBeNull();
   });
 
+  /** A note on a merged figure went over the second half of the figure. */
+  it('shows past the whole of a merge, not past its first column', async () => {
+    await mount(d => d.setNote(0, 0, 'About the banner'));
+    h.service.setSelection(0, 0, 0, 2);
+    h.service.mergeCells();
+    h.service.setSelection(0, 0, 0, 0);
+    await settle();
+    const note = h.ui.getLayout(shown('A1')!);
+    const d = h.ui.getLayout(h.ui.getByRole('columnheader', { name: 'D' }));
+    expect(note.x).toBeGreaterThanOrEqual(d.x);
+  });
+
   it('shows beside the cell the pointer rests on', async () => {
     await mount(d => d.setNote(1, 1, 'Hovered'));
     await press('ArrowDown');
