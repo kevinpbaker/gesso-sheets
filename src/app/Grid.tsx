@@ -37,6 +37,7 @@ import {
   type Inputs
 } from 'gesso-framework';
 
+import { CHART_CATEGORIES, CHART_NAMES, CHART_VALUES } from './chartColours';
 import { guessOf, type Place } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
 import { chartElement, dragged, type ChartDrag, type Corner } from './ChartLayer';
@@ -1694,6 +1695,12 @@ export function Grid(
     // later and more definite statement of what the person wants, so
     // it wins.
     sweeping = false;
+    // A click on a cell lets a selected chart go, as a sweep across the
+    // cells already did: a chart's handles and its bar are about the
+    // chart, and the person has gone back to the sheet.
+    if (charts.value.selected !== 0) {
+      sheet.send.selectChart(0);
+    }
     // A click that is picking a reference into a formula is not a
     // click on a cell, and must not commit what is open.
     if (!extend && pickByPointer(row, column)) {
@@ -3950,10 +3957,7 @@ const SELECT_ALL = 'Select all';
  * family and everywhere.
  */
 const OUTLINE = 2;
-/** The selected chart's parts, in Excel's colours for them. */
-const CHART_NAMES = '#ea4335';
-const CHART_CATEGORIES = '#b061f5';
-const CHART_VALUES = '#4285f4';
+
 
 function sameWidths(a: readonly number[], b: readonly number[]): boolean {
   return a.length === b.length && a.every((width, index) => width === b[index]);

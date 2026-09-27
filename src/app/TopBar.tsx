@@ -268,6 +268,28 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const rulesTab = internalState<RulesTab>('format');
   /** Whether the chart bar is open; see `ruling` for why it is its own. */
   const charting = internalState(false);
+  /**
+   * Whether it was a click on a chart that opened the bar, rather than
+   * Insert ▸ Chart. Clicking a chart shows what it reads and lets it be
+   * changed, as Excel shows its chart tab; letting the chart go puts
+   * away a bar that it opened, and leaves one somebody asked for.
+   */
+  let chartingForSelection = false;
+  ctx.effect(
+    sheet.view.charts.pipe(
+      map(charts => charts.selected),
+      distinctUntilChanged()
+    ),
+    selected => {
+      if (selected !== 0 && !charting.value) {
+        chartingForSelection = true;
+        charting.value = true;
+      } else if (selected === 0 && charting.value && chartingForSelection) {
+        chartingForSelection = false;
+        charting.value = false;
+      }
+    }
+  );
   /** Whether the recent-files bar is open; see `ruling` for why it is its own. */
   const recenting = internalState(false);
   const shortcutsOpen = internalState(false);
@@ -528,6 +550,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         });
         return;
       case 'insertChart':
+        chartingForSelection = false;
         askFor('chart', () => (charting.value = true));
         return;
       case 'clearRules':

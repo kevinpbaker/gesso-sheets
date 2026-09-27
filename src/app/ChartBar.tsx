@@ -1,10 +1,12 @@
-import { map, type Observable } from 'rxjs';
+import { combineLatest, distinctUntilChanged, map, type Observable } from 'rxjs';
 
 import { percent, type UiKeyboardEvent, type UiNode, type UiSemanticState, type UiTextChangeEvent } from 'gesso-core';
 import { internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import type { ChartKind } from '../sheet/Chart';
-import { Sheet } from './SheetContract';
+import { columnName } from '../sheet/A1';
+import { CHART_CATEGORIES, CHART_NAMES, CHART_VALUES } from './chartColours';
+import { Sheet, type SheetRect } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
 
 /**
@@ -60,6 +62,9 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
   const title = internalState('');
   /** The chart the bar is editing, or zero while it is an insert bar. */
   const editingId = internalState(0);
+  /** The range field's text, and whether somebody has typed in it since it last followed the chart. */
+  const range = internalState('');
+  let rangeTyped = false;
 
   /**
    * The bar follows the chart somebody clicked.
@@ -70,14 +75,21 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
    * into the field while the chart was still moving.
    */
   ctx.effect(sheet.view.charts, view => {
+    const chosen = view.entries.find(entry => entry.id === view.selected);
     if (view.selected === editingId.value) {
+      // The same chart, moved or given a new range by its handle: the
+      // range field follows it, unless somebody is typing a range.
+      if (chosen !== undefined && !rangeTyped && range.value !== chosen.range) {
+        range.value = chosen.range;
+      }
       return;
     }
     editingId.value = view.selected;
-    const chosen = view.entries.find(entry => entry.id === view.selected);
+    rangeTyped = false;
     if (chosen !== undefined) {
       kind.value = chosen.kind;
       title.value = chosen.title;
+      range.value = chosen.range;
     }
   });
 
@@ -108,6 +120,73 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
       applyTitle();
     }
   };
+
+  const applyRange = (): void => {
+    if (editingId.value !== 0) {
+      rangeTyped = false;
+      sheet.send.setChartRangeText(editingId.value, range.value);
+    }
+  };
+
+  /**
+   * What the chart reads, in the three parts it reads it as, each in the
+   * colour the grid outlines that part in while the chart is selected:
+   * the values, the labels along the axis, and the names of the series.
+   * The part people cannot otherwise see, and the usual reason a chart
+   * looks wrong.
+   */
+  const reading = combineLatest([sheet.view.charts, sheet.view.series, sheet.view.sheets]).pipe(
+    map(([charts, series, tabs]) => {
+      const source = series.charts[String(charts.selected)]?.source ?? null;
+      if (charts.selected === 0 || source === null) {
+        return [];
+      }
+      const on = source.sheet === tabs.active ? '' : `${tabs.entries[source.sheet]?.name ?? ''}!`;
+      const address = (rect: SheetRect): string => {
+        const first = `${columnName(rect.firstColumn)}${rect.firstRow + 1}`;
+        const last = `${columnName(rect.lastColumn)}${rect.lastRow + 1}`;
+        return `${on}${first === last ? first : `${first}:${last}`}`;
+      };
+      const part = (key: string, label: string, rect: SheetRect | null, color: string) =>
+        rect === null
+          ? []
+          : [
+              <row key={key} gap={4} y="center">
+                <box width={8} height={8} borderRadius={2} backgroundColor={color} />
+                <text text={`${label} ${address(rect)}`} fontSize={11} color="text" textWrap="none" selectable={true} />
+              </row>
+            ];
+      // One series a column when the names run along a row, one a row
+      // when they run down a column; with no names, the values' shape
+      // decides, as `seriesFrom` does.
+      const values = source.values;
+      const byColumn =
+        source.names !== null ? source.names.firstRow === source.names.lastRow : values === null || values.lastRow - values.firstRow >= values.lastColumn - values.firstColumn;
+      const count =
+        values === null ? 0 : byColumn ? values.lastColumn - values.firstColumn + 1 : values.lastRow - values.firstRow + 1;
+      return [
+        <text key="reads" text="Reads" fontSize={11} color="textMuted" textWrap="none" selectable={false} />,
+        ...part('values', 'values', values, CHART_VALUES),
+        ...part('labels', 'labels', source.categories, CHART_CATEGORIES),
+        ...part('names', 'names', source.names, CHART_NAMES),
+        <text
+          key="count"
+          text={`${count === 1 ? 'one series' : `${count} series`}, ${count === 1 ? 'from its' : 'one per'} ${byColumn ? 'column' : 'row'}.`}
+          fontSize={11}
+          color="textMuted"
+          textWrap="none"
+          selectable={false}
+        />
+      ];
+    })
+  );
+  const refusal = sheet.view.charts.pipe(
+    map(charts =>
+      (charts.refused ?? '') === ''
+        ? []
+        : [<text key="refused" text={charts.refused ?? ''} fontSize={11} color="danger" textWrap="none" selectable={false} />]
+    )
+  );
 
   const remove = (): void => {
     if (editingId.value !== 0) {
@@ -148,14 +227,16 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
     </button>
   );
 
-  const hasChart = editingId.pipe(map(id => id !== 0));
+  const hasChart = editingId.pipe(
+    map(id => id !== 0),
+    distinctUntilChanged()
+  );
 
   return (
-    <row
+    <column
       width={percent(100)}
       flexShrink={0}
-      y="center"
-      gap={8}
+      gap={4}
       paddingLeft={10}
       paddingRight={10}
       paddingTop={5}
@@ -163,6 +244,7 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
       backgroundColor="surface"
       role="form"
       label="Chart">
+    <row width={percent(100)} y="center" gap={8}>
       <row key="kinds" gap={2} y="center" role="radiogroup" label="Chart kind">
         {KINDS.map(option => (
           <button
@@ -205,11 +287,46 @@ export function ChartBar(inputs: Inputs<ChartBarProps>, ctx: ComponentContext) {
         onKeyDown={onFieldKey(() => (editingId.value === 0 ? insert() : applyTitle()))}
       />
 
+      {hasChart.pipe(
+        map(editing =>
+          editing
+            ? [
+                <text key="range-label" text="Range" fontSize={11} color="textMuted" textWrap="none" selectable={false} />,
+                <editabletext
+                  key="range"
+                  value={range as never}
+                  width={150}
+                  fontSize={12}
+                  color="text"
+                  textWrap="none"
+                  verticalAlign="middle"
+                  backgroundColor="background"
+                  borderColor="border"
+                  borderWidth={1}
+                  padding={4}
+                  role="textbox"
+                  label="Chart range"
+                  onInput={(event: UiTextChangeEvent) => {
+                    rangeTyped = true;
+                    range.value = event.value;
+                  }}
+                  onKeyDown={onFieldKey(applyRange)}
+                />
+              ]
+            : []
+        )
+      )}
+
       {button('Insert', insert)}
       {button('Rename', applyTitle, hasChart)}
       {button('Delete', remove, hasChart)}
       <box flex={1} minWidth={0} />
       {button('Close', close)}
     </row>
+    <row width={percent(100)} y="center" gap={10} role="group" label="What the chart reads">
+      {reading}
+      {refusal}
+    </row>
+    </column>
   );
 }

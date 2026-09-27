@@ -638,6 +638,8 @@ export interface SheetCharts {
   readonly entries: readonly SheetChart[];
   /** The selected chart's id, or zero when none is. */
   readonly selected: number;
+  /** Why the last range typed for a chart was not taken; absent or empty when nothing was refused. */
+  readonly refused?: string;
 }
 
 /**
@@ -837,6 +839,8 @@ export interface SheetCommands {
    * On the sheet the chart already reads, which a drag cannot leave.
    */
   setChartRange(id: number, firstRow: number, firstColumn: number, lastRow: number, lastColumn: number): void;
+  /** A chart's range as somebody typed it: `B2:D9`, or `'Q3 data'!A1:B4`. */
+  setChartRangeText(id: number, text: string): void;
   removeChart(id: number): void;
   /** Shows a sheet, without waiting for its viewport to arrive. */
   activateSheet(sheet: number): void;
@@ -1379,7 +1383,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   completion: { serial: 0, row: 0, column: 0, prefix: '', text: '' },
   notes: { cells: {} },
   rowFit: { serial: 0, rows: [] },
-  charts: { entries: [], selected: 0 },
+  charts: { entries: [], selected: 0, refused: '' },
   series: { charts: {} },
   scripts: { entries: [], running: '', refused: '', last: null }
 });

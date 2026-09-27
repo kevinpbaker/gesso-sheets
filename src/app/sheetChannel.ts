@@ -65,6 +65,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       placeChart: (id, x, y, width, height) => service.placeChart(id, x, y, width, height),
       setChartKind: (id, kind) => service.setChartKind(id, kind),
       setChartTitle: (id, title) => service.setChartTitle(id, title),
+      setChartRangeText: (id, text) => service.setChartRangeText(id, text),
       setChartRange: (id, firstRow, firstColumn, lastRow, lastColumn) =>
         service.setChartRange(id, firstRow, firstColumn, lastRow, lastColumn),
       removeChart: id => service.removeChart(id),

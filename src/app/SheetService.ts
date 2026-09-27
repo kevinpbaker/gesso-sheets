@@ -284,7 +284,9 @@ export class SheetService {
    * question replaces an older one, so it has to ask about both.
    */
   private rowFitPending: Set<number> | 'all' | null = null;
-  private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0 });
+  private readonly chartsSubject = new BehaviorSubject<SheetCharts>({ entries: [], selected: 0, refused: '' });
+  /** Why the last typed chart range was refused; cleared by the next change to a chart. */
+  private chartRefused = '';
   private readonly seriesSubject = new BehaviorSubject<SheetSeriesView>({ charts: {} });
   private readonly scriptsSubject = new BehaviorSubject<SheetScripts>({ entries: [], running: '', refused: '', last: null });
   private readonly scriptHost: ScriptHost | null;
@@ -2926,6 +2928,8 @@ export class SheetService {
       return;
     }
     this.selectedChart = id;
+    // What was refused was about the chart that was selected.
+    this.chartRefused = '';
     this.publishCharts();
   }
 
@@ -2988,6 +2992,67 @@ export class SheetService {
     this.publishStatus();
   }
 
+  /**
+   * A chart's range, as typed into the chart bar.
+   *
+   * `B2:D9` is on the chart's own sheet, and `'Q3 data'!A1:B4` on the
+   * one it names, which has to exist. Anything that is not a range, or
+   * runs off the sheet, is refused with a sentence and the chart is left
+   * as it was: a chart that silently read nothing would be worse than a
+   * field that says no.
+   */
+  setChartRangeText(id: number, text: string): void {
+    const chart = this.document.chart(id);
+    if (chart === null) {
+      return;
+    }
+    const refuse = (why: string): void => {
+      this.chartRefused = why;
+      this.publishCharts();
+    };
+    const written = text.trim().replace(/\$/g, '');
+    const bang = written.lastIndexOf('!');
+    let sheet: string | undefined;
+    let address = written;
+    if (bang >= 0) {
+      const named = written.slice(0, bang).trim();
+      const unquoted = /^'(.*)'$/.test(named) ? named.slice(1, -1).replace(/''/g, "'") : named;
+      const found = this.document.sheets().find(each => each.name.toUpperCase() === unquoted.toUpperCase());
+      if (found === undefined) {
+        refuse(`There is no sheet called ${unquoted}.`);
+        return;
+      }
+      // Written without the sheet when it is the chart's own, which is
+      // what an unqualified range means.
+      sheet = found.name === this.document.sheets()[this.document.active]?.name ? undefined : found.name;
+      address = written.slice(bang + 1);
+    }
+    const parsed = parseAddress(address);
+    if (parsed === null) {
+      refuse(`${text.trim() === '' ? 'Nothing' : text.trim()} is not a range. Write one like B2:D9.`);
+      return;
+    }
+    const firstRow = Math.min(parsed.start.row, parsed.end.row);
+    const lastRow = Math.max(parsed.start.row, parsed.end.row);
+    const firstColumn = Math.min(parsed.start.column, parsed.end.column);
+    const lastColumn = Math.max(parsed.start.column, parsed.end.column);
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    if (lastRow >= rowCount || lastColumn >= columnCount) {
+      refuse(`${text.trim()} runs off the sheet.`);
+      return;
+    }
+    const on = (row: number, column: number) => ({ ...relativeRef(row, column), ...(sheet === undefined ? {} : { sheet }) });
+    this.chartRefused = '';
+    if (!this.document.changeChart(id, held => ({ ...held, range: { start: on(firstRow, firstColumn), end: on(lastRow, lastColumn) } }))) {
+      this.publishCharts();
+      return;
+    }
+    this.publishCharts();
+    this.publishSeries();
+    this.persist();
+    this.publishStatus();
+  }
+
   removeChart(id: number): void {
     if (!this.document.removeChart(id)) {
       return;
@@ -3014,7 +3079,8 @@ export class SheetService {
         height: chart.place.height,
         legend: chart.legend
       })),
-      selected: this.selectedChart
+      selected: this.selectedChart,
+      refused: this.chartRefused
     });
   }
 
