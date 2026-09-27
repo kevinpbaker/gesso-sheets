@@ -610,6 +610,7 @@ const XLFN = new Set([
   'NORM.S.INV',
   'LET',
   'LAMBDA',
+  'ISOMITTED',
   'MAP',
   'REDUCE',
   'SCAN',

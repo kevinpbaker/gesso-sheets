@@ -141,6 +141,15 @@ class Parser {
       }
       case 'word':
         this.at++;
+        if (token.optional === true) {
+          // Only a parameter can be optional, and a parameter is a bare
+          // word: `[b]` followed by anything but a comma or a bracket is
+          // something else, and says so.
+          if (this.peek().kind !== 'comma' && this.peek().kind !== 'close') {
+            throw new FormulaSyntaxError(`[${token.value}] is an optional parameter, and only a LAMBDA takes one.`);
+          }
+          return { kind: 'call', name: token.value.toUpperCase(), args: [], word: token.value, optional: true };
+        }
         return this.word(token.value);
       /**
        * `Sheet2!A1` — a sheet, and then something on it.

@@ -34,7 +34,11 @@ export type Token = Span &
   (
     | { readonly kind: 'number'; readonly value: number }
     | { readonly kind: 'text'; readonly value: string }
-    | { readonly kind: 'word'; readonly value: string }
+    /**
+     * `optional` for `[b]`, a `LAMBDA`'s optional parameter: the word is
+     * the span, and the brackets either side of it are not in any token.
+     */
+    | { readonly kind: 'word'; readonly value: string; readonly optional?: true }
     /**
      * A sheet named in front of a reference: the `Sheet2` of
      * `Sheet2!A1`, and the `Q3 Budget` of `'Q3 Budget'!A1:B9`.
@@ -94,6 +98,19 @@ export function tokenize(source: string): Token[] {
       tokens.push({ kind: 'colon', start: at, end: at + 1 });
       at++;
       continue;
+    }
+
+    // `[b]`: an optional parameter of a LAMBDA, as Excel writes one.
+    if (character === '[' && isWordStart(source[at + 1] ?? '')) {
+      let end = at + 1;
+      while (end < source.length && isWordPart(source[end])) {
+        end++;
+      }
+      if (source[end] === ']') {
+        tokens.push({ kind: 'word', value: source.slice(at + 1, end), optional: true, start: at + 1, end });
+        at = end + 1;
+        continue;
+      }
     }
 
     if (character === '"') {

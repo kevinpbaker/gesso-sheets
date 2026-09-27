@@ -126,6 +126,11 @@ describe('a function the workbook defined', () => {
     { name: 'TaxRate', formula: '=0.2' }
   ]);
 
+  it('shows an optional parameter in its brackets', () => {
+    const [taxed] = definedFunctionsOf([{ name: 'Taxed', formula: '=LAMBDA(amount, [rate], amount)' }]);
+    expect(taxed.signature.args).toEqual(['amount', '[rate]']);
+  });
+
   it('is a function only when the name holds a LAMBDA', () => {
     expect(defined.map(each => each.name)).toEqual(['Commission']);
     expect(defined[0].signature.args).toEqual(['amount']);

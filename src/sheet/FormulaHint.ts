@@ -30,7 +30,9 @@ export function definedFunctionsOf(formulas: readonly { name: string; formula: s
     if (tree.kind !== 'call' || tree.name !== 'LAMBDA' || tree.args.length === 0) {
       continue;
     }
-    const args = tree.args.slice(0, -1).map(arg => (arg.kind === 'call' && arg.word !== undefined ? arg.word : '?'));
+    const args = tree.args
+      .slice(0, -1)
+      .map(arg => (arg.kind === 'call' && arg.word !== undefined ? (arg.optional === true ? `[${arg.word}]` : arg.word) : '?'));
     found.push({ name, signature: { args, summary: formula } });
   }
   return found;

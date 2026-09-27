@@ -123,15 +123,25 @@ export interface LambdaValue {
   readonly kind: 'lambda';
   /** The parameters, upper-cased as names are looked up. */
   readonly params: readonly string[];
+  /** How many of them must be given; the rest were written `[b]`, and may be left off. */
+  readonly required: number;
   readonly body: Ast;
   readonly scope: Scope;
 }
 
+/**
+ * An optional parameter nobody passed. Read, it is FALSE, as in Excel;
+ * `ISOMITTED` is the one thing that can tell it from a FALSE given.
+ */
+const OMITTED = { kind: 'omitted' } as const;
+type Omitted = typeof OMITTED;
+const isOmitted = (value: Bound | Omitted): value is Omitted => value === OMITTED;
+
 /** What a name inside a formula can stand for. */
 export type Bound = CellValue | ArrayValue | LambdaValue;
 
-/** Names bound by `LET` and `LAMBDA`, upper-cased. */
-export type Scope = ReadonlyMap<string, Bound>;
+/** Names bound by `LET` and `LAMBDA`, upper-cased; an optional parameter left off is `OMITTED`, and never leaves the scope. */
+export type Scope = ReadonlyMap<string, Bound | Omitted>;
 
 const NO_LOCALS: Scope = new Map();
 
@@ -1052,6 +1062,9 @@ const HELPERS: ReadonlySet<string> = new Set(['MAP', 'REDUCE', 'SCAN', 'BYROW', 
 function boundCall(node: CallNode, context: EvaluationContext): Bound | undefined {
   const local = context.locals?.get(node.name);
   if (local !== undefined) {
+    if (isOmitted(local)) {
+      return node.word !== undefined ? false : isSheetFunction(node.name) ? undefined : VALUE;
+    }
     // `x`, or `f(3)` where a LET bound `f` to a LAMBDA.
     if (node.word !== undefined) {
       return local;
@@ -1071,6 +1084,15 @@ function boundCall(node: CallNode, context: EvaluationContext): Bound | undefine
       return evaluateLet(node.args, context);
     case 'LAMBDA':
       return makeLambda(node.args, context);
+    case 'ISOMITTED': {
+      // A question about the name, not its value: whether this optional
+      // parameter was left off the call.
+      const arg = node.args[0];
+      if (node.args.length !== 1 || arg.kind !== 'call' || arg.word === undefined) {
+        return VALUE;
+      }
+      return context.locals?.get(arg.name) === OMITTED;
+    }
     default:
       break;
   }
@@ -1208,19 +1230,29 @@ function makeLambda(args: readonly Ast[], context: EvaluationContext): Bound {
     return VALUE;
   }
   const params: string[] = [];
+  let required = 0;
   for (const arg of args.slice(0, -1)) {
     const name = bindingName(arg);
     if (name === null || params.includes(name)) {
       return VALUE;
     }
+    const optional = arg.kind === 'call' && arg.optional === true;
+    // The optional ones come last, as in Excel: `LAMBDA([a], b, …)`
+    // would make every call a guess at which was left off.
+    if (!optional && required < params.length) {
+      return VALUE;
+    }
+    if (!optional) {
+      required++;
+    }
     params.push(name);
   }
-  return { kind: 'lambda', params, body: args[args.length - 1], scope: context.locals ?? NO_LOCALS };
+  return { kind: 'lambda', params, required, body: args[args.length - 1], scope: context.locals ?? NO_LOCALS };
 }
 
 /** A function called with the expressions written for it. */
 function apply(fn: LambdaValue, args: readonly Ast[], context: EvaluationContext): Bound {
-  if (args.length !== fn.params.length) {
+  if (args.length < fn.required || args.length > fn.params.length) {
     return VALUE;
   }
   return applyValues(
@@ -1244,7 +1276,7 @@ function applyValues(fn: LambdaValue, values: readonly Bound[], context: Evaluat
   }
   const scope = new Map(fn.scope);
   for (let at = 0; at < fn.params.length; at++) {
-    scope.set(fn.params[at], values[at] ?? null);
+    scope.set(fn.params[at], at < values.length ? values[at] : OMITTED);
   }
   try {
     return evaluateBound(fn.body, { ...context, locals: scope, depth });

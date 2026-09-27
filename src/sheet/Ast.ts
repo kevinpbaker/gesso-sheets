@@ -40,6 +40,8 @@ export interface CallNode {
   readonly name: string;
   readonly args: readonly Ast[];
   readonly word?: string;
+  /** A LAMBDA's optional parameter, written `[b]`. Only ever on a bare word. */
+  readonly optional?: true;
 }
 
 /** A bare word, by the name it is looked up under (upper case), or null. */

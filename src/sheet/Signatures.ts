@@ -183,7 +183,8 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
 
   // Names bound inside a formula, and functions made in one
   LET: { args: ['name', 'value', '…', 'result'], summary: 'Names a value once, to use it many times.' },
-  LAMBDA: { args: ['parameter', '…', 'body'], summary: 'A function: call it at once, or keep it under a name.' },
+  LAMBDA: { args: ['parameter', '…', 'body'], summary: 'A function: call it at once, or keep it under a name. [b] is optional.' },
+  ISOMITTED: { args: ['parameter'], summary: "Whether a LAMBDA's optional parameter was left off." },
   MAP: { args: ['array', '…', 'function'], summary: 'The function called on every value.' },
   REDUCE: { args: ['initial', 'array', 'function'], summary: 'An array folded into one answer.' },
   SCAN: { args: ['initial', 'array', 'function'], summary: 'Every step of a fold, as an array.' },

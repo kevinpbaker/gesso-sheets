@@ -155,6 +155,17 @@ describe('a workbook written as an .xlsx', () => {
     expect(back.sheet.input(0, 2)).toBe('=LET(total, A1+B1, total/3)');
   });
 
+  it('carries an optional parameter in its brackets', async () => {
+    const document = new SheetDocument();
+    document.defineFormulaName('Taxed', '=LAMBDA(amount, [rate], amount*(1+IF(ISOMITTED(rate), 0.2, rate)))');
+    document.setCell(0, 0, '=Taxed(100)');
+    document.sheet.recalculate();
+    const workbook = xlsxParts(xlsxOfDocument(document, ROWS).book).find(part => part.name === 'xl/workbook.xml')!.text;
+    expect(workbook).toContain('_xlfn.LAMBDA(_xlpm.amount, [_xlpm.rate], _xlpm.amount*(1+IF(_xlfn.ISOMITTED(_xlpm.rate), 0.2, _xlpm.rate)))');
+    const back = await roundTrip(document);
+    expect(back.sheet.value(0, 0)).toBe(120);
+  });
+
   it('says what it cannot carry', () => {
     const document = new SheetDocument();
     seed(document);

@@ -40,7 +40,7 @@ export function printFormula(node: Ast): string {
       if (node.word !== undefined) {
         // A name, or a name a LET or LAMBDA bound, as it was typed:
         // `Sales`, not `SALES()`, which would be a call to nothing.
-        return node.word;
+        return node.optional === true ? `[${node.word}]` : node.word;
       }
       if (node.name === 'ANCHORARRAY' && node.args.length === 1 && node.args[0].kind === 'ref') {
         return `${printFormula(node.args[0])}#`;

@@ -499,7 +499,11 @@ table('LET and LAMBDA', [
   // One answer per row, or it is a function handing back an array.
   ['BYROW(A1:C2, LAMBDA(row, row))', '#CALC!'],
   ['INDEX(MAKEARRAY(3, 4, LAMBDA(r, c, r * 10 + c)), 2, 3)', '23'],
-  ['MAKEARRAY(0, 1, LAMBDA(r, c, 1))', '#VALUE!']
+  ['MAKEARRAY(0, 1, LAMBDA(r, c, 1))', '#VALUE!'],
+  // An optional parameter, written in brackets as Excel writes it.
+  ['LAMBDA(a, [b], IF(ISOMITTED(b), a, a + b))(5)', '5'],
+  ['LAMBDA(a, [b], IF(ISOMITTED(b), a, a + b))(5, 2)', '7'],
+  ['ISOMITTED(1)', '#VALUE!']
 ]);
 
 /**

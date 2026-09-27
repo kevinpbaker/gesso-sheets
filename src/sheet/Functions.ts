@@ -216,6 +216,7 @@ export const SPECIAL_FORMS: ReadonlySet<string> = new Set([
   // the helpers that call one.
   'LET',
   'LAMBDA',
+  'ISOMITTED',
   'MAP',
   'REDUCE',
   'SCAN',

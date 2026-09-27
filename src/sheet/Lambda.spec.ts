@@ -95,6 +95,32 @@ describe('LAMBDA', () => {
   });
 });
 
+describe('an optional parameter', () => {
+  it('may be left off, and ISOMITTED says so', () => {
+    const at = sheet();
+    at.names.defineFormula('Taxed', '=LAMBDA(amount, [rate], amount * (1 + IF(ISOMITTED(rate), 0.2, rate)))');
+    at.namesChanged();
+    expect(answer(at, '=Taxed(100)')).toBe('120');
+    expect(answer(at, '=Taxed(100, 0.5)')).toBe('150');
+  });
+
+  it('is FALSE where it is read, left off', () => {
+    expect(answer(sheet(), '=LAMBDA(a, [b], b)(1)')).toBe('FALSE');
+    expect(answer(sheet(), '=LAMBDA(a, [b], a + b)(1)')).toBe('1');
+  });
+
+  it('comes after the ones that must be given', () => {
+    expect(answer(sheet(), '=LAMBDA([a], b, b)(1)')).toBe('#VALUE!');
+    expect(answer(sheet(), '=LAMBDA(a, [b], a)()')).toBe('#VALUE!');
+    expect(answer(sheet(), '=LAMBDA(a, [b], a)(1, 2, 3)')).toBe('#VALUE!');
+  });
+
+  it('is only a parameter, and prints back in its brackets', () => {
+    expect(answer(sheet(), '=[b]+1')).toBe('#VALUE!');
+    expect(rewriteFormula('=LAMBDA(a, [b], a+A1)(B1)', 1, 0)).toBe('=LAMBDA(a,[b],a+A2)(B2)');
+  });
+});
+
 describe('a name that holds a formula', () => {
   it('is called by its name, like any other function', () => {
     const at = sheet();
