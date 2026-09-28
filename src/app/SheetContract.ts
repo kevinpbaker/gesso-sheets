@@ -611,6 +611,15 @@ export interface SheetActiveRules {
   /** Where each is in `SheetRules`' lists, so the bar can change the one it opened on; -1 for none. */
   readonly conditionalAt?: number;
   readonly validationAt?: number;
+  /**
+   * Every conditional rule covering the cell, in paint order, as
+   * indexes into `SheetRules`' list. The bar opens on the last, but a
+   * cell under two — red below a target, green above it — has to say
+   * so, or the one it does not show looks like it is not there.
+   */
+  readonly conditionalsAt?: readonly number[];
+  /** The cell they are for, as written: "G9". */
+  readonly cell?: string;
 }
 
 /**

@@ -339,6 +339,47 @@ describe('rules over a selection', () => {
       expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'greaterThan', value: 5 }]);
     });
 
+    /**
+     * The bar opens on the rule on top, and a second rule under it — red
+     * below a target, green above — was left for nobody to find but the
+     * cell's own colour. So a cell under more than one lists them all.
+     */
+    it('lists every rule the active cell is under, when there is more than one', async () => {
+      h.service.addConditional({ test: { kind: 'greaterThan', value: 5 }, paint: { fill: '#fce8e6', color: '#c5221f' } });
+      await h.served.settle();
+      await menu('o', 'Conditional formatting…');
+      // One rule is the sentence itself; there is nothing more to list.
+      expect(h.ui.queryByRole('listitem')).toBeNull();
+      await press('Escape');
+
+      h.service.addConditional({ test: { kind: 'lessThan', value: 2 }, paint: { fill: '#e6f4ea', color: '#137333' } });
+      await h.served.settle();
+      await menu('o', 'Conditional formatting…');
+      const first = 'Highlight · A1:A5: greater than 5, in red fill';
+      const second = 'Highlight · A1:A5: less than 2, in green fill';
+      expect(h.ui.getAllByRole('listitem').map(item => item.properties.get('label'))).toEqual([first, second]);
+      // It opened on the one on top, and the other is a click away.
+      expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('2');
+      await click(`Edit ${first}`);
+      expect(h.ui.getByRole('textbox', { name: 'Value' })).toHaveText('5');
+
+      await click(`Delete ${second}`);
+      expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'greaterThan', value: 5 }]);
+      expect(h.ui.queryByRole('listitem')).toBeNull();
+    });
+
+    it('keeps changing the same rule when one before it is removed', async () => {
+      h.service.addConditional({ test: { kind: 'greaterThan', value: 5 }, paint: { fill: '#fce8e6', color: '#c5221f' } });
+      h.service.addConditional({ test: { kind: 'lessThan', value: 2 }, paint: { fill: '#e6f4ea', color: '#137333' } });
+      await h.served.settle();
+      await menu('o', 'Conditional formatting…');
+      await click('Delete Highlight · A1:A5: greater than 5, in red fill');
+      // Typed after the 2 it opened with.
+      await typeInto('Value', '3');
+      await click('Save changes');
+      expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'lessThan', value: 32 }]);
+    });
+
     /** A highlight being changed must not be saved as a scale by switching the tab. */
     it('starts a new rule when the kind changes, rather than turning one into another', async () => {
       await menu('o', 'Conditional formatting…');
@@ -545,6 +586,17 @@ describe('the rules bar over the seeded workbook', () => {
     h.ui.fireEvent.click(h.ui.getByRole('button', { name: 'Save changes' }));
     await settle();
     expect(h.document.conditionalAt(4, 6)?.scale).toEqual(before);
+  });
+
+  it('lists both of the dashboard’s rules on a percentage of target', async () => {
+    h.document.activate(SHEET.dashboard);
+    h.service.setSelection(8, 6, 8, 6);
+    await settle();
+    await openFormat();
+    expect(h.ui.getAllByRole('listitem').map(item => item.properties.get('label'))).toEqual([
+      expect.stringContaining('less than 1'),
+      expect.stringContaining('greater than 0.999')
+    ]);
   });
 
   it('shows bold coloured text as the current colours, not a fill', async () => {

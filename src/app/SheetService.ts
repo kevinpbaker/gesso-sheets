@@ -3659,7 +3659,9 @@ export class SheetService {
             },
       validation: validation === null ? null : { rule: validation.rule, strict: validation.strict === true },
       conditionalAt: conditional === null ? -1 : this.document.conditional.indexOf(conditional),
-      validationAt: validation === null ? -1 : this.document.validations.indexOf(validation)
+      validationAt: validation === null ? -1 : this.document.validations.indexOf(validation),
+      conditionalsAt: this.document.conditionalsAt(row, column),
+      cell: `${columnName(column)}${row + 1}`
     });
   }
 

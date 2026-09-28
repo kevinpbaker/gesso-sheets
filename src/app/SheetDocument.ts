@@ -1286,6 +1286,17 @@ export class SheetDocument {
     return null;
   }
 
+  /** Every conditional rule covering a cell, as indexes into `conditional`, in the order they paint. */
+  conditionalsAt(row: number, column: number): number[] {
+    const at: number[] = [];
+    this.page.conditional.forEach((rule, index) => {
+      if (coversCell(rule.range, row, column)) {
+        at.push(index);
+      }
+    });
+    return at;
+  }
+
   private changeRules(change: (page: Page) => void, row: number, column: number): void {
     const page = this.page;
     const before = {

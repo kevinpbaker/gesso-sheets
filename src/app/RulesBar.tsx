@@ -9,6 +9,7 @@ import type { ColourScale, ConditionalPaint, ConditionalTest } from '../sheet/Co
 import type { ValidationRule } from '../sheet/Validation';
 import {
   Sheet,
+  type SheetActiveRules,
   type SheetConditionalRule,
   type SheetListedConditional,
   type SheetListedValidation,
@@ -770,29 +771,54 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
     </row>
   );
 
-  const list = combineLatest([listOpen, sheet.view.rules, editing, kind]).pipe(
-    map(([open, rules, at, which]: [boolean, SheetRules, number | null, Kind]) => {
+  /** A conditional rule's row, in either list; removing it keeps the rule being changed the same rule. */
+  const conditionalRow = (rule: SheetListedConditional, index: number, at: number | null, which: Kind) =>
+    listRow(
+      `c-${index}`,
+      describeConditional(rule),
+      () => loadConditional(rule, index),
+      () => {
+        sheet.send.removeConditional(index);
+        if (which !== 'limit' && at === index) {
+          startNew();
+        } else if (which !== 'limit' && at !== null && at > index) {
+          editing.value = at - 1;
+        }
+      },
+      which !== 'limit' && at === index
+    );
+
+  /**
+   * The rules on the whole sheet when that list is asked for; and
+   * otherwise, when the active cell is under more than one highlight
+   * or scale, those — because the bar can open on only one of them,
+   * and red below a target with green above it is two rules that read
+   * as one colour at a time.
+   */
+  const list = combineLatest([listOpen, sheet.view.rules, sheet.view.activeRules, editing, kind]).pipe(
+    map(([open, rules, active, at, which]: [boolean, SheetRules, SheetActiveRules, number | null, Kind]) => {
       if (!open) {
-        return [];
+        const covering = (active.conditionalsAt ?? []).filter(index => rules.conditional[index] !== undefined);
+        if (which === 'limit' || covering.length < 2) {
+          return [];
+        }
+        return [
+          <text
+            key="covering"
+            text={`${active.cell ?? 'This cell'} is under ${covering.length} rules. Where more than one matches, the later one’s colours win.`}
+            fontSize={11}
+            color="textMuted"
+            textWrap="word"
+            minWidth={0}
+          />,
+          ...covering.map(index => conditionalRow(rules.conditional[index], index, at, which))
+        ];
       }
       if (rules.conditional.length + rules.validations.length === 0) {
         return [words('This sheet has no rules yet. Write one above and press Add rule.', 'none')];
       }
       return [
-        ...rules.conditional.map((rule, index) =>
-          listRow(
-            `c-${index}`,
-            describeConditional(rule),
-            () => loadConditional(rule, index),
-            () => {
-              sheet.send.removeConditional(index);
-              if (at === index && which !== 'limit') {
-                startNew();
-              }
-            },
-            which !== 'limit' && at === index
-          )
-        ),
+        ...rules.conditional.map((rule, index) => conditionalRow(rule, index, at, which)),
         ...rules.validations.map((rule, index) =>
           listRow(
             `v-${index}`,
@@ -800,8 +826,10 @@ export function RulesBar(inputs: Inputs<RulesBarProps>, ctx: ComponentContext) {
             () => loadValidation(rule, index),
             () => {
               sheet.send.removeValidation(index);
-              if (at === index && which === 'limit') {
+              if (which === 'limit' && at === index) {
                 startNew();
+              } else if (which === 'limit' && at !== null && at > index) {
+                editing.value = at - 1;
               }
             },
             which === 'limit' && at === index
