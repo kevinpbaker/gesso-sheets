@@ -893,8 +893,25 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'freezeFirstColumn':
         sheet.send.freeze(0, 1);
         break;
+      /**
+       * The right-click on a letter or a number: freeze through the
+       * rows or columns selected, including them, and leave the other
+       * direction's freeze as it was.
+       */
+      case 'freezeThroughRows':
+        sheet.send.freeze(rows().last + 1, sheet.view.geometry.value.frozenColumns);
+        break;
+      case 'freezeThroughColumns':
+        sheet.send.freeze(sheet.view.geometry.value.frozenRows, columns().last + 1);
+        break;
       case 'unfreeze':
         sheet.send.freeze(0, 0);
+        break;
+      case 'unfreezeRows':
+        sheet.send.freeze(0, sheet.view.geometry.value.frozenColumns);
+        break;
+      case 'unfreezeColumns':
+        sheet.send.freeze(sheet.view.geometry.value.frozenRows, 0);
         break;
     }
     edit.focusSheet();

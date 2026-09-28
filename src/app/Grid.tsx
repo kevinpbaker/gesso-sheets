@@ -1629,11 +1629,14 @@ export function Grid(
   const menuItems = new BehaviorSubject<readonly MenuItem[]>([]);
   const MENU_FOR: Readonly<Record<'cell' | 'column' | 'row', readonly CommandId[]>> = {
     cell: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertColumnLeft', 'deleteRows', 'deleteColumns', 'sortAscending', 'sortDescending', 'clear', 'editNote'],
-    column: ['cut', 'copy', 'paste', 'insertColumnLeft', 'insertColumnRight', 'deleteColumns', 'hideColumns', 'showColumns', 'autofitColumns', 'sortAscending', 'sortDescending', 'clear'],
-    row: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertRowBelow', 'deleteRows', 'hideRows', 'showRows', 'fitRows', 'clear']
+    column: ['cut', 'copy', 'paste', 'insertColumnLeft', 'insertColumnRight', 'deleteColumns', 'hideColumns', 'showColumns', 'autofitColumns', 'sortAscending', 'sortDescending', 'clear', 'freezeThroughColumns', 'unfreezeColumns'],
+    row: ['cut', 'copy', 'paste', 'insertRowAbove', 'insertRowBelow', 'deleteRows', 'hideRows', 'showRows', 'fitRows', 'clear', 'freezeThroughRows', 'unfreezeRows']
   };
+  /** Unfreezing is offered only when there is something to unfreeze. */
+  const inMenu = (id: CommandId): boolean =>
+    (id !== 'unfreezeRows' || frozen.value.rows > 0) && (id !== 'unfreezeColumns' || frozen.value.columns > 0);
   const openMenu = (kind: 'cell' | 'column' | 'row', at: { x: number; y: number }): void => {
-    menuItems.next(MENU_FOR[kind].map(id => ({ value: id, label: COMMANDS[id].label })));
+    menuItems.next(MENU_FOR[kind].filter(inMenu).map(id => ({ value: id, label: COMMANDS[id].label })));
     menuAt.next(at);
     menuOpen.next(true);
   };

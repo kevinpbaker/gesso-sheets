@@ -113,7 +113,11 @@ export type CommandId =
   | 'freezeHere'
   | 'freezeTopRow'
   | 'freezeFirstColumn'
+  | 'freezeThroughRows'
+  | 'freezeThroughColumns'
   | 'unfreeze'
+  | 'unfreezeRows'
+  | 'unfreezeColumns'
   | 'insertSheet'
   | 'renameSheet'
   | 'duplicateSheet'
@@ -453,7 +457,11 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   freezeHere: { id: 'freezeHere', label: 'Freeze up to here' },
   freezeTopRow: { id: 'freezeTopRow', label: 'Freeze the top row' },
   freezeFirstColumn: { id: 'freezeFirstColumn', label: 'Freeze the first column' },
+  freezeThroughRows: { id: 'freezeThroughRows', label: 'Freeze up to these rows' },
+  freezeThroughColumns: { id: 'freezeThroughColumns', label: 'Freeze up to these columns' },
   unfreeze: { id: 'unfreeze', label: 'Unfreeze' },
+  unfreezeRows: { id: 'unfreezeRows', label: 'Unfreeze rows' },
+  unfreezeColumns: { id: 'unfreezeColumns', label: 'Unfreeze columns' },
   autofitColumns: { id: 'autofitColumns', label: 'Fit columns to contents' },
   fitRows: { id: 'fitRows', label: 'Fit rows to contents' },
   iterate: { id: 'iterate', label: 'Work out circular formulas by iteration' },
@@ -731,8 +739,12 @@ export const MENUS: readonly MenuDefinition[] = [
       'freezeHere',
       'freezeTopRow',
       'freezeFirstColumn',
+      'freezeThroughRows',
+      'freezeThroughColumns',
       SEPARATOR,
       'unfreeze',
+      'unfreezeRows',
+      'unfreezeColumns',
       SEPARATOR,
       'showFormulas',
       'showReferences',

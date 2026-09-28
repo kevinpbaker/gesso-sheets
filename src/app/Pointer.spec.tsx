@@ -385,6 +385,37 @@ describe('the menu under the right button', () => {
     expect(items()).toEqual([]);
   });
 
+  it('freezes through the column it was opened on, and keeps the rows frozen', async () => {
+    h = await mount();
+    h.service.freeze(2, 0);
+    await settle();
+    h.ui.fireEvent.contextMenu(h.ui.getByRole('grid'), centre(column('C')));
+    await settle();
+    expect(items()).not.toContain('Unfreeze columns');
+    h.ui.fireEvent.click(menuItem('Freeze up to these columns'));
+    await settle();
+    expect([h.document.frozenRows, h.document.frozenColumns]).toEqual([2, 3]);
+  });
+
+  it('unfreezes the rows from a row number, and leaves the columns frozen', async () => {
+    h = await mount();
+    h.service.freeze(2, 1);
+    await settle();
+    h.ui.fireEvent.contextMenu(h.ui.getByRole('grid'), centre(row('1')));
+    await settle();
+    h.ui.fireEvent.click(menuItem('Unfreeze rows'));
+    await settle();
+    expect([h.document.frozenRows, h.document.frozenColumns]).toEqual([0, 1]);
+  });
+
+  it('offers to unfreeze rows only when rows are frozen', async () => {
+    h = await mount();
+    h.ui.fireEvent.contextMenu(h.ui.getByRole('grid'), centre(row('4')));
+    await settle();
+    expect(items()).toContain('Freeze up to these rows');
+    expect(items()).not.toContain('Unfreeze rows');
+  });
+
   it('keeps a selection it was opened inside', async () => {
     h = await mount();
     h.service.setSelection(1, 1, 4, 3);
