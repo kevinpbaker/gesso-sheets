@@ -387,28 +387,31 @@ async function main(): Promise<void> {
     await sleep(80);
     const apply = await devtools.evaluate<{ x: number; y: number } | null>(
       `(() => {
-         const el = document.querySelector('[aria-label="Apply"]');
+         const el = document.querySelector('[aria-label="Add rule"]');
          if (el === null) { return null; }
          const box = el.getBoundingClientRect();
          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
        })()`
     );
     if (apply === null) {
-      throw new Error('The conditional formatting bar has no Apply button.');
+      throw new Error('The conditional formatting bar has no Add rule button.');
     }
     await devtools.click(apply.x, apply.y);
     await sleep(250);
 
     // And the rule really landed, or the run below measures a sheet
     // quietly doing nothing — the same trap the recalculation run has.
-    // The bar closes when a rule is taken, so one still open is an
-    // Apply that did nothing.
-    const stillOpen = await devtools.evaluate<number>(
-      `document.querySelectorAll('[aria-label="Rules for the selection"]').length`
+    // The bar stays open since its redesign and lists the rules on the
+    // selection, so a taken rule is one in that list; then it is closed,
+    // so it is not an overlay over the scroll being measured.
+    const taken = await devtools.evaluate<number>(
+      `[...document.querySelectorAll('[aria-label]')].filter(el => (el.getAttribute('aria-label') ?? '').startsWith('Colour scale ·')).length`
     );
-    if (stillOpen !== 0) {
-      throw new Error('The rule was not taken: the conditional formatting bar is still open.');
+    if (taken === 0) {
+      throw new Error('The rule was not taken: no colour scale is listed in the conditional formatting bar.');
     }
+    await devtools.press('Escape', 27);
+    await sleep(200);
 
     const ruled = report(
       'scrolling with a colour scale over every cell',
@@ -572,25 +575,40 @@ async function main(): Promise<void> {
     }
     await sleep(500);
 
-    const during = await devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
-    const drawn = during.filter(frame => frame.at >= (during[0]?.at ?? 0));
+    // Counted inside the block, by the block's own window on the
+    // render worker's clock, and clear of its edges by a frame's worth.
+    // This used to count the whole recording, which takes in the frames
+    // drawn just before and after, so it would have read seventy-odd
+    // "frames drawn during it" for a worker that drew none. gessologic's
+    // proof, which copied this, found exactly that: a render worker
+    // stalled for the whole block, passing the old count.
+    const recorded = await devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
+    const window = await devtools.evaluate<{ start: number; end: number } | null>('globalThis.gessosheetProof.lastBlock()');
+    if (window === null) {
+      throw new Error('The block button did not record a block.');
+    }
+    const drawn = recorded.filter(frame => frame.at > window.start + 50 && frame.at < window.end - 50);
+    // The longest stretch of the block without a frame, edges included:
+    // a worker that has stopped shows five seconds of it anywhere.
+    const stamps = [window.start, ...drawn.map(frame => frame.at), window.end];
     let worstGap = 0;
-    for (let index = 1; index < during.length; index++) {
-      worstGap = Math.max(worstGap, during[index].at - during[index - 1].at);
+    for (let index = 1; index < stamps.length; index++) {
+      worstGap = Math.max(worstGap, stamps[index] - stamps[index - 1]);
     }
     const settled = await devtools.evaluate<string>(`[...document.querySelectorAll('[aria-live]')].map(el => el.textContent ?? '').find(text => /^(Ready|[\\d,]+ to do)/.test(text)) ?? ''`);
 
     console.log(
       `  blocking the main thread for five seconds…\n` +
-        `    frozen for ${frozenMs}ms · ${drawn.length} frames drawn during it · ` +
-        `worst gap ${worstGap.toFixed(0)}ms · status "${settled}"`
+        `    frozen for ${frozenMs}ms · ${drawn.length} frames drawn inside it · ` +
+        `quietest ${worstGap.toFixed(0)}ms · status "${settled}"`
     );
     check(failures, `the block only froze the page for ${frozenMs}ms`, frozenMs >= 4_500, 4_500);
+    check(failures, `only ${drawn.length} frames were drawn while the main thread was blocked`, drawn.length >= 10, 10);
     check(
       failures,
-      `only ${drawn.length} frames were drawn while the main thread was blocked`,
-      drawn.length >= 10,
-      10
+      `the render worker went ${worstGap.toFixed(0)}ms without a frame while the main thread was blocked`,
+      worstGap <= 1_500,
+      1_500
     );
     check(
       failures,

@@ -90,6 +90,13 @@ export interface ProofFrame {
 export interface ProofHandle {
   frames(): readonly ProofFrame[];
   reset(): void;
+  /**
+   * The last block, on the render worker's clock, so frames can be
+   * counted *inside* it. A count of the whole recording also takes the
+   * frames drawn a moment before and after, which would pass a render
+   * worker that drew nothing at all during the freeze.
+   */
+  lastBlock(): { readonly start: number; readonly end: number } | null;
 }
 
 declare global {
@@ -139,9 +146,11 @@ export function proofPanel(host: HTMLElement): {
   const finishes: number[] = [];
   const recording: ProofFrame[] = [];
   let peakMeasured = 0;
+  let lastBlock: { start: number; end: number } | null = null;
 
   globalThis.gessosheetProof = {
     frames: () => recording,
+    lastBlock: () => lastBlock,
     reset: () => {
       recording.length = 0;
       finishes.length = 0;
@@ -298,10 +307,13 @@ export function proofPanel(host: HTMLElement): {
       pulse.classList.add('blocked');
       requestAnimationFrame(() =>
         requestAnimationFrame(() => {
-          const until = performance.now() + BLOCK_MS;
+          const start = performance.now();
+          const until = start + BLOCK_MS;
           while (performance.now() < until) {
             /* Holding the thread. That is the whole experiment. */
           }
+          const offset = workerOffset ?? 0;
+          lastBlock = { start: start - offset, end: performance.now() - offset };
           block.disabled = false;
           block.textContent = `Block the main thread for ${BLOCK_MS / 1000}s`;
           pulse.classList.remove('blocked');
