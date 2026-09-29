@@ -201,7 +201,10 @@ export async function openPage(
       '--no-default-browser-check',
       '--hide-scrollbars',
       '--force-device-scale-factor=1',
-      '--disable-frame-rate-limit',
+      // Not `--disable-frame-rate-limit`: under it, Chrome drives a
+      // software-composited worker's animation frames from the page's
+      // main thread, so blocking the page stops a render worker that no
+      // real browser would stop. gessologic's proof found it.
       `--window-size=${options.windowSize[0]},${options.windowSize[1]}`,
       `--user-data-dir=${options.profileDir}`,
       `--remote-debugging-port=${options.devtoolsPort}`,

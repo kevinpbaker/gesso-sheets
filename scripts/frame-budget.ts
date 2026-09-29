@@ -401,14 +401,24 @@ async function main(): Promise<void> {
 
     // And the rule really landed, or the run below measures a sheet
     // quietly doing nothing — the same trap the recalculation run has.
-    // The bar stays open since its redesign and lists the rules on the
-    // selection, so a taken rule is one in that list; then it is closed,
-    // so it is not an overlay over the scroll being measured.
-    const taken = await devtools.evaluate<number>(
-      `[...document.querySelectorAll('[aria-label]')].filter(el => (el.getAttribute('aria-label') ?? '').startsWith('Colour scale ·')).length`
+    // Since its redesign the bar stays open on a taken rule, to edit it:
+    // "Add rule" gives way to "Save changes", with the colour scale still
+    // the kind chosen. One still offering "Add rule" is an Add that did
+    // nothing. Then it is closed, so it is not an overlay over the scroll
+    // being measured.
+    const taken = await devtools.evaluate<{ adding: number; saving: number; scale: boolean }>(
+      `(() => {
+         const bar = document.querySelector('[aria-label="Rules for the selection"]');
+         const scale = document.querySelector('[role="radio"][aria-label="Colour scale"]');
+         return {
+           adding: bar === null ? 0 : bar.querySelectorAll('[aria-label="Add rule"]').length,
+           saving: bar === null ? 0 : bar.querySelectorAll('[aria-label="Save changes"]').length,
+           scale: scale?.getAttribute('aria-checked') === 'true'
+         };
+       })()`
     );
-    if (taken === 0) {
-      throw new Error('The rule was not taken: no colour scale is listed in the conditional formatting bar.');
+    if (taken.adding !== 0 || taken.saving === 0 || !taken.scale) {
+      throw new Error(`The rule was not taken: the conditional formatting bar ${JSON.stringify(taken)}.`);
     }
     await devtools.press('Escape', 27);
     await sleep(200);
@@ -554,7 +564,7 @@ async function main(): Promise<void> {
     await devtools.evaluate('globalThis.gessosheetProof.reset()');
     const blockButton = await devtools.evaluate<{ x: number; y: number }>(
       `(() => {
-         const box = document.getElementById('block').getBoundingClientRect();
+         const box = document.getElementById('gesso-proof-block').getBoundingClientRect();
          return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
        })()`
     );
@@ -633,9 +643,14 @@ async function main(): Promise<void> {
     await openMenu(devtools, 'Data');
     const scriptStarted = Date.now();
     await chooseItem(devtools, 'Run a script that never ends');
+    // Seventy notches rather than the usual hundred and fifty, so the
+    // scroll fits inside the script's five seconds. A notch takes about a
+    // frame to be handled once frames are paced by the display, as they
+    // are in a real browser, and a full run took 7.8 s; it only fitted
+    // while the launcher ran Chrome with its frame rate unlimited.
     const scripting = report(
       'scrolling while a script runs',
-      await scrollRun(devtools, 'scrolling while a script runs'),
+      await scrollRun(devtools, 'scrolling while a script runs', 70),
       failures
     );
     const scriptElapsed = Date.now() - scriptStarted;
@@ -783,10 +798,10 @@ async function chooseItem(devtools: DevTools, label: string): Promise<void> {
   await sleep(60);
 }
 
-async function scrollRun(devtools: DevTools, what: string): Promise<ProofFrame[]> {
+async function scrollRun(devtools: DevTools, what: string, notches = NOTCHES): Promise<ProofFrame[]> {
   console.log(`  ${what}…`);
   await devtools.evaluate('globalThis.gessosheetProof.reset()');
-  for (let notch = 0; notch < NOTCHES; notch++) {
+  for (let notch = 0; notch < notches; notch++) {
     await devtools.wheel(SIZE[0] / 2, SIZE[1] / 2, notch % 20 === 19 ? 120 : 0, 100);
     await sleep(16);
   }

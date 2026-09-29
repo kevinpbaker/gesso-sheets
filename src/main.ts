@@ -22,19 +22,19 @@
  * and that is not a duplication that can be removed: this half is DOM
  * on the page, the other half is a component in a worker, and the
  * thread that owns each is the thread that has to ask. See
- * `ProofPanel`.
+ * `proofPanel` from `gesso-devtools`.
  */
+import { proofPanel } from 'gesso-devtools';
 import { createApp } from 'gesso-framework';
 
 import { isProofPath } from './route';
-import { proofPanel } from './shell/ProofPanel';
 
 const host = document.querySelector<HTMLElement>('#app');
 if (host === null) {
   throw new Error('index.html has no #app element to mount into.');
 }
 
-const panel = isProofPath(location.pathname) ? proofPanel(host) : null;
+const panel = isProofPath(location.pathname) ? proofPanel(host, { global: 'gessosheetProof', layout: true }) : null;
 const app = createApp({
   ...(panel?.options ?? {}),
   history: { mode: 'path' },
