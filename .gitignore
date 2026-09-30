@@ -3,10 +3,5 @@ dist
 *.local
 .DS_Store
 
-# Packed out of the sibling Gesso checkout by scripts/vendor-gesso.sh.
-# 2MB of tarballs that change on every engine iteration; regenerate
-# rather than commit. A fresh clone runs the script once before install.
-vendor
-
 # Vercel CLI link and local build output.
 .vercel

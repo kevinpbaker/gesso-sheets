@@ -162,9 +162,7 @@ is [`ROADMAP.md`](ROADMAP.md).
 
 Charts and import/export of `.xlsx` are the next two phases. Pivot
 tables, macros, collaborative editing, rich text within a single cell,
-and touch-sized targets are not planned for this round. It installs
-Gesso from packed tarballs in `vendor/` rather than from a registry
-for now; see [the last section](#why-vendor-exists-and-how-to-remove-it).
+and touch-sized targets are not planned for this round.
 
 ---
 
@@ -320,25 +318,6 @@ view has stopped arriving.
 - Every prop takes a value or an Observable of that value. That is the
   whole binding model, and it is why the component body runs once.
 
-### Why `vendor/` exists, and how to remove it
-
-This project was scaffolded with `--local`, so it installs Gesso from
-a checkout rather than from the registry: the packages were packed
-into `vendor/` and the manifest points at the tarballs.
-
-The packed packages declare each other by version range, so without
-help a package manager is free to go looking for `gesso-core@^0.1.0`
-on the registry and get a different copy than the one beside it.
-`overrides` in `package.json` is what tells npm; `overrides` in
-`pnpm-workspace.yaml` is what tells pnpm, which reads it nowhere else.
-
-To pick up a further change, run `create-gesso-app --local` over this
-directory again with `--force`.
-
-To move to the published packages: delete `vendor/`, delete
-`pnpm-workspace.yaml`, delete `overrides`, and put version ranges back
-in `dependencies`.
-
 ### Deploying
 
 The sheet is a static build — `dist/` is five files and a wasm — so
@@ -363,26 +342,7 @@ own. Nothing has to be run by hand and no token has to be stored: the
 GitHub App does the triggering, which is why there is no workflow file
 in `.github/` here.
 
-The one thing that is not ordinary is the install step, and `vendor/`
-is the reason. The engine is not on a registry and its tarballs are
-not committed, so a fresh clone has no Gesso to build against — see
-[Why `vendor/` exists](#why-vendor-exists-and-how-to-remove-it).
-`scripts/vercel-install.sh` is the answer: it fetches the one Gesso
-commit named in `gesso.lock`, builds the six packages, and hands them
-to `vendor-gesso.sh`, which packs and installs them exactly as it does
-locally. A cold deploy is about twenty seconds of install and one
-second of build.
-
-`gesso.lock` is stamped by `vendor-gesso.sh` every time it runs, so
-the deployed build runs the engine the working copy runs rather than
-whatever Gesso's main branch has moved on to. **An engine change is
-therefore two commits**: re-vendor, commit `gesso.lock` here, and push
-Gesso itself — a `gesso.lock` naming a commit that was never pushed is
-a deploy that cannot install, and fails in two seconds on
-`upload-pack: not our ref`.
-
-`vendor-gesso.sh` checks for that as it stamps and says so on the spot
-rather than leaving it to the build log, which is twenty minutes later
-and somewhere else. It is a warning and not a refusal: what has to be
-true is that Gesso is pushed before the commit carrying `gesso.lock`
-is, which is not yet true at the moment the stamp is written.
+The install is a plain `pnpm install --frozen-lockfile`, with Gesso's
+six packages coming from npm like everything else. `pnpm-workspace.yaml`
+exempts those six from pnpm's one-day wait on new releases, so a Gesso
+release can be deployed the hour it is published.
