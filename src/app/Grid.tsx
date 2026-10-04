@@ -3149,6 +3149,11 @@ export function Grid(
       flex: 1,
       minHeight: 0,
       width: percent(100),
+      // The whole of the box the grid is given, and not the rows it has
+      // built so far: a scroller with no size of its own is its
+      // content's size, which here is only the rows the window mounted
+      // to fill the size it was going to be.
+      height: percent(100),
       backgroundColor: 'background',
       // The extent is the application worker's, published on
       // `geometry`; the window follows it rather than agreeing with it.
