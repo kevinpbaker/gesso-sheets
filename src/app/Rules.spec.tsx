@@ -374,10 +374,10 @@ describe('rules over a selection', () => {
       await h.served.settle();
       await menu('o', 'Conditional formatting…');
       await click('Delete Highlight · A1:A5: greater than 5, in red fill');
-      // Typed after the 2 it opened with.
+      // The bar opens with the rule's 2 selected, so typing replaces it.
       await typeInto('Value', '3');
       await click('Save changes');
-      expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'lessThan', value: 32 }]);
+      expect(h.document.conditional.map(rule => rule.test)).toEqual([{ kind: 'lessThan', value: 3 }]);
     });
 
     /** A highlight being changed must not be saved as a scale by switching the tab. */
