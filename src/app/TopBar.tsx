@@ -10,8 +10,9 @@ import {
   type UiTextSpan
 } from 'gesso-core';
 import { ColorPalette, ColorPicker, Dialog } from 'gesso-components';
-import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
+import { FocusService, internalState, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
 
+import { appearance, type Appearance } from './appearance';
 import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
@@ -80,6 +81,13 @@ export interface TopBarProps {
 /** Which half of the find bar is showing, or neither. */
 type Finding = 'closed' | 'find' | 'replace';
 
+/** The appearance each of View's three appearance commands chooses. */
+const APPEARANCE_OF = {
+  appearanceSystem: 'system',
+  appearanceLight: 'light',
+  appearanceDark: 'dark'
+} as const satisfies Partial<Record<CommandId, Appearance>>;
+
 export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const focus = ctx.inject(FocusService);
@@ -87,6 +95,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const status = sheet.view.status;
   const proof = inputs.proof.value === true;
   const files = inputs.files.value;
+  const look = appearance(ctx.inject(ShellService));
 
   /** A property of the active cell's paint, as something to bind. */
   const on = (read: (paint: CellPaint) => boolean): Observable<boolean> =>
@@ -131,6 +140,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     }
     const what = id === 'undo' ? status.value.undoLabel : status.value.redoLabel;
     return what === '' ? undefined : `${COMMANDS[id].label} ${what}`;
+  };
+
+  /**
+   * The appearance commands are a choice of three, so they are the
+   * menu's settings: the one in force is ticked and the others are
+   * not. Every other command is an action and has no tick.
+   */
+  const checkedOf = (id: CommandId): boolean | undefined => {
+    return id in APPEARANCE_OF ? look.current === APPEARANCE_OF[id as keyof typeof APPEARANCE_OF] : undefined;
   };
 
   const tipFor = (id: 'undo' | 'redo'): string => {
@@ -867,6 +885,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'zoomReset':
         sheet.send.setZoom(zoomStep(sheet.view.geometry.value.zoom, id));
         break;
+      case 'appearanceSystem':
+      case 'appearanceLight':
+      case 'appearanceDark':
+        look.set(APPEARANCE_OF[id]);
+        break;
       case 'iterate':
         sheet.send.setIteration(true);
         break;
@@ -1208,6 +1231,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           menus={menusFor(proof)}
           enabled={enabled}
           labelNow={labelNow}
+          checkedOf={checkedOf}
           onChoose={run}
           /**
            * The sheet gets the keyboard back, unless the command that

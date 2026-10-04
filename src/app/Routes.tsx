@@ -1,7 +1,8 @@
 import { percent } from 'gesso-core';
-import { createComponent, route, RouterOutlet, type ComponentContext, type Inputs } from 'gesso-framework';
+import { createComponent, route, RouterOutlet, ShellService, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { PROOF_PATH } from '../route';
+import { appearanceTheme } from './appearance';
 import { SheetApp } from './SheetApp';
 
 /**
@@ -52,10 +53,18 @@ export const ROUTES = [SHEET, DOCUMENT, PROOF];
  * purpose: chrome drawn around the outlet would be chrome the proof
  * route and the plain route shared, and they share the screen rather
  * than a frame around it.
+ *
+ * The theme is the one thing set here, because it is the one thing
+ * every screen inherits: light or dark as View ▸ Appearance says,
+ * which by default is as the platform reports it.
+ * Every role colour below — `background`, `text`, `border`, the
+ * selection's wash — follows from it; the colours a person chose for
+ * a cell are their data and do not.
  */
-export function AppRoot(_inputs: Inputs<{}>, _ctx: ComponentContext) {
+export function AppRoot(_inputs: Inputs<{}>, ctx: ComponentContext) {
+  const theme = appearanceTheme(ctx.inject(ShellService));
   return (
-    <column width={percent(100)} height={percent(100)} backgroundColor="background">
+    <column theme={theme} width={percent(100)} height={percent(100)} backgroundColor="background">
       {createComponent(RouterOutlet)}
     </column>
   );
