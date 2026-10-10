@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createComponent } from 'gesso-framework';
-import { renderTest, serveForTest, textProperty, type Rendered, type ServedForTest } from 'gesso-testing';
+import { nodesUnder, renderTest, serveForTest, textProperty, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
 
 import type { UiKeyModifiers } from 'gesso-core';
@@ -806,6 +806,34 @@ describe('the toolbar', () => {
     await h.ui.settle();
 
     expect(h.document.formatAt(0, 0).paint.bold).toBe(true);
+  });
+
+  /**
+   * Where the arrows would land is drawn only while they would reach it.
+   *
+   * On a fresh page Undo, the first button, wore the focus ring and the
+   * lit background with the keyboard nowhere near the toolbar, and
+   * looked pressed beside a Redo that did not.
+   */
+  it('rings the button the arrows are on only while the toolbar has the keyboard', async () => {
+    const ring = () =>
+      nodesUnder(h.ui.getByRole('toolbar'))
+        .filter(node => node.properties.get('borderColor') === 'focusRing')
+        .map(node => node.properties.get('label'));
+    const undo = () => h.ui.getByRole('button', { name: 'Undo' }).properties.get('backgroundColor');
+    expect(ring()).toEqual([]);
+    expect(undo()).toBe('controlBackground');
+
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
+    expect(ring()).toEqual(['Undo']);
+    expect(undo()).toBe('controlBackgroundHovered');
+
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
+    expect(ring()).toEqual([]);
   });
 });
 

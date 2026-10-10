@@ -98,6 +98,18 @@ export function Toolbar(inputs: Inputs<ToolbarProps>, ctx: ComponentContext) {
   const items = inputs.items.value;
   /** Which button the roving highlight is on. */
   const at = new BehaviorSubject(0);
+  /**
+   * Whether the toolbar holds the keyboard, which is when the roving
+   * highlight is shown at all.
+   *
+   * It used to be shown always, so on a fresh page Undo — button
+   * nought — wore the focus ring and the lit background with the
+   * keyboard nowhere near it, and looked pressed beside a Redo that
+   * did not. Where the arrows would land is only worth drawing while
+   * the arrows would reach it.
+   */
+  const focused = new BehaviorSubject(false);
+  const shown = combineLatest([at, focused]).pipe(map(([current, has]) => (has ? current : -1)));
 
   const step = (by: number): void => {
     if (items.length === 0) {
@@ -140,13 +152,15 @@ export function Toolbar(inputs: Inputs<ToolbarProps>, ctx: ComponentContext) {
       focusable={true}
       role="toolbar"
       label={inputs.label.value ?? 'Toolbar'}
+      onFocus={() => focused.next(true)}
+      onBlur={() => focused.next(false)}
       onKeyDown={onKeyDown}>
-      {items.map((item, index) => button(item, index, at, ctx))}
+      {items.map((item, index) => button(item, index, at, shown, ctx))}
     </row>
   );
 }
 
-function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, ctx: ComponentContext) {
+function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, shown: Observable<number>, ctx: ComponentContext) {
   const pressed = item.pressed ?? of(false);
   const enabled = item.enabled ?? of(true);
   /** What the tooltip says: what it was given, or the button's own name. */
@@ -161,7 +175,7 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, c
    * itself — without it the arrows would move a selection nobody can
    * see.
    */
-  const carried = combineLatest([pressed, at, hovered]).pipe(
+  const carried = combineLatest([pressed, shown, hovered]).pipe(
     map(([is, current, over]) =>
       is || current === index || over ? 'controlBackgroundHovered' : 'controlBackground'
     )
@@ -207,7 +221,7 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, c
       marginLeft={item.startsGroup === true ? 10 : 2}
       borderRadius={6}
       backgroundColor={carried}
-      borderColor={at.pipe(map(current => (current === index ? 'focusRing' : 'controlBorder')))}
+      borderColor={shown.pipe(map(current => (current === index ? 'focusRing' : 'controlBorder')))}
       borderWidth={1}
       cursor="pointer"
       opacity={enabled.pipe(map(is => (is ? 1 : 0.4)))}
