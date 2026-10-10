@@ -29,11 +29,16 @@ import {
   bars3BottomLeft,
   bars3BottomRight,
   bold,
+  clock,
   currencyDollar,
+  funnel,
   italic,
   paintBrush,
   percentBadge,
+  printer,
+  squares2x2,
   swatch,
+  tableCells,
   underline
 } from './heroicons';
 
@@ -95,7 +100,12 @@ export const ICONS = {
   fill: swatch,
   currency: currencyDollar,
   percent: percentBadge,
-  recalculate: arrowPath
+  recalculate: arrowPath,
+  home: squares2x2,
+  print: printer,
+  filter: funnel,
+  history: clock,
+  borders: tableCells
 } as const satisfies Record<string, Glyph>;
 
 export type IconName = keyof typeof ICONS;

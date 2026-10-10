@@ -65,6 +65,8 @@ import {
   type SheetSimulation,
   type SheetSpread,
   type SheetUncertainty,
+  type SheetLibraryView,
+  type SheetVersionsView,
   type SheetScriptRun,
   type SheetValidationRule,
   type SheetWindow
@@ -81,7 +83,8 @@ import { SheetDocument } from './SheetDocument';
 import { cellKey, columnName } from '../sheet/A1';
 import { snapshotOf, applySnapshot, parseSnapshot, SCRIPT_SOURCE_LIMIT, type SheetSnapshot } from './SheetFile';
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
-import type { SheetRepository } from './SheetRepository';
+import type { SaveState, SheetRepository } from './SheetRepository';
+import { VERSION_EVERY_MS, type VersionReason } from './SheetVersions';
 import { scenarioPaint } from './scenarioPaint';
 import { DEFAULT_LIMITS, ScriptHost, type Script, type ScriptRunResult, type ScriptWorker } from '../script/ScriptHost';
 import { CellFunctions, loadInterpreter } from '../script/CellFunctions';
@@ -154,7 +157,15 @@ export interface SheetServiceOptions {
 }
 
 /** The view of a document before one has been opened. */
-const NO_DOCUMENT: SheetDocumentView = { id: '', name: '', file: null, edited: false, elsewhere: false };
+const NO_DOCUMENT: SheetDocumentView = {
+  id: '',
+  name: '',
+  file: null,
+  edited: false,
+  elsewhere: false,
+  saving: 'off',
+  autosave: false
+};
 
 /** `Q3 sales.gsheet` is called `Q3 sales`. */
 /** `a`, `a and b`, `a, b and c`. */
@@ -201,6 +212,8 @@ export class SheetService {
   readonly clipboard: Observable<SheetClipboard>;
   readonly transfer: Observable<SheetTransfer>;
   readonly documentView: Observable<SheetDocumentView>;
+  readonly libraryView: Observable<SheetLibraryView>;
+  readonly versionsView: Observable<SheetVersionsView>;
   readonly selectionStats: Observable<SheetStats>;
   readonly findView: Observable<SheetFindView>;
   readonly formats: Observable<SheetFormatWindow>;
@@ -264,6 +277,30 @@ export class SheetService {
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0, marked: null });
   private readonly transferSubject = new BehaviorSubject<SheetTransfer>({ download: null, report: '' });
   private readonly documentSubject = new BehaviorSubject<SheetDocumentView>(NO_DOCUMENT);
+  private readonly librarySubject = new BehaviorSubject<SheetLibraryView>({ entries: [], serial: 0 });
+  private readonly versionsSubject = new BehaviorSubject<SheetVersionsView>({ entries: [], serial: 0 });
+  /** Where the open document's repository says its saves have got to. */
+  private saveState: SaveState = 'saved';
+  /** Stops listening to the last repository's save state. */
+  private unwatch: (() => void) | null = null;
+  /** An edit the repository has not yet said is on the disk; see `watchRepository`. */
+  private unsavedEdit = false;
+  /** An edit the document's file has not had, for *Keep saving to this file*. */
+  private fileBehind = false;
+  /** Whether a Save As was asked for in order to turn *Keep saving* on. */
+  private autosaveWanted = false;
+  /**
+   * The document as it was opened, kept until the first edit makes it
+   * worth a version — so opening a workbook and reading it costs no
+   * restore point, and the first change after opening it leaves one
+   * behind that undoes the whole session.
+   */
+  private openedSnapshot: SheetSnapshot | null = null;
+  private openedAt = 0;
+  /** When the last version was taken; see `VERSION_EVERY_MS`. */
+  private lastVersionAt = 0;
+  /** Versions being written, one after another. */
+  private versioning: Promise<void> = Promise.resolve();
   /** The open document's entry in the library, or null without one. */
   private entry: DocumentEntry | null = null;
   /** Whether anything has changed since the document was opened or saved to its file. */
@@ -443,6 +480,7 @@ export class SheetService {
     this.schedule = options.schedule ?? defaultSchedule;
     const columnCount = options.columnCount ?? 100;
     this.repository = options.repository;
+    this.watchRepository();
     document.columnWidths = Array.from({ length: columnCount }, () => COLUMN_WIDTH);
     document.book.extent = { rows: options.rowCount ?? 10_000, columns: columnCount };
     this.geometrySubject = new BehaviorSubject<SheetGeometry>({
@@ -488,6 +526,8 @@ export class SheetService {
     this.clipboard = this.clipboardSubject;
     this.transfer = this.transferSubject;
     this.documentView = this.documentSubject;
+    this.libraryView = this.librarySubject;
+    this.versionsView = this.versionsSubject;
     this.selectionStats = this.statsSubject;
     this.findView = this.findSubject;
     this.formats = this.formatsSubject;
@@ -2776,15 +2816,16 @@ export class SheetService {
    * difference between Save and Save As, and the render worker's
    * `saveFile` call turns it into a write or a picker.
    */
-  saveDocument(asNew: boolean): void {
+  saveDocument(asNew: boolean, quiet = false): void {
     const file = this.entry?.file ?? null;
     const handle = !asNew && file !== null ? file.handle : null;
     this.publishDownload({
       kind: 'workbook',
-      name: file?.name ?? `${this.entry?.name ?? 'Untitled'}.gsheet`,
+      name: asNew || file === null ? `${this.entry?.name ?? 'Untitled'}.gsheet` : file.name,
       mediaType: 'application/json',
       text: JSON.stringify(this.snapshot()),
-      handle
+      handle,
+      ...(quiet ? { quiet: true } : {})
     });
   }
 
@@ -2798,7 +2839,7 @@ export class SheetService {
    * asks where again, which is the honest answer in a browser that
    * cannot write to a file it did not open.
    */
-  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download'): void {
+  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download', quiet = false): void {
     const verb = via === 'file' ? 'Saved' : 'Downloaded';
     // An export is a copy: the document goes on being the one it was,
     // saved where it was saved, and edited if it was.
@@ -2806,14 +2847,38 @@ export class SheetService {
       this.report(`${verb} ${name}.${kind === 'xlsx' ? this.xlsxLeftOut : ''}`);
       return;
     }
+    const wanted = this.autosaveWanted;
+    this.autosaveWanted = false;
     this.enqueue(async () => {
       if (this.entry !== null) {
-        this.entry = { ...this.entry, name: baseName(name), file: { handle, name } };
+        // Saved back to the file it already had, the document keeps
+        // the name somebody gave it; saved somewhere new, it takes the
+        // new file's name, as Save As does everywhere.
+        const same = this.entry.file?.name === name;
+        const autosave = wanted && via === 'file' && handle !== null ? true : this.entry.autosave;
+        this.entry = {
+          ...this.entry,
+          name: same ? this.entry.name : baseName(name),
+          file: { handle, name },
+          ...(autosave === undefined ? {} : { autosave })
+        };
         await this.library?.put(this.entry);
+        if (!quiet) {
+          this.keepVersion(this.snapshot(), 'saved');
+        }
       }
       this.edited = false;
       this.publishDocument();
-      this.report(`${verb} ${name}.`);
+      if (quiet) {
+        return;
+      }
+      if (wanted && (via !== 'file' || handle === null)) {
+        this.report(`Downloaded ${name}. This browser cannot write to a file again, so changes stay here until the next download.`);
+      } else if (wanted) {
+        this.report(`Saved ${name}. Every change now goes to it as well.`);
+      } else {
+        this.report(`${verb} ${name}.`);
+      }
     });
   }
 
@@ -2917,6 +2982,11 @@ export class SheetService {
     document.book.extent = { rows: this.geometrySubject.value.rowCount, columns: this.geometrySubject.value.columnCount };
     this.document = document;
     this.repository = this.library?.repository(entry.id) ?? this.repository;
+    this.watchRepository();
+    this.openedSnapshot = stored;
+    this.openedAt = this.now();
+    this.lastVersionAt = this.openedAt;
+    this.fileBehind = false;
     this.refusal = '';
     this.extraPaints.length = 0;
     this.extraIds.clear();
@@ -2965,7 +3035,299 @@ export class SheetService {
       name: this.entry?.name ?? '',
       file: this.entry?.file ?? null,
       edited: this.edited,
-      elsewhere: this.elsewhere
+      elsewhere: this.elsewhere,
+      saving: this.entry === null || this.elsewhere ? 'off' : this.saveState,
+      autosave: this.entry?.autosave === true && this.entry.file?.handle != null
+    });
+  }
+
+  /**
+   * Listens to the open document's repository for where its saves have
+   * got to, and does the two things that wait for a save to land: the
+   * library's *last edited* time, and a write to the document's file
+   * when it is being kept up to date.
+   *
+   * Both wait for the disk rather than following the edit, so a burst
+   * of typing is one index write and one file write, not one a key.
+   */
+  private watchRepository(): void {
+    this.unwatch?.();
+    this.unwatch = null;
+    const repository = this.repository;
+    if (repository === undefined) {
+      return;
+    }
+    this.unwatch = repository.watch(state => {
+      if (repository !== this.repository) {
+        return;
+      }
+      const changed = state !== this.saveState;
+      this.saveState = state;
+      if (state === 'saved' && this.unsavedEdit) {
+        this.unsavedEdit = false;
+        this.noteEdited();
+        if (this.fileBehind && this.entry?.autosave === true && this.entry.file?.handle != null) {
+          this.fileBehind = false;
+          this.saveDocument(false, true);
+        }
+      }
+      if (changed && this.entry !== null) {
+        this.publishDocument();
+      }
+    });
+  }
+
+  /** Records when the open document last changed, at most twice a minute. */
+  private noteEdited(): void {
+    const entry = this.entry;
+    const now = this.now();
+    if (entry === null || this.library === undefined || now - (entry.edited ?? 0) < 30_000) {
+      return;
+    }
+    this.entry = { ...entry, edited: now };
+    void this.library.put(this.entry);
+  }
+
+  /**
+   * Keeps a restore point of the open document, unless there is no
+   * library to keep it in. Written one after another, and never waited
+   * for: a version is a copy of what is already safe.
+   */
+  private keepVersion(snapshot: SheetSnapshot, reason: VersionReason, at = this.now()): void {
+    const library = this.library;
+    const entry = this.entry;
+    if (library === undefined || entry === null) {
+      return;
+    }
+    this.lastVersionAt = at;
+    this.versioning = this.versioning
+      .then(() => library.versions(entry.id).add({ at, reason }, snapshot))
+      .catch(error => console.warn('[sheet] could not keep a version.', error));
+  }
+
+  /** The version a change is due, if one is: see `openedSnapshot` and `VERSION_EVERY_MS`. */
+  private versionDue(snapshot: SheetSnapshot): void {
+    if (this.openedSnapshot !== null) {
+      this.keepVersion(this.openedSnapshot, 'opened', this.openedAt);
+      this.openedSnapshot = null;
+      return;
+    }
+    if (this.now() - this.lastVersionAt >= VERSION_EVERY_MS) {
+      this.keepVersion(snapshot, 'auto');
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // The library, from the home screen
+  // ---------------------------------------------------------------------
+
+  /** Publishes every workbook in the library on `library`. */
+  listDocuments(): void {
+    this.enqueue(() => this.publishLibrary());
+  }
+
+  private async publishLibrary(): Promise<void> {
+    const library = this.library;
+    if (library === undefined) {
+      return;
+    }
+    const entries = await library.entries();
+    const listed = entries
+      .map(each => (each.id === this.entry?.id ? this.entry : each))
+      .map(each => ({
+        id: each.id,
+        name: each.name,
+        edited: each.edited ?? each.used,
+        file: each.file?.name ?? '',
+        open: each.id === this.entry?.id
+      }))
+      .sort((a, b) => b.edited - a.edited || a.name.localeCompare(b.name));
+    this.librarySubject.next({ entries: listed, serial: this.librarySubject.value.serial + 1 });
+  }
+
+  /**
+   * Calls a document something else: the name the title bar shows, the
+   * home screen lists and Save As suggests. A file it is saved to keeps
+   * its own name; renaming a file is the file system's business.
+   */
+  renameDocument(id: string, name: string): void {
+    const wanted = name.trim().replace(/\s+/g, ' ').slice(0, 120);
+    if (wanted === '') {
+      return;
+    }
+    this.enqueue(async () => {
+      const library = this.library;
+      if (this.entry !== null && id === this.entry.id) {
+        this.entry = { ...this.entry, name: wanted };
+        await library?.put(this.entry);
+        this.publishDocument();
+      } else if (library !== undefined) {
+        const found = (await library.entries()).find(each => each.id === id);
+        if (found === undefined) {
+          return;
+        }
+        await library.put({ ...found, name: wanted });
+      }
+      await this.publishLibrary();
+    });
+  }
+
+  /** A copy of a document in the library, kept only here, and not opened. */
+  duplicateDocument(id: string): void {
+    this.enqueue(async () => {
+      const library = this.library;
+      if (library === undefined) {
+        return;
+      }
+      const found = id === this.entry?.id ? this.entry : (await library.entries()).find(each => each.id === id);
+      if (found === undefined || found === null) {
+        return;
+      }
+      const snapshot = id === this.entry?.id ? this.snapshot() : await library.repository(id).load();
+      if (snapshot === null) {
+        this.report(`${found.name} is empty, so there was nothing to copy.`);
+        return;
+      }
+      const now = this.now();
+      const copy: DocumentEntry = { id: library.newId(), name: `Copy of ${found.name}`, used: now, edited: now, file: null };
+      await library.put(copy);
+      const repository = library.repository(copy.id);
+      repository.save(snapshot);
+      await repository.flush();
+      await this.publishLibrary();
+      this.report(`Made ${copy.name}.`);
+    });
+  }
+
+  /**
+   * Deletes a document from the library, with its versions.
+   *
+   * One open in another tab is refused, because that tab would go on
+   * saving it and bring it back without an entry. The open one is let
+   * go first, so nothing waiting to be written writes it back, and the
+   * tab moves to the next most recent document, or a blank one.
+   */
+  deleteDocument(id: string): void {
+    this.enqueue(async () => {
+      const library = this.library;
+      if (library === undefined) {
+        return;
+      }
+      const entries = await library.entries();
+      const found = entries.find(each => each.id === id);
+      if (found === undefined) {
+        return;
+      }
+      if (id === this.entry?.id) {
+        // Written out first, so no save left waiting writes the file
+        // back after it has been removed.
+        await this.repository?.flush();
+        this.unwatch?.();
+        this.unwatch = null;
+        this.repository = undefined;
+        this.entry = null;
+        this.release?.();
+        this.release = null;
+        await library.remove(id);
+        const others = entries.filter(each => each.id !== id);
+        await this.open(others.length === 0 ? 'new' : '');
+      } else {
+        const release = await library.claim(id);
+        if (release === null) {
+          this.report(`${found.name} is open in another tab. Close it there first.`);
+          return;
+        }
+        await library.remove(id);
+        release();
+      }
+      await this.publishLibrary();
+      this.report(`Deleted ${found.name}.`);
+    });
+  }
+
+  /**
+   * *Keep saving to this file*: every change written to the document's
+   * file as well as to this browser, once the repository has it.
+   *
+   * A document with no file to write to is asked where first, through
+   * Save As, and kept up to date from the moment it lands; one that
+   * can only be downloaded cannot be kept up to date, and is told so.
+   */
+  setAutosave(on: boolean): void {
+    if (this.entry === null) {
+      return;
+    }
+    if (on && this.entry.file?.handle == null) {
+      this.autosaveWanted = true;
+      this.saveDocument(true);
+      return;
+    }
+    this.enqueue(async () => {
+      if (this.entry === null) {
+        return;
+      }
+      this.entry = { ...this.entry, autosave: on };
+      await this.library?.put(this.entry);
+      this.publishDocument();
+      if (on && this.edited) {
+        this.saveDocument(false, true);
+      }
+      this.report(on ? `Every change now goes to ${this.entry.file?.name ?? 'its file'} as well.` : 'Changes are kept in this browser; Save writes the file.');
+    });
+  }
+
+  /** A quiet save to the file was refused: said once, with what to do. */
+  fileNotSaved(why: string): void {
+    this.fileBehind = true;
+    const file = this.entry?.file?.name ?? 'the file';
+    this.report(`${file} was not kept up to date: ${why} Press Ctrl+S to save it.`);
+  }
+
+  // ---------------------------------------------------------------------
+  // Versions
+  // ---------------------------------------------------------------------
+
+  listVersions(): void {
+    this.enqueue(() => this.publishVersions());
+  }
+
+  private async publishVersions(): Promise<void> {
+    const library = this.library;
+    const entry = this.entry;
+    if (library === undefined || entry === null) {
+      this.versionsSubject.next({ entries: [], serial: this.versionsSubject.value.serial + 1 });
+      return;
+    }
+    await this.versioning;
+    const entries = await library.versions(entry.id).list();
+    this.versionsSubject.next({ entries, serial: this.versionsSubject.value.serial + 1 });
+  }
+
+  /**
+   * Puts a version back as the document, and keeps what it replaced as
+   * a version of its own first, so a restore is itself restorable. The
+   * undo stack does not survive it: the workbook is a fresh one.
+   */
+  restoreVersion(at: number): void {
+    this.enqueue(async () => {
+      const library = this.library;
+      const entry = this.entry;
+      if (library === undefined || entry === null || this.elsewhere) {
+        return;
+      }
+      await this.versioning;
+      const snapshot = await library.versions(entry.id).get(at);
+      if (snapshot === null) {
+        this.report('That version is no longer kept.');
+        return;
+      }
+      this.keepVersion(this.snapshot(), 'restored');
+      await this.swapTo(entry, snapshot);
+      this.openedSnapshot = null;
+      this.persist();
+      this.publishDocument();
+      await this.publishVersions();
+      this.report('Restored an earlier version. What it replaced is in the list as Before a restore.');
     });
   }
 
@@ -3367,7 +3729,11 @@ export class SheetService {
     if (!this.restored || this.elsewhere) {
       return;
     }
-    this.repository?.save(this.snapshot());
+    const snapshot = this.snapshot();
+    this.unsavedEdit = true;
+    this.fileBehind = true;
+    this.versionDue(snapshot);
+    this.repository?.save(snapshot);
     if (!this.edited && this.entry !== null) {
       this.edited = true;
       this.publishDocument();

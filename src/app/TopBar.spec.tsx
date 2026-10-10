@@ -776,7 +776,7 @@ describe('the toolbar', () => {
 
   it('is one tab stop, not one per button', async () => {
     const stops: string[] = [];
-    for (let press = 0; press < 5; press++) {
+    for (let press = 0; press < 6; press++) {
       h.ui.fireEvent.tab();
       await h.ui.settle();
       const node = h.ui.runtime.input.focus.focusedNode;
@@ -785,10 +785,13 @@ describe('the toolbar', () => {
         break;
       }
     }
-    expect(stops).toEqual(['menubar', 'toolbar', 'textbox', 'textbox', 'grid']);
+    // The workbook's name at the top is the first, since Phase 36.
+    expect(stops).toEqual(['textbox', 'menubar', 'toolbar', 'textbox', 'textbox', 'grid']);
   });
 
   it('runs the button the arrows land on', async () => {
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
     h.ui.fireEvent.tab();
     await h.ui.settle();
     h.ui.fireEvent.tab();

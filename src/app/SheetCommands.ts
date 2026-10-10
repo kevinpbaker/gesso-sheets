@@ -21,6 +21,10 @@ import { isPrintable, keyAction, type KeyModifiers } from './SheetKeys';
 
 export type CommandId =
   | 'newDocument'
+  | 'home'
+  | 'renameDocument'
+  | 'autosave'
+  | 'versionHistory'
   | 'openFile'
   | 'openRecent'
   | 'saveDocument'
@@ -240,6 +244,15 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * would be worse than a menu item.
    */
   newDocument: { id: 'newDocument', label: 'New' },
+  /**
+   * Phase 36's four. *All workbooks* is the home screen; *Rename* puts
+   * the keyboard in the name at the top; *Keep saving to this file* is
+   * ticked while it is on; *Version history* lists the restore points.
+   */
+  home: { id: 'home', label: 'All workbooks…' },
+  renameDocument: { id: 'renameDocument', label: 'Rename…' },
+  autosave: { id: 'autosave', label: 'Keep saving to this file' },
+  versionHistory: { id: 'versionHistory', label: 'Version history…' },
   openFile: { id: 'openFile', label: 'Open…', accelerator: { key: 'o', ctrl: true } },
   openRecent: { id: 'openRecent', label: 'Open recent…' },
   saveDocument: { id: 'saveDocument', label: 'Save', accelerator: { key: 's', ctrl: true } },
@@ -630,7 +643,21 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'file',
     label: 'File',
     mnemonic: 'f',
-    entries: ['newDocument', 'openFile', 'openRecent', SEPARATOR, 'saveDocument', 'saveDocumentAs', SEPARATOR, 'downloadXlsx', 'downloadCsv']
+    entries: [
+      'newDocument',
+      'home',
+      'openFile',
+      'openRecent',
+      SEPARATOR,
+      'renameDocument',
+      'saveDocument',
+      'saveDocumentAs',
+      'autosave',
+      'versionHistory',
+      SEPARATOR,
+      'downloadXlsx',
+      'downloadCsv'
+    ]
   },
   {
     id: 'edit',

@@ -1,5 +1,7 @@
 import { OpfsSheetRepository, SheetReadError } from './OpfsSheetRepository';
+import { parseSnapshot, type SheetSnapshot } from './SheetFile';
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
+import { VERSION_LIMIT, type SheetVersion, type VersionReason, type VersionStore } from './SheetVersions';
 
 /**
  * The library in the Origin Private File System: an index of the
@@ -28,6 +30,7 @@ interface SyncAccessHandle {
 
 interface OpfsDirectory {
   getFileHandle(name: string, options?: { create?: boolean }): Promise<{ createSyncAccessHandle(): Promise<SyncAccessHandle> }>;
+  removeEntry(name: string): Promise<void>;
 }
 
 const INDEX = 'documents.json';
@@ -99,6 +102,35 @@ export class OpfsSheetLibrary implements SheetLibrary {
       this.repositories.set(id, repository);
     }
     return repository;
+  }
+
+  /**
+   * Forgets a document. The entry goes first, under the index's lock,
+   * so a tab listing the library never finds an entry whose contents
+   * have already gone; the files after, and a file that will not go is
+   * left behind rather than holding the delete up.
+   */
+  async remove(id: string): Promise<void> {
+    this.writing = this.writing.then(() =>
+      exclusively(async () => {
+        const others = (await this.entries()).filter(each => each.id !== id);
+        await this.writeIndex(JSON.stringify(others));
+      })
+    );
+    await this.writing;
+    this.repositories.delete(id);
+    await this.versions(id).clear();
+    if (id !== FIRST_DOCUMENT) {
+      await removeFile(`document-${id}.json`);
+    } else {
+      // The first document's file is also what a profile with no index
+      // is read from, so it is emptied rather than left to come back.
+      await writeFile('gessosheet.json', '');
+    }
+  }
+
+  versions(id: string): VersionStore {
+    return new OpfsVersionStore(id, this.columnCount);
   }
 
   newId(): string {
@@ -196,6 +228,125 @@ export class OpfsSheetLibrary implements SheetLibrary {
     const root = await storage.getDirectory();
     return (await root.getFileHandle(INDEX, { create: true })).createSyncAccessHandle();
   }
+}
+
+/**
+ * A document's versions in OPFS: a small list, `versions-<id>.json`,
+ * and a file per version beside it, so the list can be read without
+ * reading thirty workbooks.
+ */
+class OpfsVersionStore implements VersionStore {
+  constructor(
+    private readonly id: string,
+    private readonly columnCount: number
+  ) {}
+
+  private get listName(): string {
+    return `versions-${this.id}.json`;
+  }
+
+  private fileOf(at: number): string {
+    return `version-${this.id}-${at}.json`;
+  }
+
+  async list(): Promise<SheetVersion[]> {
+    if (!hasOpfs()) {
+      return [];
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse((await readFile(this.listName)) || '[]');
+    } catch {
+      return [];
+    }
+    return Array.isArray(parsed) ? parsed.filter(isVersion).sort((a, b) => b.at - a.at) : [];
+  }
+
+  async add(version: SheetVersion, snapshot: SheetSnapshot): Promise<void> {
+    if (!hasOpfs()) {
+      return;
+    }
+    await exclusivelyNamed(`gessosheet-versions-${this.id}`, async () => {
+      await writeFile(this.fileOf(version.at), JSON.stringify(snapshot));
+      const all = [version, ...(await this.list()).filter(each => each.at !== version.at)].sort((a, b) => b.at - a.at);
+      await writeFile(this.listName, JSON.stringify(all.slice(0, VERSION_LIMIT)));
+      for (const old of all.slice(VERSION_LIMIT)) {
+        await removeFile(this.fileOf(old.at));
+      }
+    });
+  }
+
+  async get(at: number): Promise<SheetSnapshot | null> {
+    if (!hasOpfs()) {
+      return null;
+    }
+    const text = await readFile(this.fileOf(at));
+    return text === '' ? null : parseSnapshot(text, this.columnCount);
+  }
+
+  async clear(): Promise<void> {
+    if (!hasOpfs()) {
+      return;
+    }
+    for (const version of await this.list()) {
+      await removeFile(this.fileOf(version.at));
+    }
+    await removeFile(this.listName);
+  }
+}
+
+function isVersion(value: unknown): value is SheetVersion {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const version = value as Record<string, unknown>;
+  const reasons: readonly VersionReason[] = ['opened', 'auto', 'saved', 'restored'];
+  return typeof version.at === 'number' && reasons.includes(version.reason as VersionReason);
+}
+
+async function root(): Promise<OpfsDirectory> {
+  const storage = (navigator as unknown as { storage?: { getDirectory?: () => Promise<OpfsDirectory> } }).storage;
+  if (storage?.getDirectory === undefined) {
+    throw new Error('This environment has no Origin Private File System.');
+  }
+  return storage.getDirectory();
+}
+
+/** A whole file as text, or '' when it is empty or not there. */
+async function readFile(name: string): Promise<string> {
+  const handle = await (await (await root()).getFileHandle(name, { create: true })).createSyncAccessHandle();
+  try {
+    const buffer = new Uint8Array(handle.getSize());
+    handle.read(buffer, { at: 0 });
+    return new TextDecoder().decode(buffer);
+  } finally {
+    handle.close();
+  }
+}
+
+async function writeFile(name: string, text: string): Promise<void> {
+  const handle = await (await (await root()).getFileHandle(name, { create: true })).createSyncAccessHandle();
+  try {
+    handle.truncate(0);
+    handle.write(new TextEncoder().encode(text), { at: 0 });
+    handle.flush();
+  } finally {
+    handle.close();
+  }
+}
+
+async function removeFile(name: string): Promise<void> {
+  try {
+    await (await root()).removeEntry(name);
+  } catch {
+    // Not there, or held: nothing to do either way.
+  }
+}
+
+function exclusivelyNamed(name: string, run: () => Promise<void>): Promise<void> {
+  const locks = (navigator as unknown as { locks?: { request(name: string, run: () => Promise<void>): Promise<void> } })
+    .locks;
+  return locks === undefined ? run() : locks.request(name, run);
 }
 
 /**

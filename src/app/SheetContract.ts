@@ -340,6 +340,44 @@ export interface SheetDocumentView {
    * other's edits.
    */
   readonly elsewhere: boolean;
+  /**
+   * Where this browser's copy has got to; see `SaveState`. `off` while
+   * the document is not being kept here at all, because another tab
+   * holds it or nothing has been opened.
+   */
+  readonly saving: 'saving' | 'saved' | 'failed' | 'memory' | 'off';
+  /** Every change goes to `file` as well: *Keep saving to this file*. */
+  readonly autosave: boolean;
+}
+
+/**
+ * Every workbook this browser keeps, for the home screen.
+ *
+ * Published when it is asked for and after anything changes it, not
+ * kept up to date for a screen nobody has open: listing reads the
+ * library's index, which is a disk read on another tab's lock.
+ */
+export interface SheetLibraryView {
+  readonly entries: readonly SheetLibraryEntry[];
+  /** Bumped by every publish, so a list asked for twice is two answers. */
+  readonly serial: number;
+}
+
+export interface SheetLibraryEntry {
+  readonly id: string;
+  readonly name: string;
+  /** When its contents last changed, or when it was last opened if that is all there is. */
+  readonly edited: number;
+  /** The file it is saved to, by name, or '' for one kept only here. */
+  readonly file: string;
+  /** Whether it is the one this tab has open. */
+  readonly open: boolean;
+}
+
+/** The open document's restore points, newest first; see `SheetVersions.ts`. */
+export interface SheetVersionsView {
+  readonly entries: readonly { readonly at: number; readonly reason: 'opened' | 'auto' | 'saved' | 'restored' }[];
+  readonly serial: number;
 }
 
 export interface SheetTransfer {
@@ -365,6 +403,12 @@ export interface SheetDownload {
    * as base64, because a command and a view carry plain data.
    */
   readonly base64?: string;
+  /**
+   * A write that keeps a file up to date rather than one somebody
+   * asked for — *Keep saving to this file* — which says nothing when it
+   * works, because it works on every edit.
+   */
+  readonly quiet?: boolean;
 }
 
 /**
@@ -931,7 +975,23 @@ export interface SheetCommands {
   /** Builds the workbook for the shell to save; `asNew` is Save As. */
   saveDocument(asNew: boolean): void;
   /** Where the shell put a download, so a workbook can remember its file. */
-  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download'): void;
+  fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download', quiet?: boolean): void;
+  /** A quiet save to the document's file did not happen, and why. */
+  fileNotSaved(why: string): void;
+  /** Calls a document something else; the open one, or any in the library. */
+  renameDocument(id: string, name: string): void;
+  /** Publishes the library on `library`, for the home screen. */
+  listDocuments(): void;
+  /** Copies a document in the library, as "Copy of …", without opening it. */
+  duplicateDocument(id: string): void;
+  /** Deletes a document; deleting the open one opens the next most recent. */
+  deleteDocument(id: string): void;
+  /** Turns *Keep saving to this file* on or off for the open document. */
+  setAutosave(on: boolean): void;
+  /** Publishes the open document's versions on `versions`. */
+  listVersions(): void;
+  /** Puts a version back, keeping what it replaces as a version of its own. */
+  restoreVersion(at: number): void;
   /** A sentence about a file that did not go where it was sent, for the status line. */
   reportFile(text: string): void;
   /**
@@ -1403,6 +1463,10 @@ export interface SheetView {
   readonly transfer: SheetTransfer;
   /** Which document this is; see `SheetDocumentView`. */
   readonly document: SheetDocumentView;
+  /** Every workbook in this browser; see `SheetLibraryView`. */
+  readonly library: SheetLibraryView;
+  /** The open document's restore points. */
+  readonly versions: SheetVersionsView;
   /** Sum, average and count over the selection. */
   readonly stats: SheetStats;
   readonly find: SheetFindView;
@@ -1522,7 +1586,9 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
   clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },
-  document: { id: '', name: '', file: null, edited: false, elsewhere: false },
+  document: { id: '', name: '', file: null, edited: false, elsewhere: false, saving: 'off', autosave: false },
+  library: { entries: [], serial: 0 },
+  versions: { entries: [], serial: 0 },
   stats: NO_STATS,
   find: NO_FIND,
   formats: EMPTY_FORMATS,

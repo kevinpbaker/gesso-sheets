@@ -1,5 +1,5 @@
 import { parseSnapshot, type SheetSnapshot } from './SheetFile';
-import type { SheetRepository } from './SheetRepository';
+import { SaveStates, type SaveState, type SheetRepository } from './SheetRepository';
 
 /**
  * A sheet kept in the Origin Private File System.
@@ -81,6 +81,7 @@ export class OpfsSheetRepository implements SheetRepository {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private writing = false;
   private writeAgain = false;
+  private readonly states = new SaveStates();
 
   constructor(
     private readonly fileName = 'gessosheet.json',
@@ -113,6 +114,7 @@ export class OpfsSheetRepository implements SheetRepository {
       } catch (error) {
         if (error instanceof NoOpfs) {
           console.warn('[sheet] this browser has no OPFS; this session will not persist.');
+          this.states.set('memory');
           return null;
         }
         if (isHeldElsewhere(error) && attempt < READ_ATTEMPTS) {
@@ -141,8 +143,15 @@ export class OpfsSheetRepository implements SheetRepository {
     }
   }
 
+  watch(listener: (state: SaveState) => void): () => void {
+    return this.states.watch(listener);
+  }
+
   save(snapshot: SheetSnapshot): void {
     this.pending = snapshot;
+    if (this.states.state !== 'memory') {
+      this.states.set('saving');
+    }
     if (this.timer !== null) {
       clearTimeout(this.timer);
     }
@@ -180,8 +189,13 @@ export class OpfsSheetRepository implements SheetRepository {
       handle.write(encoded, { at: 0 });
       handle.flush();
       handle.close();
+      // Saved only if nothing newer is waiting behind this write.
+      if (this.pending === null && this.timer === null && !this.writeAgain) {
+        this.states.set('saved');
+      }
     } catch (error) {
       console.warn('[sheet] could not write to OPFS; this session will not persist.', error);
+      this.states.set(error instanceof NoOpfs ? 'memory' : 'failed');
     } finally {
       this.writing = false;
       if (this.writeAgain) {

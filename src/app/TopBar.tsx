@@ -18,6 +18,9 @@ import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
 import { ChartBar } from './ChartBar';
+import { DocumentBar } from './DocumentBar';
+import { HomeDialog } from './HomeDialog';
+import { VersionsDialog } from './VersionsDialog';
 import type { FileActions } from './Files';
 import { RecentBar } from './RecentBar';
 import { RulesBar, type RulesTab } from './RulesBar';
@@ -326,6 +329,20 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     namesOpen.value = false;
     edit.focusSheet();
   };
+  /** Whether the home screen is open; see `HomeDialog`. */
+  const homeOpen = internalState(false);
+  const closeHome = (): void => {
+    homeOpen.value = false;
+    edit.focusSheet();
+  };
+  /** Whether File ▸ Version history is open. */
+  const historyOpen = internalState(false);
+  const closeHistory = (): void => {
+    historyOpen.value = false;
+    edit.focusSheet();
+  };
+  /** The workbook's name at the top, for File ▸ Rename. */
+  let documentNameNode: UiNode | null = null;
   /** Whether Data ▸ Scripts is open. */
   const scriptsOpen = internalState(false);
   const closeScripts = (): void => {
@@ -435,6 +452,11 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       // One of the pair at a time: the one that would change something.
       case 'iterate':
         return !status.value.iterating;
+      // Keeping a file up to date and its versions are the library's,
+      // which a document another tab holds is not being kept in.
+      case 'autosave':
+      case 'versionHistory':
+        return !sheet.view.document.value.elsewhere;
       case 'stopIterating':
         return status.value.iterating;
       case 'runSimulation':
@@ -497,9 +519,18 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return appearance.value.value === 'light';
       case 'appearanceDark':
         return appearance.value.value === 'dark';
+      case 'autosave':
+        return sheet.view.document.value.autosave;
       default:
         return undefined;
     }
+  };
+
+  /** The home screen, with the library and the shell's files read fresh. */
+  const openHome = (): void => {
+    sheet.send.listDocuments();
+    files.refreshRecent();
+    homeOpen.value = true;
   };
 
   const run = (id: CommandId): void => {
@@ -590,6 +621,21 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         break;
       case 'openRecent':
         askFor('recent', () => (recenting.value = true));
+        return;
+      case 'home':
+        openHome();
+        return;
+      case 'renameDocument':
+        if (documentNameNode !== null) {
+          take(documentNameNode);
+        }
+        return;
+      case 'autosave':
+        sheet.send.setAutosave(!sheet.view.document.value.autosave);
+        break;
+      case 'versionHistory':
+        sheet.send.listVersions();
+        historyOpen.value = true;
         return;
       case 'saveDocument':
         files.save(false);
@@ -963,6 +1009,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * with the thing the person cannot see.
    */
   edit.provideDismiss(() => {
+    if (homeOpen.value) {
+      closeHome();
+      return true;
+    }
+    if (historyOpen.value) {
+      closeHistory();
+      return true;
+    }
     if (noteOpen.value) {
       closeNote();
       return true;
@@ -1237,6 +1291,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
 
   return (
     <column width={percent(100)} flexShrink={0} backgroundColor="surface">
+      <DocumentBar
+        editing={edit}
+        onHome={openHome}
+        onHistory={() => run('versionHistory')}
+        nameRef={(node: UiNode | null) => (documentNameNode = node)}
+      />
       <row width={percent(100)} y="center" paddingTop={3} paddingBottom={3}>
         <MenuBar
           menus={menusFor(proof)}
@@ -1263,7 +1323,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
               claimed !== findFieldNode &&
               claimed !== rulesFieldNode &&
               claimed !== chartFieldNode &&
-              claimed !== recentFieldNode
+              claimed !== recentFieldNode &&
+              claimed !== documentNameNode
             ) {
               edit.focusSheet();
             }
@@ -1407,6 +1468,40 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
             </row>
           </column>
         }
+      />
+      <HomeDialog
+        open={homeOpen}
+        library={sheet.view.library}
+        recent={files.recent}
+        onOpen={(id: string) => {
+          closeHome();
+          files.openDocument(id);
+        }}
+        onNew={() => {
+          closeHome();
+          files.newDocument();
+        }}
+        onOpenFile={() => {
+          closeHome();
+          files.open();
+        }}
+        onReopen={(handle: number) => {
+          closeHome();
+          files.reopen(handle);
+        }}
+        onRename={(id: string, name: string) => sheet.send.renameDocument(id, name)}
+        onDuplicate={(id: string) => sheet.send.duplicateDocument(id)}
+        onDelete={(id: string) => sheet.send.deleteDocument(id)}
+        onClose={closeHome}
+      />
+      <VersionsDialog
+        open={historyOpen}
+        versions={sheet.view.versions}
+        onRestore={(at: number) => {
+          closeHistory();
+          sheet.send.restoreVersion(at);
+        }}
+        onClose={closeHistory}
       />
       <NamesDialog
         open={namesOpen}

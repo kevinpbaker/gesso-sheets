@@ -54,7 +54,15 @@ describe('the first document', () => {
     first.service.openDocument('');
     await first.service.settled;
 
-    expect(first.view()).toEqual({ id: FIRST_DOCUMENT, name: 'Untitled', file: null, edited: false, elsewhere: false });
+    expect(first.view()).toEqual({
+      id: FIRST_DOCUMENT,
+      name: 'Untitled',
+      file: null,
+      edited: false,
+      elsewhere: false,
+      saving: 'saved',
+      autosave: false
+    });
     expect(first.cell(0, 0)).toBe('seeded');
     expect(library.repository(FIRST_DOCUMENT).peek()).not.toBeNull();
   });

@@ -141,25 +141,6 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
     })
   );
 
-  /**
-   * Which document this is, and whether it has changes its file does
-   * not. A browser tab's title is the shell's and not this thread's to
-   * write, so the name goes where the rest of the document's state
-   * already is.
-   */
-  const document: Observable<string> = sheet.view.document.pipe(
-    map(current => {
-      if (current.id === '') {
-        return '';
-      }
-      const name = current.file?.name ?? current.name;
-      if (current.elsewhere) {
-        return `${name} · open in another tab, not saved here`;
-      }
-      return current.edited && current.file !== null ? `${name} · edited` : name;
-    })
-  );
-
   /** What the last file dropped on the window became, until the next edit. */
   const report: Observable<string> = sheet.view.transfer.pipe(map(transfer => transfer.report));
 
@@ -177,7 +158,6 @@ export function StatusBar(_inputs: Inputs<{}>, ctx: ComponentContext) {
         backgroundColor="surface"
         role="status"
         label="Sheet status">
-        <text text={document} fontSize={11} color="textMuted" verticalAlign="middle" selectable={false} />
         <row
           gap={12}
           y="center"

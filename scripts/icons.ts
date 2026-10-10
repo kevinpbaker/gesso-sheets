@@ -35,11 +35,16 @@ const WANTED = [
   'bars-3-bottom-left',
   'bars-3-bottom-right',
   'bold',
+  'clock',
   'currency-dollar',
+  'funnel',
   'italic',
   'paint-brush',
   'percent-badge',
+  'printer',
+  'squares-2x2',
   'swatch',
+  'table-cells',
   'underline'
 ] as const;
 

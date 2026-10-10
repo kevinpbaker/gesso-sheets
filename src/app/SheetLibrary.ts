@@ -1,4 +1,5 @@
 import { InMemorySheetRepository, type SheetRepository } from './SheetRepository';
+import { InMemoryVersionStore, type VersionStore } from './SheetVersions';
 
 /**
  * Every workbook this browser keeps, and where each one is kept.
@@ -40,6 +41,18 @@ export interface DocumentEntry {
    * again. Absent is none.
    */
   readonly trustedFunctions?: readonly string[];
+  /**
+   * When its contents last changed, in epoch milliseconds, to within
+   * half a minute; absent for a document from before Phase 36, whose
+   * `used` is the best there is. The home screen's *Last edited*.
+   */
+  readonly edited?: number;
+  /**
+   * Whether every change is written to `file` as well as to this
+   * browser — *Keep saving to this file*. Only means anything while
+   * `file` has a handle.
+   */
+  readonly autosave?: boolean;
 }
 
 export interface DocumentFile {
@@ -65,6 +78,10 @@ export interface SheetLibrary {
    * would win, silently, with the other's edits gone.
    */
   claim(id: string): Promise<(() => void) | null>;
+  /** Forgets a document: its entry, its contents and its versions. */
+  remove(id: string): Promise<void>;
+  /** Where a document's restore points are kept; see `SheetVersions.ts`. */
+  versions(id: string): VersionStore;
 }
 
 /**
@@ -104,6 +121,23 @@ export class InMemorySheetLibrary implements SheetLibrary {
   }
 
   private readonly held = new Set<string>();
+  private readonly versionStores = new Map<string, InMemoryVersionStore>();
+
+  remove(id: string): Promise<void> {
+    this.stored.delete(id);
+    this.repositories.delete(id);
+    this.versionStores.delete(id);
+    return Promise.resolve();
+  }
+
+  versions(id: string): InMemoryVersionStore {
+    let store = this.versionStores.get(id);
+    if (store === undefined) {
+      store = new InMemoryVersionStore();
+      this.versionStores.set(id, store);
+    }
+    return store;
+  }
 
   claim(id: string): Promise<(() => void) | null> {
     if (this.held.has(id)) {

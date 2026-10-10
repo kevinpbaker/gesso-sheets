@@ -109,13 +109,13 @@ describe('the File menu', () => {
     expect(request.op === 'save' && JSON.parse(request.text).sheets[0].cells).toContainEqual({ row: 0, column: 0, input: '=6*7' });
 
     await answer({ ...EMPTY, outcome: 'ok', saved: { name: 'Answer.gsheet', handle: 7, via: 'file' } });
-    expect(h!.ui.getByText('Answer.gsheet')).toBeDefined();
+    expect(h!.ui.getByText('Saved in this browser and to Answer.gsheet')).toBeDefined();
     expect(h!.ui.getByText('Saved Answer.gsheet.')).toBeDefined();
 
     // And the next Save goes back to that file, with no picker.
     h!.service.setCell(0, 1, 'more');
     await settle();
-    expect(h!.ui.getByText('Answer.gsheet · edited')).toBeDefined();
+    expect(h!.ui.getByText('Saved in this browser · Answer.gsheet is behind')).toBeDefined();
     await menu('f', 'Save');
     expect(h!.asked[1].request).toMatchObject({ op: 'save', name: 'Answer.gsheet', handle: 7 });
   });
@@ -155,7 +155,7 @@ describe('the File menu', () => {
     });
 
     expect(h!.ui.getByText('Opened Budget.gsheet.')).toBeDefined();
-    expect(h!.ui.getByText('Budget.gsheet')).toBeDefined();
+    expect(h!.ui.getByText('Saved in this browser and to Budget.gsheet')).toBeDefined();
     expect(h!.service.snapshot().sheets[0].cells).toContainEqual({ row: 2, column: 1, input: 'from disk' });
   });
 

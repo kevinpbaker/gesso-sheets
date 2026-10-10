@@ -57,6 +57,8 @@ export interface FileActions {
   newDocument(): void;
   /** An open picker: a workbook opens as the document here, a CSV as a sheet. */
   open(): void;
+  /** A workbook from the library, by id, in this tab. */
+  openDocument(id: string): void;
   /** One of the files the shell remembers. */
   reopen(handle: number): void;
   /** Save, or Save As. */
@@ -131,7 +133,9 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
       })
       .then(result => {
         if (result.outcome === 'ok' && result.saved !== null) {
-          sheet.send.fileSaved(download.kind, result.saved.name, result.saved.handle, result.saved.via);
+          sheet.send.fileSaved(download.kind, result.saved.name, result.saved.handle, result.saved.via, download.quiet === true);
+        } else if (download.quiet === true) {
+          sheet.send.fileNotSaved(reason(result));
         } else if (result.outcome !== 'cancelled') {
           sheet.send.reportFile(`${download.name} was not saved: ${reason(result)}`);
         }
@@ -153,7 +157,25 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
   };
 
   return {
-    newDocument: () => shell.openUrl('/d/new'),
+    /**
+     * A blank workbook, here, with Back to return to this one.
+     *
+     * In this tab rather than a new one, which is what it did until
+     * Phase 36: a new tab is a second application worker starting from
+     * nothing, a second or two of blank page, and a popup blocker's to
+     * refuse — in a headless browser it simply did not arrive.
+     *
+     * Asked of the application worker directly, and the url follows
+     * what opens, pushed so Back returns: the path a file takes.
+     */
+    newDocument: () => {
+      push = true;
+      sheet.send.openDocument('new');
+    },
+    openDocument: id => {
+      push = true;
+      sheet.send.openDocument(id);
+    },
     open: () => void shell.openFiles({ accept: [WORKBOOK, XLSX, CSV], multiple: true }).then(deliver),
     reopen: handle => void shell.reopenFile(handle).then(deliver),
     save: asNew => sheet.send.saveDocument(asNew),
