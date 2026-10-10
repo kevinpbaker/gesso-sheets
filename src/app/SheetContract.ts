@@ -777,6 +777,22 @@ export interface SheetScenarios {
   readonly shown: string | null;
 }
 
+/**
+ * The second pane, beside the grid: another version of the workbook,
+ * scrolled with the first.
+ *
+ * The grid shows the scenario that is showing; this pane shows what it
+ * is set against — the base, or another scenario — over the same cells,
+ * with the cells whose value differs from the grid's tinted.
+ */
+export interface SheetCompare {
+  readonly open: boolean;
+  /** The scenario the pane shows, by id, or null for the base. */
+  readonly against: string | null;
+  /** What the pane is called: Base, or the scenario's name. */
+  readonly name: string;
+}
+
 export interface SheetScenario {
   readonly id: string;
   readonly name: string;
@@ -1211,6 +1227,11 @@ export interface SheetCommands {
   deleteScenario(id: string): void;
   /** Gives the selected cells back to the base, in the scenario showing. One step of undo. */
   resetScenarioCells(): void;
+  /**
+   * Opens the second pane on a version of the workbook — the base with
+   * null, a scenario by id — or closes it with `open` false.
+   */
+  setCompare(open: boolean, against: string | null): void;
 }
 
 /** What a border command draws. */
@@ -1350,6 +1371,11 @@ export interface SheetView {
   readonly series: SheetSeriesView;
   readonly scripts: SheetScripts;
   readonly scenarios: SheetScenarios;
+  readonly compare: SheetCompare;
+  /** The cells the second pane draws, for the grid's own viewport; see `SheetCompare`. */
+  readonly compareWindow: SheetWindow;
+  /** And their palette indices, into the grid's palette. */
+  readonly compareFormats: SheetFormatWindow;
 }
 
 /** What the controls read to draw themselves. */
@@ -1444,5 +1470,8 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   charts: { entries: [], selected: 0, refused: '' },
   series: { charts: {} },
   scripts: { entries: [], running: '', refused: '', last: null },
-  scenarios: { entries: [], shown: null }
+  scenarios: { entries: [], shown: null },
+  compare: { open: false, against: null, name: 'Base' },
+  compareWindow: EMPTY_WINDOW,
+  compareFormats: EMPTY_FORMATS
 });

@@ -60,11 +60,13 @@ import {
   type SheetScripts,
   type SheetScenarioCell,
   type SheetScenarios,
+  type SheetCompare,
   type SheetScriptRun,
   type SheetValidationRule,
   type SheetWindow
 } from './SheetContract';
-import { DEFAULT_FORMAT, withPlaces, type CellFormat } from '../sheet/Format';
+import { DEFAULT_FORMAT, formatWith, withPlaces, type CellFormat } from '../sheet/Format';
+import type { Workbook } from '../sheet/Workbook';
 import type { Shift } from '../sheet/Shift';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 import { sortRect } from './SheetSort';
@@ -203,6 +205,9 @@ export class SheetService {
   readonly chartSeries: Observable<SheetSeriesView>;
   readonly scripts: Observable<SheetScripts>;
   readonly scenarios: Observable<SheetScenarios>;
+  readonly compare: Observable<SheetCompare>;
+  readonly compareWindow: Observable<SheetWindow>;
+  readonly compareFormats: Observable<SheetFormatWindow>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0, forks: 0 };
@@ -303,6 +308,16 @@ export class SheetService {
    * inputs, and either side moving moves it; see `step`.
    */
   private forkStale = false;
+  private readonly compareSubject = new BehaviorSubject<SheetCompare>({ open: false, against: null, name: 'Base' });
+  private readonly compareWindowSubject = new BehaviorSubject<SheetWindow>(EMPTY_WINDOW);
+  private readonly compareFormatsSubject = new BehaviorSubject<SheetFormatWindow>(EMPTY_FORMATS);
+  /**
+   * The second pane's scenario, forked as the shown one is and kept
+   * apart from it: the grid and the pane can show two scenarios at
+   * once. Null while the pane shows the base, which needs no fork.
+   */
+  private compareFork: Workbook | null = null;
+  private compareStale = false;
   private readonly scriptHost: ScriptHost | null;
   private scriptRuns = 0;
   private functionStressCells = 0;
@@ -454,6 +469,9 @@ export class SheetService {
     this.chartSeries = this.seriesSubject;
     this.scripts = this.scriptsSubject;
     this.scenarios = this.scenariosSubject;
+    this.compare = this.compareSubject;
+    this.compareWindow = this.compareWindowSubject;
+    this.compareFormats = this.compareFormatsSubject;
     const { rowCount, columnCount: columns } = this.geometrySubject.value;
     this.scriptHost =
       options.scripts === undefined
@@ -2886,7 +2904,11 @@ export class SheetService {
     this.trustedHere = [];
     this.publishScripts('');
     this.forkStale = false;
+    this.compareFork = null;
+    this.compareStale = false;
+    this.compareSubject.next({ open: false, against: null, name: 'Base' });
     this.publishScenarios();
+    this.publishCompareCells();
     this.defineFunctions();
     this.publishPalette();
     if (stored === null) {
@@ -3341,10 +3363,13 @@ export class SheetService {
     if (this.document.scenario !== null) {
       this.forkStale = true;
     }
+    if (this.comparing() !== null) {
+      this.compareStale = true;
+    }
     if (this.document.scenarios.length > 0) {
       this.publishScenarios();
     }
-    if (this.pumping || (this.document.sheet.pending === 0 && !this.forkStale)) {
+    if (this.pumping || (this.document.sheet.pending === 0 && !this.forkStale && !this.compareStale)) {
       return;
     }
     this.pumping = true;
@@ -3394,29 +3419,59 @@ export class SheetService {
     this.schedule(() => this.step());
   }
 
+  /**
+   * The next piece of work, in the order it has to be done: the base,
+   * then the scenario on screen, then the one in the second pane. Each
+   * fork is made again once the base has settled, if anything moved
+   * since it was made, and recalculated in slices like the base.
+   */
   private sliceOfWork(): { evaluated: number; done: boolean } {
     const base = this.document.sheet;
+    let evaluated = 0;
     if (base.pending > 0) {
-      const result = base.recalculate(this.budget);
-      return { evaluated: result.evaluated, done: result.done && !this.forkStale && (this.document.fork?.pending ?? 0) === 0 };
-    }
-    const scenario = this.document.scenario;
-    if (scenario === null) {
+      evaluated = base.recalculate(this.budget).evaluated;
+    } else if (this.document.scenario !== null && (this.forkStale || this.document.fork === null)) {
       this.forkStale = false;
-      return { evaluated: 0, done: true };
-    }
-    if (this.forkStale || this.document.fork === null) {
-      this.forkStale = false;
-      this.document.fork = this.document.book.fork(this.document.overridesOf(scenario));
+      this.document.fork = this.document.book.fork(this.document.overridesOf(this.document.scenario));
       this.stats.forks++;
       this.painter.invalidate();
+    } else if ((this.document.fork?.pending ?? 0) > 0) {
+      evaluated = this.document.fork!.recalculate(this.budget).evaluated;
+    } else if (this.comparing() !== null && (this.compareStale || this.compareFork === null)) {
+      this.compareStale = false;
+      this.compareFork = this.document.book.fork(this.document.overridesOf(this.comparing()!));
+      this.stats.forks++;
+    } else if ((this.compareFork?.pending ?? 0) > 0) {
+      evaluated = this.compareFork!.recalculate(this.budget).evaluated;
     }
-    const fork = this.document.fork;
-    if (fork === null) {
-      return { evaluated: 0, done: true };
+    if (this.document.scenario === null) {
+      this.forkStale = false;
     }
-    const result = fork.recalculate(this.budget);
-    return { evaluated: result.evaluated, done: result.done && !this.forkStale };
+    if (this.comparing() === null) {
+      this.compareStale = false;
+    }
+    const done =
+      base.pending === 0 &&
+      !this.forkStale &&
+      (this.document.fork?.pending ?? 0) === 0 &&
+      !this.compareStale &&
+      (this.compareFork?.pending ?? 0) === 0;
+    return { evaluated, done };
+  }
+
+  /** The scenario the second pane shows, by id, while it is open on one; null for the base or a closed pane. */
+  private comparing(): string | null {
+    const compare = this.compareSubject.value;
+    return compare.open ? compare.against : null;
+  }
+
+  /** The workbook the second pane reads, or null while it is closed. */
+  private compareBook(): Workbook | null {
+    const compare = this.compareSubject.value;
+    if (!compare.open) {
+      return null;
+    }
+    return compare.against === null ? this.document.book : this.compareFork;
   }
 
   /** Says what the proof's function chain came to, once it has settled. */
@@ -3508,6 +3563,73 @@ export class SheetService {
     this.stats.publishes++;
     this.windowSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
     this.publishNotes();
+    this.publishCompareCells();
+  }
+
+  /**
+   * The second pane's cells and paint, for the grid's own viewport.
+   *
+   * Published wherever the window is, because the pane scrolls with the
+   * grid and is compared with it: a value settling on either side can
+   * change what the pane draws or tints. One pass makes both keys, and
+   * a closed pane costs a comparison.
+   *
+   * A cell is tinted where its value is not the grid's. The paint is
+   * the document's own, since formats are shared; a rule's paint is
+   * not computed for the pane, so a colour scale shows on the grid and
+   * not beside it.
+   */
+  private publishCompareCells(): void {
+    const book = this.compareBook();
+    const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
+    if (book === null || lastRow < firstRow || lastColumn < firstColumn) {
+      if (this.compareWindowSubject.value !== EMPTY_WINDOW) {
+        this.compareWindowSubject.next(EMPTY_WINDOW);
+        this.compareFormatsSubject.next(EMPTY_FORMATS);
+      }
+      return;
+    }
+    const active = this.document.active;
+    const shown = this.document.shown;
+    const columns = this.columnsInView();
+    const cells: Record<string, Record<string, string>> = {};
+    const paints: Record<string, Record<string, number>> = {};
+    const grew = this.extraPaints.length;
+    for (const row of this.rowsInView()) {
+      const line: Record<string, string> = {};
+      const painted: Record<string, number> = {};
+      for (const column of columns) {
+        const value = book.value(active, row, column);
+        const format = this.document.formats.formatAt(row, column);
+        line[column] = formatWith(value, format.number);
+        const own = this.document.formats.idAt(row, column);
+        const id =
+          value === shown.value(row, column)
+            ? own
+            : this.paletteBase() + this.internPaint(scenarioPaint(this.document.formats.byId(own).paint, 'changed'));
+        if (id !== 0) {
+          painted[column] = id;
+        }
+      }
+      cells[row] = line;
+      paints[row] = painted;
+    }
+    this.compareWindowSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
+    this.compareFormatsSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells: paints });
+    if (this.extraPaints.length !== grew) {
+      this.publishPalette();
+    }
+  }
+
+  /** Opens the second pane on the base or a scenario, or closes it. */
+  setCompare(open: boolean, against: string | null): void {
+    const known = against !== null && this.document.scenarios.some(entry => entry.id === against) ? against : null;
+    const name = this.document.scenarios.find(entry => entry.id === known)?.name ?? 'Base';
+    this.compareSubject.next({ open, against: known, name });
+    this.compareFork = null;
+    this.compareStale = open && known !== null;
+    this.publishCompareCells();
+    this.pump();
   }
 
   /** The notes in view, beside the window they are drawn over. */
@@ -3809,6 +3931,10 @@ export class SheetService {
 
   renameScenario(id: string, name: string): void {
     this.document.renameScenario(id, name);
+    const compare = this.compareSubject.value;
+    if (compare.against === id) {
+      this.compareSubject.next({ ...compare, name: this.document.scenarios.find(entry => entry.id === id)?.name ?? compare.name });
+    }
     this.publishScenarios();
     this.publishEditor();
     this.persist();
@@ -3816,6 +3942,10 @@ export class SheetService {
 
   deleteScenario(id: string): void {
     this.document.deleteScenario(id);
+    const compare = this.compareSubject.value;
+    if (compare.against === id) {
+      this.setCompare(compare.open, null);
+    }
     this.forkStale = this.document.scenario !== null;
     this.afterScenario();
     this.persist();

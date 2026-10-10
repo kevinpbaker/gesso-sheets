@@ -1,8 +1,10 @@
 import { BehaviorSubject, combineLatest, type Observable } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { distinctUntilChanged, map } from 'rxjs/operators';
 
 import {
   Box,
+  Button,
+  Column,
   contextMenu,
   decorated,
   EditableText,
@@ -3136,6 +3138,8 @@ export function Grid(
   const scrollX = internalState(0);
   const scrollY = internalState(0);
   let gridNode: UiNode | null = null;
+  /** The same node as a stream, for the second pane to scroll with; see `comparePane`. */
+  const gridNode$ = new BehaviorSubject<UiNode | null>(null);
   // The chrome — menus, the find bar, the name box — has to hand the
   // keyboard back when it is done, and the grid's node is the grid's.
   edit.provideFocus(() => {
@@ -3221,7 +3225,10 @@ export function Grid(
       role: 'grid',
       label: 'Sheet',
       focusable: true,
-      ref: node => (gridNode = node),
+      ref: node => {
+        gridNode = node;
+        gridNode$.next(node);
+      },
       modifiers: [viewport.modifier, contextMenu({ onOpen: at => onContext(at) })],
       onKeyDown: onKey,
       // A press on a column's letter, a row's number or the corner. A
@@ -3895,7 +3902,307 @@ export function Grid(
     }
   });
 
-  return Box({ flex: 1, minHeight: 0, width: percent(100) }, grid, menu);
+  // -------------------------------------------------------------------
+  // The second pane
+  // -------------------------------------------------------------------
+
+  /**
+   * Another version of the workbook beside this one, scrolled with it.
+   *
+   * Read-only and drawn from two keys of its own, `compareWindow` and
+   * `compareFormats`, which the application worker fills for this
+   * grid's viewport: the pane never asks for a window, because it is
+   * always looking at the cells the grid is. It follows the grid's
+   * scroll through `scrollWith`, so the two cannot drift, and it uses
+   * the grid's widths, heights and frozen panes, so a row on the left is
+   * the row on the right.
+   *
+   * Its own cells rather than the grid's, which carry the selection,
+   * the editor, the fill handle and the charts — none of which mean
+   * anything in a pane nobody types into. A merge spans its columns in
+   * its own row, as the grid's does across; borders, notes, charts and
+   * a rule's paint are the grid's alone.
+   */
+  const compare$ = sheet.view.compare;
+  const compareValues = fanOut<SheetWindow, string | null, At>(
+    sheet.view.compareWindow,
+    (current, _key, at) => cellIn(current, at.row, at.column),
+    { initial: null }
+  );
+  const comparePaintSource = combineLatest([sheet.view.compareFormats, sheet.view.palette]);
+  const comparePaints = fanOut<
+    [{ cells: Readonly<Record<string, Readonly<Record<string, number>>>> }, { entries: readonly CellPaint[] }],
+    CellPaint,
+    At
+  >(
+    comparePaintSource,
+    ([formats, palette], _key, at) => {
+      const id = formats.cells[at.row]?.[at.column] ?? 0;
+      return id === 0 ? PLAIN_PAINT : (palette.entries[id] ?? PLAIN_PAINT);
+    },
+    { initial: PLAIN_PAINT }
+  );
+  const compareCells = new Map<string, { row: number; column: number; element: UiElement }>();
+
+  const compareCell = (row: number, column: number): UiElement => {
+    const key = `${row}:${column}`;
+    const kept = compareCells.get(key);
+    if (kept !== undefined) {
+      return kept.element;
+    }
+    const at = { row, column };
+    const value = compareValues.for(key, at);
+    const paint = comparePaints.for(key, at);
+    const stuck = column < frozen.value.columns;
+    const merge = mergeAt(row, column);
+    const anchorsHere = merge !== null && merge.firstRow === row && merge.firstColumn === column;
+    const covered = merge !== null && !anchorsHere && row === merge.firstRow;
+    const spanWidth = merge === null ? null : columnLeft(merge.lastColumn + 1) - columnLeft(merge.firstColumn);
+    const element = Text({
+      key: column,
+      position: stuck ? 'sticky' : undefined,
+      left: stuck ? GUTTER_WIDTH + columnLeft(column) : undefined,
+      zIndex: stuck ? 1 : undefined,
+      text: value.pipe(map(text => text ?? '')),
+      color: combineLatest([value, paint]).pipe(
+        map(([text, how]) => (text === null ? 'placeholder' : how.color !== '' ? how.color : inkFor(how.fill)))
+      ),
+      backgroundColor: paint.pipe(map(how => (how.fill === '' ? 'background' : how.fill))),
+      borderColor: GRID_LINE,
+      borderWidth: covered ? 0 : 1,
+      width: covered ? 0 : anchorsHere && spanWidth !== null ? spanWidth : widthOf(column),
+      height: heightOf(row),
+      flexShrink: 0,
+      paddingLeft: covered ? 0 : CELL_PADDING,
+      paddingRight: covered ? 0 : CELL_PADDING,
+      fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
+      textWrap: paint.pipe(map(how => (how.wrap ? 'word' : 'none'))),
+      fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
+      fontStyle: paint.pipe(map(how => (how.italic ? 'italic' : 'normal'))),
+      textOverflow: 'clip',
+      verticalAlign: 'middle',
+      textAlign: combineLatest([value, paint]).pipe(
+        map(([text, how]) =>
+          how.align === 'auto' ? AUTO_ALIGN[guessOf(text)] : how.align === 'center' ? 'center' : how.align
+        )
+      ),
+      selectable: false,
+      role: 'cell'
+    });
+    compareCells.set(key, { row, column, element });
+    return element;
+  };
+
+  const compareGutter = (row: number): UiElement =>
+    Box(
+      {
+        key: 'gutter',
+        width: GUTTER_WIDTH,
+        height: heightOf(row),
+        flexShrink: 0,
+        x: 'center',
+        y: 'center',
+        position: 'sticky',
+        left: 0,
+        zIndex: 1,
+        backgroundColor: 'surface',
+        borderColor: GRID_LINE,
+        borderWidth: 1,
+        role: 'rowheader',
+        label: String(row + 1)
+      },
+      Text({ text: String(row + 1), color: 'textMuted', fontSize: 11, textAlign: 'center', verticalAlign: 'middle', selectable: false })
+    );
+
+  const compareRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
+    const line: UiElement[] = [compareGutter(row)];
+    for (let column = 0; column < frozen.value.columns; column++) {
+      line.push(compareCell(row, column));
+    }
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      line.push(compareCell(row, column));
+    }
+    const stuck = row < frozen.value.rows;
+    return Row(
+      {
+        role: 'row',
+        posInSet: row + 1,
+        position: stuck ? 'sticky' : undefined,
+        top: stuck ? HEADER_HEIGHT + rowTop(row) : undefined,
+        zIndex: stuck ? 1 : undefined,
+        backgroundColor: stuck ? 'background' : undefined,
+        overflow: heightOf(row).pipe(map(height => (height === 0 ? 'hidden' : undefined)))
+      },
+      ...line
+    );
+  };
+
+  const compareHeader = (firstColumn: number, lastColumn: number): UiElement => {
+    const letter = (column: number): UiElement =>
+      Text({
+        key: column,
+        text: columnName(column),
+        width: widthOf(column),
+        height: HEADER_HEIGHT,
+        flexShrink: 0,
+        position: column < frozen.value.columns ? 'sticky' : undefined,
+        left: column < frozen.value.columns ? GUTTER_WIDTH + columnLeft(column) : undefined,
+        zIndex: column < frozen.value.columns ? 1 : undefined,
+        backgroundColor: 'surface',
+        borderColor: GRID_LINE,
+        borderWidth: 1,
+        color: 'textMuted',
+        fontSize: 11,
+        textAlign: 'center',
+        verticalAlign: 'middle',
+        selectable: false,
+        role: 'columnheader',
+        label: columnName(column)
+      });
+    const line: UiElement[] = [
+      Text({
+        key: 'corner',
+        text: '',
+        width: GUTTER_WIDTH,
+        height: HEADER_HEIGHT,
+        flexShrink: 0,
+        position: 'sticky',
+        left: 0,
+        zIndex: 2,
+        backgroundColor: 'surface',
+        borderColor: GRID_LINE,
+        borderWidth: 1
+      })
+    ];
+    for (let column = 0; column < frozen.value.columns; column++) {
+      line.push(letter(column));
+    }
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      line.push(letter(column));
+    }
+    return Row({ position: 'sticky', top: 0, zIndex: 2 }, ...line);
+  };
+
+  let compareWindow: UiVirtualSheet | undefined;
+  const comparePane = LazySheet(
+    {
+      flex: 1,
+      minHeight: 0,
+      width: percent(100),
+      height: percent(100),
+      backgroundColor: 'background',
+      rowCount: sheet.view.geometry.pipe(map(g => g.rowCount)),
+      columnCount: sheet.view.geometry.pipe(map(g => g.columnCount)),
+      rowHeight: ROW_HEIGHT,
+      rowHeights: heightsOf(hidden.value, sized.value),
+      columnWidth: widths.value,
+      frozenRows: frozen.value.rows,
+      frozenColumns: frozen.value.columns,
+      gutterWidth: GUTTER_WIDTH,
+      headerHeight: HEADER_HEIGHT,
+      rowOverscan: 2,
+      columnOverscan: 1,
+      scrollWith: gridNode$,
+      role: 'grid',
+      label: compare$.pipe(map(view => `${view.name}, beside the sheet`)),
+      header: compareHeader,
+      sheetRef: found => (compareWindow = found)
+    },
+    compareRow
+  );
+  const compareSheet = compareWindow as UiVirtualSheet | undefined;
+  if (compareSheet !== undefined) {
+    ctx.effect(widths, all => compareSheet.setColumnWidths(all));
+    ctx.effect(hidden, rows => compareSheet.setRowHeights(heightsOf(rows, sized.value)));
+    ctx.effect(sized, sizes => compareSheet.setRowHeights(heightsOf(hidden.value, sizes)));
+    ctx.effect(frozen, pane => {
+      compareCells.clear();
+      compareValues.releaseAll();
+      comparePaints.releaseAll();
+      compareSheet.setFrozen(pane.rows, pane.columns);
+    });
+    // Cells that leave the pane's window let go of their streams, as the
+    // grid's do; see the effect on `sheetWindow.range$`.
+    ctx.effect(compareSheet.range$, range => {
+      const pane = frozen.value;
+      for (const [key, kept] of compareCells) {
+        const rowShows = kept.row < pane.rows || (kept.row >= range.firstRow && kept.row <= range.lastRow);
+        const columnShows =
+          kept.column < pane.columns || (kept.column >= range.firstColumn && kept.column <= range.lastColumn);
+        if (!rowShows || !columnShows) {
+          compareCells.delete(key);
+          compareValues.release(key);
+          comparePaints.release(key);
+        }
+      }
+    });
+  }
+
+  /**
+   * A line above each pane naming what it shows, while there are two:
+   * the same height on both sides, so the rows stay level.
+   */
+  const paneTitle = (text: Observable<string>, closing: boolean): UiElement =>
+    Row(
+      {
+        width: percent(100),
+        height: scaled(24),
+        flexShrink: 0,
+        y: 'center',
+        gap: 8,
+        paddingLeft: 8,
+        paddingRight: 4,
+        backgroundColor: 'surface',
+        borderColor: GRID_LINE,
+        borderWidth: 1
+      },
+      Text({ text, fontSize: 11, fontWeight: 'bold', color: 'text', selectable: false, textWrap: 'none' }),
+      Box({ flex: 1, minWidth: 0 }),
+      ...(closing
+        ? [
+            Button(
+              {
+                key: 'close',
+                label: 'Close the side-by-side view',
+                onClick: () => {
+                  sheet.send.setCompare(false, null);
+                  edit.focusSheet();
+                },
+                paddingLeft: 6,
+                paddingRight: 6,
+                borderRadius: 4,
+                backgroundColor: 'surface',
+                cursor: 'pointer'
+              },
+              Text({ text: '✕', fontSize: 11, color: 'textMuted', selectable: false })
+            )
+          ]
+        : [])
+    );
+
+  const shownTitle = combineLatest([sheet.view.scenarios]).pipe(
+    map(([view]) => view.entries.find(entry => entry.id === view.shown)?.name ?? 'Base')
+  );
+  const splitOpen = compare$.pipe(
+    map(view => view.open),
+    distinctUntilChanged()
+  );
+  const mainTitle = paneTitle(shownTitle, false);
+  const besideColumn = Column(
+    { key: 'beside', flex: 1, minWidth: 0, height: percent(100), borderColor: 'primary', borderWidth: 0 },
+    paneTitle(compare$.pipe(map(view => view.name)), true),
+    comparePane
+  );
+
+  return Row(
+    { flex: 1, minHeight: 0, width: percent(100) },
+    Column(
+      { flex: 1, minWidth: 0, height: percent(100) },
+      splitOpen.pipe(map(open => (open ? [mainTitle] : []))),
+      Box({ flex: 1, minHeight: 0, width: percent(100) }, grid, menu)
+    ),
+    splitOpen.pipe(map(open => (open ? [Box({ key: 'divider', width: 2, height: percent(100), backgroundColor: 'border' }), besideColumn] : [])))
+  );
 }
 
 function sameCell(a: { row: number; column: number } | null, b: { row: number; column: number } | null): boolean {

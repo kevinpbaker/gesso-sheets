@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cellIn,
   type SheetClipboard,
+  type SheetCompare,
   type SheetEditor,
   type SheetFormatWindow,
   type SheetPalette,
@@ -237,5 +238,65 @@ describe('a scenario', () => {
     expect(reopened.scenarios).toEqual(document.scenarios);
     expect(reopened.scenario).toBeNull();
     expect(reopened.overridesOf(reopened.scenarios[0].id)).toMatchObject([{ sheet: 0, row: 0, column: 1, input: '0.5' }]);
+  });
+});
+
+describe('the second pane', () => {
+  const beside = (service: SheetService, row: number, column: number) =>
+    cellIn(latest<SheetWindow>(service.compareWindow), row, column);
+  function besideFill(service: SheetService, row: number, column: number): string {
+    const id = latest<SheetFormatWindow>(service.compareFormats).cells[row]?.[column] ?? 0;
+    return latest<SheetPalette>(service.palette).entries[id]?.fill ?? '';
+  }
+
+  it('shows the base beside a scenario, tinted where the two differ', () => {
+    const { service, drain } = harness();
+    service.addScenario('Optimistic', false);
+    service.setCell(0, 1, '0.5');
+    service.setCompare(true, null);
+    drain();
+    expect(latest<SheetCompare>(service.compare)).toEqual({ open: true, against: null, name: 'Base' });
+    expect(shown(service, 2, 1)).toBe('30');
+    expect(beside(service, 2, 1)).toBe('22');
+    expect(beside(service, 0, 1)).toBe('0.1');
+    expect(besideFill(service, 2, 1)).toBe(SCENARIO_CHANGED);
+    expect(besideFill(service, 1, 1)).toBe('');
+    expect(beside(service, 4, 0)).toBe('Prices are ex works');
+  });
+
+  it('shows another scenario, and follows an edit to the base in both', () => {
+    const { service, drain } = harness();
+    service.addScenario('Low', false);
+    service.setCell(0, 1, '0');
+    const low = latest<SheetScenarios>(service.scenarios).shown;
+    service.addScenario('High', false);
+    service.setCell(0, 1, '1');
+    service.setCompare(true, low);
+    drain();
+    expect(shown(service, 2, 1)).toBe('40');
+    expect(beside(service, 2, 1)).toBe('20');
+    service.showScenario(null);
+    service.setCell(1, 1, '10');
+    drain();
+    expect(shown(service, 2, 1)).toBe('11');
+    expect(beside(service, 2, 1)).toBe('10');
+  });
+
+  it('goes back to the base when the scenario it shows is deleted, and empties when closed', () => {
+    const { service, drain } = harness();
+    service.addScenario('Low', false);
+    service.setCell(0, 1, '0');
+    const low = latest<SheetScenarios>(service.scenarios).shown!;
+    service.showScenario(null);
+    service.setCompare(true, low);
+    drain();
+    expect(beside(service, 2, 1)).toBe('20');
+    service.deleteScenario(low);
+    drain();
+    expect(latest<SheetCompare>(service.compare).against).toBeNull();
+    expect(beside(service, 2, 1)).toBe('22');
+    service.setCompare(false, null);
+    drain();
+    expect(latest<SheetWindow>(service.compareWindow).lastRow).toBe(-1);
   });
 });

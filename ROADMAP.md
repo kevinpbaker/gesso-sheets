@@ -3163,9 +3163,9 @@ scenario's, and undoable; the file keeps it; `pnpm proof` unchanged.
   while a scenario shows: a copy of every cell and edge, 2.6 ms here.
   A workbook of hundreds of thousands of cells would want a base edit
   applied to the fork as well rather than the fork taken again.
-- **One scenario at a time.** No split view of two side by side, and
-  no table of a few cells across every scenario, which is the next
-  thing worth having.
+- **One scenario at a time** — until Phase 35, below. No table of a
+  few cells across every scenario, which is the next thing worth
+  having.
 - **A sort while a scenario shows is refused**, with a message: it
   moves formats, which are the base's.
 - **A colour scale gives way to the tint** while a scenario shows,
@@ -3177,6 +3177,62 @@ scenario's, and undoable; the file keeps it; `pnpm proof` unchanged.
   can replace the base's.
 - **The seed runs once per browser profile**, so a browser that
   already has the example keeps the one it has, without scenarios.
+
+---
+
+### Phase 35 — Side by side — **done**
+
+The grid shows one version of the workbook; a second pane beside it
+shows another, scrolled with it, with the cells that differ tinted.
+*Scenario ▾* offers *Side by side with* each version but the one the
+grid shows — Base, or another scenario — and *Close side by side*.
+
+**Exit:** Optimistic in the grid and Base beside it, the pane following
+a scroll down and across, frozen rows and columns held in both, and the
+cells whose value differs from the grid's tinted; the pane following an
+edit; `pnpm proof` unchanged with the pane closed.
+
+**Met.**
+
+- **The application worker** keeps a second fork for the pane when it
+  shows a scenario, made and recalculated after the grid's in the same
+  slices, and none when it shows the base. It publishes the pane's
+  cells on two keys, `compareWindow` and `compareFormats`, for the
+  grid's own viewport — the pane never asks for a window, because it is
+  always looking at the cells the grid is — wherever it publishes the
+  grid's window, so a value settling on either side reaches both. A
+  cell whose value is not the grid's is tinted, interned into the
+  grid's palette like any other paint. `Scenarios.spec.ts` covers the
+  pane against the base and against another scenario, a base edit
+  reaching both, a deleted scenario sending the pane back to the base,
+  and closing it.
+- **The pane** is a read-only `LazySheet` inside `Grid.tsx`, following
+  the grid's scroll container through Gesso's `scrollWith`: one scroll
+  position, so the two cannot drift, and a wheel over either moves
+  both. It takes the grid's widths, heights and frozen panes, and has
+  cells of its own, because the grid's carry the selection, the editor,
+  the handles and the charts. A title over each pane names what it
+  shows, the same height on both sides so the rows stay level.
+- **The cost**, scrolling the orders in Chrome: one pane 2.3 ms a
+  frame, two 2.8 to 2.9 ms, and 2.2 ms again once the pane is closed,
+  so it leaves nothing behind. `pnpm proof` passes unchanged.
+- **Checked in Chrome**, headless: Optimistic beside Base on the
+  dashboard, with Base's revenue tinted where it differs; the orders
+  scrolled down past the data and across past the frozen column, both
+  panes together; a wheel over the pane scrolling both.
+
+**Not done:**
+
+- **The pane draws the document's own paint**, not a rule's: a colour
+  scale or a red figure shows in the grid and not beside it. Nor does it
+  draw borders, notes or charts.
+- **A merge spans its columns but not its rows** in the pane.
+- **The grid's tint is against the base** and the pane's against the
+  grid. With two scenarios side by side the grid still says what its
+  scenario changed from the base, and the pane says where the two
+  disagree.
+- **Clicking the pane does nothing.** It is for reading; selecting a
+  cell there to see it in the grid would be the next step.
 
 ---
 

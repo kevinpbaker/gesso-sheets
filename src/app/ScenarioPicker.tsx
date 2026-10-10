@@ -32,6 +32,9 @@ const COPY = '\u0000copy';
 const RENAME = '\u0000rename';
 const DELETE = '\u0000delete';
 const RESET = '\u0000reset';
+/** Followed by a scenario's id, or by BASE, for the version to put beside the grid. */
+const BESIDE = '\u0000beside:';
+const UNSPLIT = '\u0000unsplit';
 
 export function ScenarioPicker(inputs: Inputs<ScenarioPickerProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
@@ -43,8 +46,8 @@ export function ScenarioPicker(inputs: Inputs<ScenarioPickerProps>, ctx: Compone
 
   const menuOpen = new BehaviorSubject(false);
   const menuAt = new BehaviorSubject({ x: 0, y: 0 });
-  const items = scenarios.pipe(
-    map((view): readonly MenuItem[] => {
+  const items = combineLatest([scenarios, sheet.view.compare]).pipe(
+    map(([view, compare]): readonly MenuItem[] => {
       const mark = (on: boolean): string => (on ? '✓ ' : '   ');
       const showing = view.shown !== null;
       return [
@@ -57,7 +60,12 @@ export function ScenarioPicker(inputs: Inputs<ScenarioPickerProps>, ctx: Compone
         { value: COPY, label: 'New scenario from this one…', disabled: !showing },
         { value: RENAME, label: 'Rename this scenario…', disabled: !showing },
         { value: DELETE, label: 'Delete this scenario…', disabled: !showing },
-        { value: RESET, label: 'Use the base for the selected cells', disabled: !showing }
+        { value: RESET, label: 'Use the base for the selected cells', disabled: !showing },
+        // Every version but the one the grid shows, to set beside it.
+        ...[{ id: BASE, name: 'Base' }, ...view.entries]
+          .filter(entry => (entry.id === BASE ? showing : entry.id !== view.shown))
+          .map(entry => ({ value: `${BESIDE}${entry.id}`, label: `Side by side with ${entry.name}` })),
+        ...(compare.open ? [{ value: UNSPLIT, label: 'Close side by side' }] : [])
       ];
     })
   );
@@ -98,8 +106,16 @@ export function ScenarioPicker(inputs: Inputs<ScenarioPickerProps>, ctx: Compone
       case RESET:
         sheet.send.resetScenarioCells();
         break;
+      case UNSPLIT:
+        sheet.send.setCompare(false, null);
+        break;
       default:
-        sheet.send.showScenario(value);
+        if (value.startsWith(BESIDE)) {
+          const id = value.slice(BESIDE.length);
+          sheet.send.setCompare(true, id === BASE ? null : id);
+        } else {
+          sheet.send.showScenario(value);
+        }
     }
     edit.focusSheet();
   };

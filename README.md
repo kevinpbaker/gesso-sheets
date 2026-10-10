@@ -109,9 +109,10 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   differently: *Scenario ▾* beside the tabs shows the whole workbook
   as it would be, with what the scenario typed and what that moved
   tinted, and the base's value for the cell you are on. The example
-  opens with an Optimistic and a Pessimistic one. A scenario is the
-  workbook forked in the engine, so it recalculates only what its
-  inputs reach.
+  opens with an Optimistic and a Pessimistic one. *Side by side with*
+  puts another version in a second pane that scrolls with the first,
+  tinted where the two differ. A scenario is the workbook forked in the
+  engine, so it recalculates only what its inputs reach.
 - **Light and dark.** The sheet follows the system's appearance, and
   View ▸ Theme overrides it, remembered in this browser. A cell's
   fill is its author's colour in both, so text with no colour of its
