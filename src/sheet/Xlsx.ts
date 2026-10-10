@@ -512,6 +512,7 @@ function styles(text: string | null, theme: readonly string[]): CellFormat[] {
   }
   const fonts = children(child(sheet, 'fonts'), 'font');
   const baseSize = Number(child(fonts[0], 'sz')?.attributes.val ?? 11);
+  const baseName = child(fonts[0], 'name')?.attributes.val ?? 'Calibri';
   const fills = children(child(sheet, 'fills'), 'fill');
   const borders = children(child(sheet, 'borders'), 'border');
   const xfs = children(child(sheet, 'cellXfs'), 'xf');
@@ -535,7 +536,12 @@ function styles(text: string | null, theme: readonly string[]): CellFormat[] {
     const border = borders[Number(xf.attributes.borderId ?? 0)];
     const alignment = child(xf, 'alignment');
     const size = Number(child(font, 'sz')?.attributes.val ?? baseSize);
+    // A font other than the workbook's own, by name; the base font is
+    // the sheet's own and is left off, as the base size is.
+    const name = child(font, 'name')?.attributes.val ?? baseName;
+    const family = name !== baseName && /^[\p{L}\p{N} .'-]{1,40}$/u.test(name) ? { fontFamily: name } : {};
     const paint: CellPaint = {
+      ...family,
       ...PLAIN,
       bold: flag(child(font, 'b')),
       italic: flag(child(font, 'i')),

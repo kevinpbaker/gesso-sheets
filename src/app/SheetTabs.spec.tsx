@@ -62,6 +62,12 @@ describe('the tab strip', () => {
     await h.ui.settle();
   }
 
+  async function settle(): Promise<void> {
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
   async function type(text: string): Promise<void> {
     h.ui.fireEvent.type(text);
     await h.ui.settle();
@@ -319,11 +325,38 @@ describe('the tab strip', () => {
       expect(selected()).toBe('Sheet2');
     });
 
-    it('colours a tab, and takes the colour off again', async () => {
-      await menu('s', 'Tab colour: red');
-      expect(h.document.sheets()[0].colour).toBe('#ea4335');
-      await menu('s', 'Tab colour: none');
+    /** The palette the text and fill colours use, since Phase 40. */
+    it('colours a tab from the palette, and takes the colour off again', async () => {
+      await menu('s', 'Tab colour…');
+      expect(h.ui.getByRole('listbox', { name: 'Tab colour' })).toBeDefined();
+      h.ui.fireEvent.click(h.ui.getByRole('option', { name: 'dark red 1' }));
+      await settle();
+      expect(h.document.sheets()[0].colour).toBe('#cc0000');
+      await menu('s', 'Tab colour…');
+      h.ui.fireEvent.click(h.ui.getByRole('option', { name: 'No colour' }));
+      await settle();
       expect(h.document.sheets()[0].colour).toBeNull();
+    });
+  });
+
+  describe('a tab’s own menu', () => {
+    it('opens on Shift+F10 in the strip, and does what it says', async () => {
+      await reachTheStrip();
+      await press('F10', { shift: true });
+      expect(h.ui.getByRole('menu', { name: 'Sheet' })).toBeDefined();
+      h.ui.fireEvent.click(h.ui.getByRole('menuitem', { name: 'Duplicate' }));
+      await settle();
+      expect(names()).toHaveLength(2);
+    });
+
+    it('offers the tab colour palette', async () => {
+      await reachTheStrip();
+      await press('ContextMenu');
+      h.ui.fireEvent.click(h.ui.getByRole('menuitem', { name: 'Tab colour…' }));
+      await settle();
+      h.ui.fireEvent.click(h.ui.getByRole('option', { name: 'dark red 1' }));
+      await settle();
+      expect(h.document.sheets()[0].colour).toBe('#cc0000');
     });
   });
 

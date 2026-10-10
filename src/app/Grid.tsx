@@ -1,3 +1,4 @@
+import { fontStack } from './fonts';
 import { BehaviorSubject, combineLatest, type Observable } from 'rxjs';
 import { distinctUntilChanged, map } from 'rxjs/operators';
 
@@ -1236,6 +1237,7 @@ export function Grid(
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
+      fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))),
       /**
        * Wrapped text breaks at the cell's width, and the row is made
        * tall enough to hold it — see the `rowFit` effect below.
@@ -3990,6 +3992,7 @@ export function Grid(
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
+      fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))),
       textWrap: paint.pipe(map(how => (how.wrap ? 'word' : 'none'))),
       fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
       fontStyle: paint.pipe(map(how => (how.italic ? 'italic' : 'normal'))),

@@ -64,6 +64,9 @@ export type CommandId =
   | 'alignCenter'
   | 'alignRight'
   | 'wrap'
+  | 'chooseFont'
+  | 'chooseFontSize'
+  | 'chooseNumberFormat'
   | 'formatGeneral'
   | 'formatNumber'
   | 'formatCurrency'
@@ -137,12 +140,7 @@ export type CommandId =
   | 'moveSheetRight'
   | 'nextSheet'
   | 'previousSheet'
-  | 'sheetColourNone'
-  | 'sheetColourBlue'
-  | 'sheetColourRed'
-  | 'sheetColourGreen'
-  | 'sheetColourPurple'
-  | 'sheetColourOrange';
+  | 'tabColour';
 
 /**
  * How long a chain the proof command builds.
@@ -450,12 +448,16 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    */
   nextSheet: { id: 'nextSheet', label: 'Next sheet', accelerator: { key: 'PageDown', alt: true } },
   previousSheet: { id: 'previousSheet', label: 'Previous sheet', accelerator: { key: 'PageUp', alt: true } },
-  sheetColourNone: { id: 'sheetColourNone', label: 'Tab colour: none' },
-  sheetColourBlue: { id: 'sheetColourBlue', label: 'Tab colour: blue' },
-  sheetColourRed: { id: 'sheetColourRed', label: 'Tab colour: red' },
-  sheetColourGreen: { id: 'sheetColourGreen', label: 'Tab colour: green' },
-  sheetColourPurple: { id: 'sheetColourPurple', label: 'Tab colour: purple' },
-  sheetColourOrange: { id: 'sheetColourOrange', label: 'Tab colour: orange' },
+  /**
+   * One item and the colour palette, since Phase 40, where there were
+   * six items naming five colours and none. The palette is the one the
+   * text and fill colours use, anchored on the tab.
+   */
+  tabColour: { id: 'tabColour', label: 'Tab colour…' },
+  /** The toolbar's lists, from the Format menu, for a keyboard that started there. */
+  chooseFont: { id: 'chooseFont', label: 'Font…' },
+  chooseFontSize: { id: 'chooseFontSize', label: 'Font size…' },
+  chooseNumberFormat: { id: 'chooseNumberFormat', label: 'Number format…' },
 
   /**
    * Six borders and not a grid of sixteen buttons.
@@ -728,12 +730,15 @@ export const MENUS: readonly MenuDefinition[] = [
       'underline',
       'textColour',
       'fillColour',
+      'chooseFont',
+      'chooseFontSize',
       SEPARATOR,
       'alignLeft',
       'alignCenter',
       'alignRight',
       'wrap',
       SEPARATOR,
+      'chooseNumberFormat',
       'formatGeneral',
       'formatNumber',
       'formatCurrency',
@@ -779,12 +784,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'previousSheet',
       'nextSheet',
       SEPARATOR,
-      'sheetColourNone',
-      'sheetColourBlue',
-      'sheetColourRed',
-      'sheetColourGreen',
-      'sheetColourPurple',
-      'sheetColourOrange'
+      'tabColour'
     ]
   },
   {

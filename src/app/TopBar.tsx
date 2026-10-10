@@ -9,7 +9,7 @@ import {
   type UiTextChangeEvent,
   type UiTextSpan
 } from 'gesso-core';
-import { ColorPalette, ColorPicker, Dialog } from 'gesso-components';
+import { ColorPalette, ColorPicker, Dialog, Menu, type MenuItem } from 'gesso-components';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { appearancePreference } from './appearance';
@@ -19,12 +19,12 @@ import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
 import { ChartBar } from './ChartBar';
 import { DocumentBar } from './DocumentBar';
+import { FONT_SIZES, FONTS } from './fonts';
 import { HomeDialog } from './HomeDialog';
 import { VersionsDialog } from './VersionsDialog';
 import type { FileActions } from './Files';
 import { RecentBar } from './RecentBar';
 import { RulesBar, type RulesTab } from './RulesBar';
-import { TAB_COLOURS } from './SheetTabs';
 import { cornerOf, isOneCell, Sheet, zoomStep } from './SheetContract';
 import {
   acceleratorLabel,
@@ -36,7 +36,7 @@ import {
   STRESS_CELLS,
   type CommandId
 } from './SheetCommands';
-import type { SheetFormatChange } from './SheetContract';
+import type { NumberFormatPatch, SheetFormatChange } from './SheetContract';
 import { columnName, formatRange, relativeRef } from '../sheet/A1';
 import type { CellPaint } from '../sheet/Format';
 import { ICONS } from './icons';
@@ -186,6 +186,91 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     edit.focusSheet();
   };
 
+  /**
+   * The lists the toolbar opens — number format, font, size, borders,
+   * merge — one `Menu` for all of them, beside the button that asked.
+   * Each list is built when it opens, so its tick is on what the
+   * active cell has now.
+   */
+  const dropdown = internalState<{ readonly label: string; readonly items: readonly MenuItem[] } | null>(null);
+  const dropdownAnchor = internalState<UiNode | null>(null);
+  const anchors = new Map<string, UiNode | null>();
+  const anchorFor = (id: string) => (node: UiNode | null) => anchors.set(id, node);
+  const ticked = (on: boolean, label: string): string => `${on ? '✓' : '  '} ${label}`;
+  /**
+   * What choosing does, kept apart from the open state: the menu
+   * reports itself closed before it reports what was chosen.
+   */
+  let pickFromDropdown: (value: string) => void = () => {};
+  const openDropdown = (id: string, label: string, items: readonly MenuItem[], pick: (value: string) => void): void => {
+    dropdownAnchor.value = anchors.get(id) ?? null;
+    pickFromDropdown = pick;
+    dropdown.value = { label, items };
+  };
+
+  /** The number formats, by the command each one is. */
+  const NUMBER_FORMATS: readonly { readonly kind: NumberFormatPatch['kind']; readonly id: CommandId; readonly example: string }[] = [
+    { kind: 'general', id: 'formatGeneral', example: '' },
+    { kind: 'number', id: 'formatNumber', example: '1,000.12' },
+    { kind: 'currency', id: 'formatCurrency', example: '$1,000.12' },
+    { kind: 'percent', id: 'formatPercent', example: '10%' },
+    { kind: 'scientific', id: 'formatScientific', example: '1.01E+03' },
+    { kind: 'date', id: 'formatDate', example: '2026-09-26' },
+    { kind: 'time', id: 'formatTime', example: '15:59' },
+    { kind: 'datetime', id: 'formatDateTime', example: '2026-09-26 15:59' },
+    { kind: 'text', id: 'formatText', example: '' }
+  ];
+  const numberMenu = (): void => {
+    const now = sheet.view.activeFormat.value.number.kind;
+    openDropdown(
+      'numberFormat',
+      'Number format',
+      NUMBER_FORMATS.map(format => ({
+        value: format.id,
+        label: ticked(format.kind === now, format.example === '' ? COMMANDS[format.id].label : `${COMMANDS[format.id].label}   ${format.example}`)
+      })),
+      value => run(value as CommandId)
+    );
+  };
+  const fontMenu = (): void => {
+    const now = paint().fontFamily ?? '';
+    openDropdown(
+      'font',
+      'Font',
+      [{ value: '', label: ticked(now === '', 'Default') }, ...FONTS.map(font => ({ value: font.name, label: ticked(font.name === now, font.name) }))],
+      value => paintWithFont({ fontFamily: value })
+    );
+  };
+  const sizeMenu = (): void => {
+    const now = paint().fontSize === 0 ? 12 : paint().fontSize;
+    openDropdown(
+      'fontSize',
+      'Font size',
+      FONT_SIZES.map(size => ({ value: String(size), label: ticked(size === now, String(size)) })),
+      value => paintWithFont({ fontSize: Number(value) })
+    );
+  };
+  const paintWithFont = (change: SheetFormatChange): void => {
+    format(change);
+    edit.focusSheet();
+  };
+  const BORDERS: readonly CommandId[] = ['borderAll', 'borderOutline', 'borderTop', 'borderBottom', 'borderThickBottom', 'borderNone'];
+  const bordersMenu = (): void =>
+    openDropdown('borders', 'Borders', BORDERS.map(id => ({ value: id, label: COMMANDS[id].label })), value => run(value as CommandId));
+  const mergeMenu = (): void =>
+    openDropdown(
+      'merge',
+      'Merge',
+      (['mergeCells', 'unmergeCells'] as const).map(id => ({ value: id, label: COMMANDS[id].label })),
+      value => run(value as CommandId)
+    );
+
+  /**
+   * The toolbar, in the order every spreadsheet has taught people to
+   * look for it in — Phase 40: history and output, then what a number
+   * looks like, then the font, then emphasis and colour, then the
+   * cell's edges, then alignment, then the data tools.
+   */
   const tools: readonly ToolbarItem[] = [
     {
       id: 'undo',
@@ -200,6 +285,47 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       ...runs('redo'),
       tip: () => tipFor('redo'),
       enabled: status.pipe(map(s => s.canRedo))
+    },
+    { id: 'print', icon: ICONS.print, ...runs('print') },
+    {
+      id: 'formatPainter',
+      icon: ICONS.painter,
+      ...runs('formatPainter'),
+      pressed: edit.painter.pipe(map(state => state !== 'off')),
+      // Two clicks keep it lit until Escape, for painting several places.
+      onDoubleRun: () => {
+        sheet.send.pickFormats();
+        edit.setPainter('held');
+      },
+      tip: 'Format painter (double-click to keep it on)'
+    },
+    { id: 'currency', icon: ICONS.currency, ...runs('formatCurrency'), startsGroup: true },
+    { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
+    { id: 'fewerDecimals', text: '.0\u2190', ...runs('fewerDecimals') },
+    { id: 'moreDecimals', text: '.00\u2192', ...runs('moreDecimals') },
+    {
+      id: 'numberFormat',
+      text: '123 \u25be',
+      label: 'Number format',
+      onRun: numberMenu,
+      anchor: anchorFor('numberFormat')
+    },
+    {
+      id: 'font',
+      text: sheet.view.activeFormat.pipe(map(current => `${current.paint.fontFamily ?? 'Default'} \u25be`)),
+      label: 'Font',
+      minWidth: 118,
+      startsGroup: true,
+      onRun: fontMenu,
+      anchor: anchorFor('font')
+    },
+    {
+      id: 'fontSize',
+      text: sheet.view.activeFormat.pipe(map(current => `${current.paint.fontSize === 0 ? 12 : current.paint.fontSize} \u25be`)),
+      label: 'Font size',
+      minWidth: 46,
+      onRun: sizeMenu,
+      anchor: anchorFor('fontSize')
     },
     { id: 'bold', icon: ICONS.bold, ...runs('bold'), startsGroup: true, pressed: on(p => p.bold) },
     { id: 'italic', icon: ICONS.italic, ...runs('italic'), pressed: on(p => p.italic) },
@@ -224,6 +350,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       anchor: node => (fillAnchor.value = node)
     },
     {
+      id: 'borders',
+      icon: ICONS.borders,
+      label: 'Borders',
+      onRun: bordersMenu,
+      startsGroup: true,
+      anchor: anchorFor('borders')
+    },
+    { id: 'merge', text: 'Merge \u25be', label: 'Merge cells', onRun: mergeMenu, anchor: anchorFor('merge') },
+    {
       id: 'alignLeft',
       icon: ICONS.alignLeft,
       ...runs('alignLeft'),
@@ -232,23 +367,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     },
     { id: 'alignCenter', icon: ICONS.alignCenter, ...runs('alignCenter'), pressed: on(p => p.align === 'center') },
     { id: 'alignRight', icon: ICONS.alignRight, ...runs('alignRight'), pressed: on(p => p.align === 'end') },
-    {
-      id: 'formatPainter',
-      icon: ICONS.painter,
-      ...runs('formatPainter'),
-      pressed: edit.painter.pipe(map(state => state !== 'off')),
-      // Two clicks keep it lit until Escape, for painting several places.
-      onDoubleRun: () => {
-        sheet.send.pickFormats();
-        edit.setPainter('held');
-      },
-      tip: 'Format painter (double-click to keep it on)'
-    },
     { id: 'wrap', text: 'Wrap', ...runs('wrap'), pressed: on(p => p.wrap) },
-    { id: 'currency', icon: ICONS.currency, ...runs('formatCurrency'), startsGroup: true },
-    { id: 'percent', icon: ICONS.percent, ...runs('formatPercent') },
-    { id: 'fewerDecimals', text: '.0\u2190', ...runs('fewerDecimals') },
-    { id: 'moreDecimals', text: '.00\u2192', ...runs('moreDecimals') },
     // The proof route's one extra button. A toolbar id is not a
     // command id — `currency` is `formatCurrency` here — so the
     // question is asked of the command rather than filtered out of
@@ -735,16 +854,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         sheet.send.activateSheet(to);
         break;
       }
-      case 'sheetColourNone':
-      case 'sheetColourBlue':
-      case 'sheetColourRed':
-      case 'sheetColourGreen':
-      case 'sheetColourPurple':
-      case 'sheetColourOrange': {
-        const named = id.slice('sheetColour'.length).toLowerCase();
-        sheet.send.setSheetColour(sheet.view.sheets.value.active, TAB_COLOURS[named] ?? null);
-        break;
-      }
+      // The palette is the strip's, which knows where the tab is.
+      case 'tabColour':
+        edit.tabColour();
+        return;
       case 'recalculate':
         if (proof) {
           sheet.send.stress(STRESS_CELLS);
@@ -779,6 +892,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return;
       case 'textColour':
         textPaletteOpen.value = true;
+        return;
+      case 'chooseFont':
+        fontMenu();
+        return;
+      case 'chooseFontSize':
+        sizeMenu();
+        return;
+      case 'chooseNumberFormat':
+        numberMenu();
         return;
       case 'fillColour':
         fillPaletteOpen.value = true;
@@ -1338,9 +1460,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           }}
           ref={(node: UiNode | null) => (menuBarNode = node)}
         />
-        <box flex={1} minWidth={0} />
+      </row>
+      {/*
+       * The toolbar on a row of its own, since Phase 40: at the right of
+       * the menu bar it had room for fifteen buttons and no more, and
+       * the font, the number format and the borders did not fit.
+       */}
+      <row width={percent(100)} y="center" paddingLeft={4} paddingRight={8} paddingTop={2} paddingBottom={4}>
         <Toolbar items={tools} label="Formatting" />
-        <box width={8} />
       </row>
       <box width={percent(100)} height={1} backgroundColor="border" />
       <row width={percent(100)} y="center" gap={8} padding={6}>
@@ -1401,6 +1528,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         onStop={() => sheet.send.stopScript()}
         onFunctionsOn={(on: boolean) => sheet.send.setFunctionsOn(on)}
         onClose={closeScripts}
+      />
+      <Menu
+        open={dropdown.pipe(map(current => current !== null))}
+        onOpenChange={(open: boolean) => {
+          if (!open) {
+            dropdown.value = null;
+            edit.focusSheet();
+          }
+        }}
+        anchor={dropdownAnchor}
+        placement="bottom-start"
+        items={dropdown.pipe(map(current => current?.items ?? []))}
+        label={dropdown.pipe(map(current => current?.label ?? ''))}
+        onSelect={(value: string) => {
+          dropdown.value = null;
+          pickFromDropdown(value);
+          edit.focusSheet();
+        }}
       />
       <ColorPalette
         open={textPaletteOpen}

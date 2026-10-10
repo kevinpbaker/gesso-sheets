@@ -4742,6 +4742,7 @@ function optionsOf(view: SheetFindView): FindOptions {
  * symbol somebody chose.
  */
 function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat {
+  const family = change.fontFamily ?? format.paint.fontFamily ?? '';
   const number =
     change.number !== undefined
       ? (change.number as CellFormat['number'])
@@ -4767,7 +4768,8 @@ function applyChange(format: CellFormat, change: SheetFormatChange): CellFormat 
               right: change.borders.right ?? format.paint.borders.right,
               bottom: change.borders.bottom ?? format.paint.borders.bottom,
               left: change.borders.left ?? format.paint.borders.left
-            }
+            },
+      ...(family === '' ? {} : { fontFamily: family })
     }
   };
 }

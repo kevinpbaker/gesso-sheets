@@ -120,6 +120,9 @@ export interface SheetEditing {
   /** Puts the keyboard on the tab strip, for Alt+F10. */
   focusTabs(): void;
   provideTabs(run: () => void): void;
+  /** Sheet ▸ Tab colour: the palette, beside the active tab. */
+  tabColour(): void;
+  provideTabColour(run: () => void): void;
 }
 
 /**
@@ -167,6 +170,7 @@ export function editing(
   let dismiss: () => boolean = () => false;
   let renameSheet: () => void = () => {};
   let focusTabs: () => void = () => {};
+  let tabColour: () => void = () => {};
 
   // The application worker's selection, when it is not one we caused.
   // Sending `setSelection` echoes the value straight back, which
@@ -528,6 +532,10 @@ export function editing(
     renameSheet: () => renameSheet(),
     provideRename: run => {
       renameSheet = run;
+    },
+    tabColour: () => tabColour(),
+    provideTabColour: run => {
+      tabColour = run;
     },
     focusTabs: () => focusTabs(),
     provideTabs: run => {

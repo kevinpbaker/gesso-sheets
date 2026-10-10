@@ -95,6 +95,12 @@ export interface CellPaint {
   readonly underline: boolean;
   /** Points, or 0 for the sheet's own size. */
   readonly fontSize: number;
+  /**
+   * A font by name — `Georgia` — or absent for the sheet's own. Absent
+   * rather than empty, so a file written before Phase 40 and a cell
+   * nobody gave a font are the same cell, with the same palette key.
+   */
+  readonly fontFamily?: string;
   /** A colour, or '' for the theme's text colour. */
   readonly color: string;
   /** A colour, or '' for no fill at all. */
@@ -188,7 +194,8 @@ export function keyOf(format: CellFormat): string {
     edgeKey(p.borders.top),
     edgeKey(p.borders.right),
     edgeKey(p.borders.bottom),
-    edgeKey(p.borders.left)
+    edgeKey(p.borders.left),
+    ...(p.fontFamily === undefined || p.fontFamily === '' ? [] : [`f:${p.fontFamily}`])
   ].join('|');
 }
 

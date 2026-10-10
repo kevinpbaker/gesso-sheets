@@ -798,8 +798,9 @@ describe('the toolbar', () => {
     await h.ui.settle();
     expect(h.ui.runtime.input.focus.focusedNode).toBe(h.ui.getByRole('toolbar'));
 
-    // Undo, Redo, then Bold.
-    for (let step = 0; step < 2; step++) {
+    // Undo, Redo, Print, the painter, four number buttons, the number
+    // format, the font and its size, then Bold.
+    for (let step = 0; step < 11; step++) {
       h.ui.fireEvent.press('ArrowRight');
       await h.ui.settle();
     }

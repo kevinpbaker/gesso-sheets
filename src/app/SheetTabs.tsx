@@ -9,7 +9,8 @@ import {
   type UiTextChangeEvent
 } from 'gesso-core';
 import { Column, Row, Text } from 'gesso-core';
-import { Dialog } from 'gesso-components';
+import { ColorPalette, Dialog, Menu, type MenuItem } from 'gesso-components';
+import { type UiPointerEvent } from 'gesso-core';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { Sheet, type SheetTab } from './SheetContract';
@@ -32,30 +33,12 @@ import { SimulationReadout } from './SimulationReadout';
  * anybody who has used Ctrl+PageDown expects. It costs nothing that a
  * click would not: showing a sheet is a viewport move, not an edit.
  *
- * What the strip does *not* own is the complete set of operations.
- * Renaming, duplicating, deleting, reordering and colouring are
+ * Renaming, duplicating, deleting, reordering and colouring are also
  * commands in the `Sheet` menu, because Phase 4's standard is that
- * anything the mouse can do the keyboard can, and a colour chosen
- * from a swatch nobody can tab to is a colour only half the people
- * using this can set. The strip is the surface a pointer wants; the
- * menu is the one that is complete.
+ * anything the mouse can do the keyboard can. A tab's own menu — a
+ * right-click, or Shift+F10 on the strip — offers the same, and its
+ * colour is the palette, which the arrows walk.
  */
-
-/**
- * The colours a tab can be.
- *
- * Five and a plain one, named rather than free, because a tab colour
- * is a label people sort by — *the red one* — and a picker offering
- * sixteen million of them produces workbooks where nobody can say
- * which tab they mean.
- */
-export const TAB_COLOURS: Readonly<Record<string, string>> = {
-  blue: '#4285f4',
-  red: '#ea4335',
-  green: '#34a853',
-  purple: '#b061f5',
-  orange: '#fa7b17'
-};
 
 export interface SheetTabsProps {
   readonly editing: SheetEditing;
@@ -84,6 +67,66 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
   let boxWanted = false;
 
   const deleting = internalState(false);
+
+  /**
+   * The tab's own menu — a right-click on a tab, or the context-menu
+   * key or Shift+F10 on the strip — and the colour palette it opens.
+   * Phase 40: the colours were six items in the Sheet menu naming
+   * five colours, and now they are the palette the text and fill
+   * colours use, beside the tab being coloured.
+   */
+  const tabNodes = new Map<number, UiNode>();
+  const menuOpen = internalState(false);
+  const menuAt = internalState<{ x: number; y: number } | undefined>(undefined);
+  const menuAnchor = internalState<UiNode | null>(null);
+  const paletteOpen = internalState(false);
+  const paletteAnchor = internalState<UiNode | null>(null);
+  const openMenu = (index: number, at?: { x: number; y: number }): void => {
+    show(index);
+    menuAt.value = at;
+    menuAnchor.value = at === undefined ? (tabNodes.get(index) ?? null) : null;
+    menuOpen.value = true;
+  };
+  const openPalette = (): void => {
+    paletteAnchor.value = tabNodes.get(active()) ?? strip;
+    paletteOpen.value = true;
+  };
+  edit.provideTabColour(openPalette);
+  const MENU: readonly MenuItem[] = [
+    { value: 'rename', label: 'Rename' },
+    { value: 'duplicate', label: 'Duplicate' },
+    { value: 'delete', label: 'Delete' },
+    { value: 'left', label: 'Move left' },
+    { value: 'right', label: 'Move right' },
+    { value: 'colour', label: 'Tab colour…' }
+  ];
+  const chooseFromMenu = (value: string): void => {
+    menuOpen.value = false;
+    const at = active();
+    switch (value) {
+      case 'rename':
+        startRename(at);
+        return;
+      case 'duplicate':
+        sheet.send.duplicateSheet(at);
+        break;
+      case 'delete':
+        deleting.value = true;
+        return;
+      case 'left':
+      case 'right': {
+        const to = at + (value === 'left' ? -1 : 1);
+        if (to >= 0 && to < count()) {
+          sheet.send.moveSheet(at, to);
+        }
+        break;
+      }
+      case 'colour':
+        openPalette();
+        return;
+    }
+    edit.focusSheet();
+  };
 
   const active = (): number => tabs.value.active;
   const count = (): number => tabs.value.entries.length;
@@ -209,6 +252,17 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
           deleting.value = true;
         }
         break;
+      case 'ContextMenu':
+        if (!onAdd.value) {
+          openMenu(active());
+        }
+        break;
+      case 'F10':
+        if (event.modifiers.shift !== true || onAdd.value) {
+          return;
+        }
+        openMenu(active());
+        break;
       default:
         // Everything else belongs to whatever is underneath, which is
         // what lets Tab out of the strip keep working.
@@ -254,7 +308,14 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
                     box = found;
                     take();
                   })
-                : tab(entry, index, view.active, () => show(index))
+                : tab(
+                    entry,
+                    index,
+                    view.active,
+                    () => show(index),
+                    at => openMenu(index, at),
+                    node => (node === null ? tabNodes.delete(index) : tabNodes.set(index, node))
+                  )
             )
           )
         )}
@@ -294,6 +355,39 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
        * through `Inputs`, which hands a component the current value
        * rather than the stream.
        */}
+      <Menu
+        open={menuOpen}
+        onOpenChange={(open: boolean) => {
+          if (!open) {
+            menuOpen.value = false;
+          }
+        }}
+        anchor={menuAnchor}
+        at={menuAt}
+        placement="top-start"
+        items={MENU}
+        label="Sheet"
+        onSelect={chooseFromMenu}
+      />
+      <ColorPalette
+        open={paletteOpen}
+        onOpenChange={(open: boolean) => {
+          paletteOpen.value = open;
+          if (!open) {
+            edit.focusSheet();
+          }
+        }}
+        anchor={paletteAnchor}
+        placement="top-start"
+        value={tabs.pipe(map(view => view.entries[view.active]?.colour ?? ''))}
+        automaticLabel="No colour"
+        label="Tab colour"
+        onSelect={(colour: string) => {
+          paletteOpen.value = false;
+          sheet.send.setSheetColour(active(), colour === '' ? null : colour);
+          edit.focusSheet();
+        }}
+      />
       <Dialog
         open={deleting}
         onClose={closeDelete}
@@ -332,11 +426,20 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
  * keeping: a fill dark enough to tell six colours apart is a fill the
  * name cannot be read on, and the name is what the tab is for.
  */
-function tab(entry: SheetTab, index: number, active: number, onShow: () => void) {
+function tab(
+  entry: SheetTab,
+  index: number,
+  active: number,
+  onShow: () => void,
+  onMenu: (at: { x: number; y: number }) => void,
+  ref: (node: UiNode | null) => void
+) {
   const is = index === active;
   return (
     <column key={`tab-${index}`} minWidth={0}>
       <button
+        ref={ref}
+        onContextMenu={(event: UiPointerEvent) => onMenu({ x: event.x, y: event.y })}
         /**
          * Not a tab stop. The strip is the stop and the arrows move
          * inside it, so every tab is reachable and none of them

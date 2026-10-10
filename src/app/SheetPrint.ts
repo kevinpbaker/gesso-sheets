@@ -1,5 +1,6 @@
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import { CELL_FONT_SIZE, ROW_HEIGHT } from './dimensions';
+import { fontStack, isFontName } from './fonts';
 import type { SheetDocument } from './SheetDocument';
 
 /**
@@ -112,9 +113,8 @@ export function cellStyle(paint: CellPaint, natural: 'left' | 'right' | 'center'
   if (paint.fontSize !== 0 && paint.fontSize !== CELL_FONT_SIZE) {
     rules.push(`font-size:${paint.fontSize}pt`);
   }
-  const family = (paint as CellPaint & { fontFamily?: string }).fontFamily;
-  if (family !== undefined && family !== '' && /^[\w\s,'-]+$/.test(family)) {
-    rules.push(`font-family:${family}`);
+  if (isFontName(paint.fontFamily)) {
+    rules.push(`font-family:${fontStack(paint.fontFamily).replace(/"/g, "'")}`);
   }
   if (isColour(paint.color)) {
     rules.push(`color:${paint.color}`);

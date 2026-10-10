@@ -1,3 +1,4 @@
+import { isFontName } from './fonts';
 import { relativeRef, type RangeRef } from '../sheet/A1';
 import type { Note } from '../sheet/Notes';
 import type { Scenario, ScenarioInput } from '../sheet/ScenarioInputs';
@@ -707,7 +708,8 @@ function paintFrom(stored: unknown): CellPaint {
     fill: typeof paint.fill === 'string' ? paint.fill : '',
     align: align === 'start' || align === 'center' || align === 'end' ? align : 'auto',
     wrap: paint.wrap === true,
-    borders: bordersFrom(paint.borders)
+    borders: bordersFrom(paint.borders),
+    ...(isFontName(paint.fontFamily) ? { fontFamily: paint.fontFamily } : {})
   };
 }
 

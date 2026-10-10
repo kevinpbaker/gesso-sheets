@@ -3512,7 +3512,7 @@ an `.xlsx` as a workbook.
 
 ---
 
-### Phase 40 — The toolbar people expect
+### Phase 40 — The toolbar people expect — **done**
 
 A row of its own, in the order every spreadsheet has: undo and redo,
 print, number format, font and size, bold italic underline, colours,
@@ -3522,6 +3522,43 @@ a tab's colour from the colour palette in the tab's own menu.
 
 **Exit:** each control reaches the document — a font family is kept in
 the file and drawn — and the toolbar is still one tab stop.
+
+**Met.**
+
+- **A row of its own**, under the menus, in this order: undo, redo,
+  print, the format painter; currency, percent, fewer and more
+  decimals, *123 ▾*; the font and its size; bold, italic, underline,
+  text and fill colour; borders and *Merge ▾*; the three alignments and
+  wrap. Still one tab stop with the arrows inside it, as Phase 9 made
+  it, and the filter and AutoSum join the end in Phase 41.
+- **The lists** are one `Menu`, opened beside the button that asked and
+  built as it opens, so the tick is on what the active cell has. *123
+  ▾* lists every number format with an example; the borders and merge
+  lists are the Format menu's own commands; Format ▸ Font…, Font size…
+  and Number format… open the same lists for a keyboard that started in
+  the menus. The menu reports itself closed before it reports the
+  choice, which a first version lost the choice to.
+- **A font.** `CellPaint.fontFamily`, optional, so an old file and a
+  cell nobody gave a font are the same cell with the same palette key.
+  A cell keeps the name — `Georgia` — which is what an `.xlsx` calls it,
+  and the grid draws a stack (`fonts.ts`) that falls back to the metric
+  twin a Linux desktop ships and then to the generic family. Read from
+  and written to `.xlsx` by name, and printed.
+- **The tab colour** is the colour palette the text and fill use, in a
+  menu of the tab's own — a right-click, or Shift+F10 or the context-menu
+  key on the strip — beside Rename, Duplicate, Delete and the moves.
+  Sheet ▸ Tab colour… opens the same palette. The six items naming five
+  colours are gone.
+- `ToolbarLists.spec.tsx` drives every list from the keyboard and checks
+  the font through the file, the `.xlsx` and the grid; `SheetTabs.spec`
+  the tab's menu and its palette.
+
+**Not done:**
+
+- **The size is a list, not a field** with a minus and a plus beside it,
+  and the font list names each font without drawing it in itself.
+- **Autofit measures in the sheet's own font**, so a column of a wide
+  font fitted to its contents comes out a little narrow.
 
 ---
 

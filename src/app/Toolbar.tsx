@@ -78,8 +78,13 @@ export interface ToolbarIconItem extends ToolbarItemBase {
  * the digits themselves do.
  */
 export interface ToolbarTextItem extends ToolbarItemBase {
-  /** What is drawn in the button. */
-  readonly text: string;
+  /**
+   * What is drawn in the button: fixed, or what the active cell has —
+   * the font's name, its size — for the buttons that open a list.
+   */
+  readonly text: string | Observable<string>;
+  /** A width the button does not shrink below, so a changing name does not move the row. */
+  readonly minWidth?: number;
   /** What a screen reader says, when that is not the text. */
   readonly label?: string;
   readonly weight?: number | 'normal' | 'bold';
@@ -164,7 +169,8 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, s
   const pressed = item.pressed ?? of(false);
   const enabled = item.enabled ?? of(true);
   /** What the tooltip says: what it was given, or the button's own name. */
-  const tip = item.tip ?? (item.icon === undefined ? item.label ?? item.text : item.label);
+  const name = item.label ?? (typeof item.text === 'string' ? item.text : item.id);
+  const tip = item.tip ?? name;
   const hovered = new BehaviorSubject(false);
   /**
    * Three reasons a button is lit, and one colour for all of them.
@@ -212,7 +218,8 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, s
         item.onRun();
       }}
       onDoubleClick={() => item.onDoubleRun?.()}
-      label={item.label ?? item.text}
+      label={name}
+      minWidth={item.icon === undefined ? item.minWidth : undefined}
       ref={item.anchor}
       paddingLeft={9}
       paddingRight={9}
@@ -233,7 +240,7 @@ function button(item: ToolbarItem, index: number, at: BehaviorSubject<number>, s
             text={item.text}
             fontSize={12}
             fontWeight={item.weight ?? 'normal'}
-            textAlign="center"
+            textAlign={item.minWidth === undefined ? 'center' : 'start'}
             textWrap="none"
             color="controlForeground"
             selectable={false}

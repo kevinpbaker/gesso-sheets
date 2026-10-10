@@ -396,7 +396,7 @@ function stylesOf(formats: readonly CellFormat[], dxfs: readonly string[] = []):
 
 function fontKey(format: CellFormat | undefined): string {
   const paint = format?.paint;
-  return JSON.stringify([paint?.bold, paint?.italic, paint?.underline, paint?.fontSize, paint?.color]);
+  return JSON.stringify([paint?.bold, paint?.italic, paint?.underline, paint?.fontSize, paint?.color, paint?.fontFamily]);
 }
 
 /** A font, children in the order the schema insists on. */
@@ -411,8 +411,12 @@ function fontOf(format: CellFormat | undefined): string {
     // The reader keeps a size the font has as it is; the default is 11.
     `<sz val="${paint !== undefined && paint.fontSize > 0 ? paint.fontSize : 11}"/>` +
     (colour === null ? '' : `<color rgb="${colour}"/>`) +
-    '<name val="Calibri"/><family val="2"/></font>'
+    `<name val="${escapeName(paint?.fontFamily ?? 'Calibri')}"/><family val="2"/></font>`
   );
+}
+
+function escapeName(name: string): string {
+  return name.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
 function borderKey(format: CellFormat | undefined): string {

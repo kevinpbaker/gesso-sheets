@@ -1383,6 +1383,8 @@ export interface SheetFormatChange {
   readonly italic?: boolean;
   readonly underline?: boolean;
   readonly fontSize?: number;
+  /** A font by name, or '' for the sheet's own. */
+  readonly fontFamily?: string;
   readonly color?: string;
   readonly fill?: string;
   readonly align?: 'auto' | 'start' | 'center' | 'end';
