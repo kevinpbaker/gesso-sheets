@@ -31,13 +31,13 @@ interface Harness {
   document: SheetDocument;
 }
 
-async function mount(fill?: (document: SheetDocument) => void): Promise<Harness> {
+async function mount(fill?: (document: SheetDocument) => void, viewport = VIEWPORT): Promise<Harness> {
   const document = new SheetDocument();
   fill?.(document);
   document.sheet.recalculate();
   const service = new SheetService(document, { rowCount: ROWS, columnCount: COLUMNS });
   const served = serveForTest([sheetChannel(service)]);
-  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, ...VIEWPORT });
+  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, ...viewport });
   await ui.settle();
   await served.settle();
   await ui.settle();
@@ -442,6 +442,46 @@ describe('the menu under the right button', () => {
     h.ui.fireEvent.press('F10', { shift: true });
     await settle();
     expect(items()).toContain('Copy');
+  });
+});
+
+/**
+ * The menu is on the screen, all of it.
+ *
+ * Eleven commands are 424 pixels of menu. Opened from the middle of a
+ * window 600 tall it fits neither below the pointer nor above it, and
+ * the engine put it on one side anyway with a piece hanging off the
+ * window — in a browser 813 tall, its first command off the top. It
+ * goes as low as it can now, with its bottom at the sheet's, which in
+ * this window is 70.4 + 476.
+ */
+describe('where the menu under the right button opens', () => {
+  const TALL = { width: 700, height: 600 };
+  const menu = () => h.ui.getVisibleBox(h.ui.getByRole('menu', { name: 'Cell actions' }));
+  /** A right-click in the middle of a row's height, 24 pixels each from 94.4. */
+  const rightClickRow = async (rowName: string) => {
+    const box = h.ui.getVisibleBox(row(rowName));
+    h.ui.fireEvent.contextMenu(h.ui.getByRole('grid'), { x: 300, y: box.y + box.height / 2 });
+    await settle();
+  };
+  const near = (value: number) => Math.round(value * 10) / 10;
+
+  it('opens below the pointer when it fits below', async () => {
+    h = await mount(undefined, TALL);
+    await rightClickRow('1');
+    expect([near(menu().y), menu().height]).toEqual([106.4, 424]);
+  });
+
+  it('opens above the pointer when it fits above and not below', async () => {
+    h = await mount(undefined, TALL);
+    await rightClickRow('18');
+    expect(near(menu().y)).toBe(near(514.4 - 424));
+  });
+
+  it('is moved until all of it shows when it fits on neither side', async () => {
+    h = await mount(undefined, TALL);
+    await rightClickRow('8');
+    expect(near(menu().y)).toBe(near(546.4 - 424));
   });
 });
 
