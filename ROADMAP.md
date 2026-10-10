@@ -3562,7 +3562,7 @@ the file and drawn — and the toolbar is still one tab stop.
 
 ---
 
-### Phase 41 — Everyday data work
+### Phase 41 — Everyday data work — **done**
 
 A filter toggle on the toolbar, and a mark in the header of a filtered
 column. AutoSum, with Sum, Average, Count, Max and Min, over the range
@@ -3572,15 +3572,64 @@ A mark in the corner of a cell with a note.
 
 **Exit:** each, specced through the render tree.
 
+**Met.**
+
+- **The filter** has a funnel at the end of the toolbar, lit while a
+  filter is on: pressed, it keeps only the rows like the active cell —
+  Data ▸ Keep only rows like this one, which was there — and pressed
+  again it shows every row. The column it was chosen by has a funnel
+  in its header, and *A, filtered* as its name. The column is kept on
+  the sheet beside the rows it hid, for the session as they are, and
+  crosses on `status.filterColumn`.
+- **AutoSum.** *Σ ▾* lists Sum, Average, Count numbers, Max and Min, and
+  More functions…; Insert ▸ AutoSum and Alt+= are Sum. On one cell it
+  totals the run of numbers directly above, or failing that to the
+  left; on a range, a total under each column, or to the right of a
+  range one row high. One step of undo, called *AutoSum*. Written and
+  kept rather than left open for editing as Excel does: the formula bar
+  shows which range it chose.
+- **The function reference.** Help ▸ Functions lists all 154 from the
+  formula editor's own `SIGNATURES`, so the list and the hint cannot
+  disagree, with each signature and its line of description, and a
+  search over names (those that start with it first) and descriptions.
+  Insert ▸ Function is the same list with Insert on each row, which
+  opens the cell with `=SUMIF(` — or adds to a formula being typed — and
+  the hint takes over.
+- **Notes** already had their mark, a square in the cell's top-right
+  corner where Excel puts its triangle, drawn in the cell's own paint
+  pass since Phase 22. Checked in Chrome on the dashboard's A9.
+- `DataWork.spec.tsx` covers AutoSum's four shapes and its undo, the
+  reference's order and search, and on the screen the funnel, *Σ ▾*,
+  Alt+= and both menu routes into the reference.
+
+**Not done:**
+
+- **The filter is still one value in one column.** A list of values to
+  tick in the header, and filtering by more than one column, are the
+  next step; the funnel in the header marks and does not yet open one.
+- **A filter on a table under a merged title hides the table's header
+  row**, because the region the filter reads starts at the title and
+  so does not look like it has a header. Found in Chrome on the Sales
+  sheet; it was so before this phase.
+
 ---
 
-### Phase 42 — Polish
+### Phase 42 — Polish — **done**
 
 A blank workbook that opens fast, and the status bar's figures with a
 picker, as Google Sheets has.
 
 **Exit:** File ▸ New lands in Chrome; the status bar's figures are
 chosen from a menu and kept.
+
+**Met.** File ▸ New opened a new tab at `/d/new`, which a popup blocker
+refuses and a headless Chrome never showed — the click that "did not
+land". It opens a blank workbook in the same tab now (Phase 38), and in
+Chrome the url moves to the new document's and Back returns. The first
+workbook a browser sees is called *Northwind Trading*, which is what it
+is, rather than Untitled. The status bar's Sum, Average and Count, with
+a menu of six figures beside them that is kept across reloads, were
+Phases 22 and 27's and needed nothing; a click on a figure copies it.
 
 ---
 

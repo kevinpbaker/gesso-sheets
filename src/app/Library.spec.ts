@@ -82,6 +82,25 @@ describe('the save state', () => {
   });
 });
 
+describe('the first workbook', () => {
+  it('is called what the seed is, and a blank one after it Untitled', async () => {
+    const library = new InMemorySheetLibrary();
+    const service = new SheetService(new SheetDocument(), {
+      library,
+      seed: document => document.setCell(0, 0, 'example'),
+      seedName: 'Northwind Trading',
+      rowCount: 100,
+      columnCount: 10
+    });
+    service.openDocument('');
+    await service.settled;
+    expect(latest(service.documentView).name).toBe('Northwind Trading');
+    service.openDocument('new');
+    await service.settled;
+    expect(latest(service.documentView).name).toBe('Untitled');
+  });
+});
+
 describe('renaming', () => {
   it('renames the open document, and the library keeps the name', async () => {
     const library = new InMemorySheetLibrary();

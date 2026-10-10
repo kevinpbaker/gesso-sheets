@@ -88,13 +88,18 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   current argument highlighted. References coloured in the text and
   outlined on the grid as you type. Click or drag a range into a
   formula mid-typing. F4 cycles `A1 → $A$1 → A$1 → $A1`. Matching
-  brackets light up.
+  brackets light up. *Help ▸ Functions* lists all of them, searchable;
+  *Σ ▾* and Alt+= total the numbers beside the selection.
 - **Structure.** Insert and delete rows and columns, and every formula
   that pointed at them is rewritten — exactly the ones that did, by a
   spec that says `toBe` and not `toBeLessThan`. Sort a range. Hide,
-  freeze, merge, autofit, filter.
-- **Formatting.** Number, currency, percent and date formats. Bold,
-  italic, alignment, fills, per-edge borders. Conditional formats,
+  freeze, merge, autofit, filter — from a funnel on the toolbar, with
+  one in the header of the column it filters.
+- **Formatting.** A toolbar of its own, in the order spreadsheets have
+  taught people: number formats from *123 ▾*, a font and its size,
+  borders and merges from lists. Number, currency, percent and date
+  formats. Bold, italic, alignment, fills, per-edge borders.
+  Conditional formats,
   including colour scales, resolved for the visible window only, so a
   rule over a million cells costs the same scroll as no rule. Data
   validation with a dropdown when the rule is a list.
@@ -108,11 +113,19 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   parser. Named ranges from the name box or `Insert ▸ Name`. A formula
   on one sheet reading 50,000 cells on another publishes nothing while
   that sheet is out of view.
-- **Persistence.** The workbook is saved in the browser as you type
-  and is there when you come back.
-- **Files.** Open and save `.gsheet` through the file system, several
-  documents at once, recent files, a file dropped on the window. CSV
-  in and out. `.xlsx` in and out with its formulas, formats, merges,
+- **Where your work is.** The workbook's name is at the top, renamed
+  where it stands, beside a line that says *Saving…*, *Saved in this
+  browser* or *Saved to Q3.gsheet* — and in red when it is not being
+  kept. It is saved in the browser as you type. *File ▸ All
+  workbooks* lists every one this browser keeps, to search, open,
+  start, rename, copy and delete; *File ▸ Version history* puts back
+  the workbook as it was opened, or as it was ten minutes into an
+  edit, or when it was last saved to a file.
+- **Files.** Open and save `.gsheet` through the file system, and
+  *Keep saving to this file* to have every change written there as
+  well; several documents at once, recent files, *File ▸ Import*, or a
+  file dropped on the window. *File ▸ Print* and *Export as PDF*, as a
+  page of the table the browser prints. CSV in and out. `.xlsx` in and out with its formulas, formats, merges,
   names, conditional formats, validations and charts; what a file has
   that this sheet does not is named in a sentence rather than dropped
   without a word.

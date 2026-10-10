@@ -33,7 +33,13 @@ import { spawnScriptWorker } from '../script/browserWorker';
  * neither worker.
  */
 const library = new OpfsSheetLibrary(COLUMN_COUNT);
-const service = new SheetService(new SheetDocument(), { library, seed, scripts: spawnScriptWorker, printer: printWindow() });
+const service = new SheetService(new SheetDocument(), {
+  library,
+  seed,
+  seedName: 'Northwind Trading',
+  scripts: spawnScriptWorker,
+  printer: printWindow()
+});
 
 serveChannels([sheetChannel(service)]);
 
