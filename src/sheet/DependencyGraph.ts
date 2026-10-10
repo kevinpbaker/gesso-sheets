@@ -58,6 +58,28 @@ export class DependencyGraph {
   }
 
   /**
+   * A graph with the same edges and none of this one's storage, for a
+   * workbook forked from this one: the fork rewires the cells it
+   * changes, and each set it touches has to be its own.
+   */
+  clone(): DependencyGraph {
+    const copy = new DependencyGraph();
+    for (const [key, set] of this.precedents) {
+      copy.precedents.set(key, new Set(set));
+    }
+    for (const [key, set] of this.dependents) {
+      copy.dependents.set(key, new Set(set));
+    }
+    for (const [column, set] of this.columnWatchers) {
+      copy.columnWatchers.set(column, new Set(set));
+    }
+    for (const [key, columns] of this.watchedColumns) {
+      copy.watchedColumns.set(key, [...columns]);
+    }
+    return copy;
+  }
+
+  /**
    * Forgets the whole graph.
    *
    * For a structural change — an insert or a delete — where every

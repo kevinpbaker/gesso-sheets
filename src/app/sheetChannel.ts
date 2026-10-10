@@ -38,7 +38,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       rowFit: service.rowFit,
       charts: service.charts,
       series: service.chartSeries,
-      scripts: service.scripts
+      scripts: service.scripts,
+      scenarios: service.scenarios
     },
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
@@ -139,6 +140,11 @@ export function sheetChannel(service: SheetService): ServedChannel {
       saveScript: (was, name, source, kind) => service.saveScript(was, name, source, kind),
       removeScript: name => service.removeScript(name),
       runScript: (name, confirmed) => service.runScript(name, confirmed),
+      showScenario: id => service.showScenario(id),
+      addScenario: (name, copy) => service.addScenario(name, copy),
+      renameScenario: (id, name) => service.renameScenario(id, name),
+      deleteScenario: id => service.deleteScenario(id),
+      resetScenarioCells: () => service.resetScenarioCells(),
       stopScript: () => service.stopScript(),
       setFunctionsOn: on => service.setFunctionsOn(on)
     }

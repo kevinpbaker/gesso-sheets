@@ -6,6 +6,7 @@ import { Merges } from '../sheet/Merges';
 import type { Chart } from '../sheet/Chart';
 import { columnName, MAX_COLUMNS as MAX_COLUMNS_HERE, MAX_ROWS as MAX_ROWS_HERE, type RangeRef } from '../sheet/A1';
 import { Notes, type Note } from '../sheet/Notes';
+import { ScenarioInputs, type Scenario, type ScenarioInput } from '../sheet/ScenarioInputs';
 import type { ConditionalRule } from '../sheet/Conditional';
 import type { Validation } from '../sheet/Validation';
 import { isNamedRange, nameProblem, type DefinedName, type NameProblem } from '../sheet/Names';
@@ -25,7 +26,7 @@ import type { Script } from '../script/ScriptHost';
  * the other. Keeping them in the same list is what makes a paste that
  * carried formats one press of ctrl-Z rather than two.
  */
-type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit | ChartsEdit | NoteEdit;
+type Edit = TextEdit | FormatEdit | RegionEdit | StructureEdit | NamesEdit | RulesEdit | ChartsEdit | NoteEdit | ScenarioInputEdit;
 
 /**
  * Where an edit was made, which every kind of edit has to say.
@@ -102,6 +103,20 @@ interface NoteEdit extends OnASheet {
   readonly after: string;
 }
 
+/**
+ * A cell a scenario types differently, before and after; null is the
+ * base's own input. Typing while a scenario is shown is an edit like
+ * any other, and ctrl-Z takes it back like any other.
+ */
+interface ScenarioInputEdit extends OnASheet {
+  readonly kind: 'scenarioInput';
+  readonly scenario: string;
+  readonly row: number;
+  readonly column: number;
+  readonly before: string | null;
+  readonly after: string | null;
+}
+
 interface TextEdit extends OnASheet {
   readonly kind: 'text';
   readonly row: number;
@@ -153,6 +168,12 @@ interface StructureEdit extends OnASheet {
   readonly rows: RowsHeld;
   /** The sheet's notes as they were, all of them: a deleted row takes its notes with it. */
   readonly notes: readonly Note[];
+  /**
+   * Every sheet's scenario inputs as they were. Those on the sheet that
+   * changed shape move with its cells, a formula among them on any sheet
+   * may point at cells that moved, and one on a deleted row is gone.
+   */
+  readonly scenarioInputs: readonly (readonly ScenarioInput[])[];
   /**
    * Where the formats were, for a deletion only: a deleted row takes
    * its formats with it, and shifting back cannot bring them. An insert
@@ -248,6 +269,8 @@ interface Page {
   readonly merges: Merges;
   /** The notes somebody left on cells; see `Notes`. */
   readonly notes: Notes;
+  /** What each scenario types into this sheet's cells; see `ScenarioInputs`. */
+  readonly scenarioInputs: ScenarioInputs;
   /**
    * How wide each column is drawn.
    *
@@ -326,6 +349,7 @@ function newPage(sheet: Sheet): Page {
     formats: new Formats(),
     merges: new Merges(),
     notes: new Notes(),
+    scenarioInputs: new ScenarioInputs(),
     columnWidths: [],
     hiddenRows: new Set<number>(),
     rowHeights: new Map<number, number>(),
@@ -366,6 +390,17 @@ export class SheetDocument {
    * script's *run* changes is one step of undo like any other.
    */
   scripts: Script[] = [];
+
+  /**
+   * The workbook's scenarios: named ways it might have gone, each a few
+   * inputs typed differently. The list is the workbook's, as the names
+   * are; what each one types is kept on the sheets it types into (see
+   * `ScenarioInputs`). Adding, renaming and deleting one is not on the
+   * undo stack, for the reason a script is not: it is closer to a file
+   * kept beside the sheet than to what the sheet holds. Typing into one
+   * is.
+   */
+  scenarios: Scenario[] = [];
 
   constructor() {
     // Which rows show is the document's to know and `SUBTOTAL`'s to
@@ -422,6 +457,161 @@ export class SheetDocument {
 
   noteAt(row: number, column: number): string {
     return this.page.notes.at(row, column);
+  }
+
+  /**
+   * The scenario on screen, or null for the base.
+   *
+   * Showing one does two things here and nothing else. What a cell
+   * displays is read from that scenario's fork (see `shown`), and what
+   * is typed — by hand, by a paste, a fill, a sort — goes into that
+   * scenario rather than the base, through `setCell`, which every one of
+   * those passes through. Formats, rules and the sheet's shape are
+   * shared: a scenario is a question about values.
+   */
+  private shownScenario: string | null = null;
+  /** That scenario's fork, once it has been made; see `SheetService`. */
+  private forked: Workbook | null = null;
+
+  get scenario(): string | null {
+    return this.shownScenario;
+  }
+
+  /** Shows a scenario, or the base with null. Its fork is the caller's to make and hand back. */
+  showScenario(id: string | null): void {
+    this.shownScenario = id !== null && this.scenarios.some(entry => entry.id === id) ? id : null;
+    this.forked = null;
+  }
+
+  get fork(): Workbook | null {
+    return this.forked;
+  }
+
+  set fork(book: Workbook | null) {
+    this.forked = this.shownScenario === null ? null : book;
+  }
+
+  /** The active sheet as it is on screen: the scenario's fork when one is shown and made, the base's otherwise. */
+  get shown(): Sheet {
+    return this.forked?.sheet(this.activeSheet) ?? this.sheet;
+  }
+
+  /** What a cell holds as typed, in the scenario on screen: its own input where it has one, the base's elsewhere. */
+  inputAt(row: number, column: number): string {
+    const scenario = this.shownScenario;
+    const own = scenario === null ? null : this.page.scenarioInputs.at(scenario, row, column);
+    return own ?? this.sheet.input(row, column);
+  }
+
+  /** What `scenario` types into a cell of the active sheet, or null where it leaves the base's. */
+  scenarioInputAt(scenario: string, row: number, column: number, sheet = this.activeSheet): string | null {
+    return this.pages[sheet]?.scenarioInputs.at(scenario, row, column) ?? null;
+  }
+
+  /**
+   * Types an input into a cell of the active sheet for `scenario`, or
+   * with null gives the cell back to the base. One step of undo.
+   */
+  setScenarioInput(scenario: string, row: number, column: number, input: string | null): void {
+    const before = this.page.scenarioInputs.at(scenario, row, column);
+    if (before === input) {
+      return;
+    }
+    this.page.scenarioInputs.set(scenario, row, column, input);
+    this.record({ kind: 'scenarioInput', sheet: this.activeSheet, scenario, row, column, before, after: input });
+  }
+
+  /** Everything `scenario` types, on every sheet, as the workbook forks it. */
+  overridesOf(scenario: string): { sheet: number; row: number; column: number; input: string; asText: boolean }[] {
+    return this.pages.flatMap((page, sheet) =>
+      page.scenarioInputs.of(scenario).map(entry => ({
+        sheet,
+        row: entry.row,
+        column: entry.column,
+        input: entry.input,
+        asText: page.formats.formatAt(entry.row, entry.column).number.kind === 'text'
+      }))
+    );
+  }
+
+  /** Every sheet's scenario inputs, by sheet, which is what a file keeps. */
+  scenarioInputsBySheet(): ScenarioInput[][] {
+    return this.pages.map(page => page.scenarioInputs.all());
+  }
+
+  /** Puts every sheet's scenario inputs back, by sheet, for a load. */
+  restoreScenarioInputs(bySheet: readonly (readonly ScenarioInput[])[]): void {
+    this.pages.forEach((page, sheet) => page.scenarioInputs.restore(bySheet[sheet] ?? []));
+  }
+
+  /**
+   * A new scenario, empty or typing what `from` types, at the end of the
+   * list. Returns its id.
+   */
+  addScenario(name: string, from: string | null = null): string {
+    const id = this.freeScenarioId();
+    this.scenarios = [...this.scenarios, { id, name: this.freeScenarioName(name) }];
+    if (from !== null) {
+      for (const page of this.pages) {
+        page.scenarioInputs.duplicate(from, id);
+      }
+    }
+    return id;
+  }
+
+  renameScenario(id: string, name: string): void {
+    const trimmed = name.trim();
+    if (trimmed === '') {
+      return;
+    }
+    this.scenarios = this.scenarios.map(entry =>
+      entry.id === id ? { ...entry, name: this.freeScenarioName(trimmed, id) } : entry
+    );
+  }
+
+  /**
+   * Deletes a scenario and what it types. Its inputs leave the undo
+   * stack with it: an undo of a cell it typed would be an undo into a
+   * scenario that is not there.
+   */
+  deleteScenario(id: string): void {
+    this.scenarios = this.scenarios.filter(entry => entry.id !== id);
+    if (this.shownScenario === id) {
+      this.showScenario(null);
+    }
+    for (const page of this.pages) {
+      page.scenarioInputs.drop(id);
+    }
+    const keep = (step: Step): boolean => step.every(edit => edit.kind !== 'scenarioInput' || edit.scenario !== id);
+    const undo = this.undoStack.filter(keep);
+    const redo = this.redoStack.filter(keep);
+    this.undoStack.length = 0;
+    this.undoStack.push(...undo);
+    this.redoStack.length = 0;
+    this.redoStack.push(...redo);
+  }
+
+  private freeScenarioId(): string {
+    let next = this.scenarios.length + 1;
+    while (this.scenarios.some(entry => entry.id === `s${next}`)) {
+      next++;
+    }
+    return `s${next}`;
+  }
+
+  /** A name no other scenario has, and never Base, which is what showing none of them is called. */
+  private freeScenarioName(wanted: string, except = ''): string {
+    const taken = (name: string): boolean =>
+      name.toUpperCase() === 'BASE' ||
+      this.scenarios.some(entry => entry.id !== except && entry.name.toUpperCase() === name.toUpperCase());
+    if (!taken(wanted)) {
+      return wanted;
+    }
+    for (let n = 2; ; n++) {
+      if (!taken(`${wanted} ${n}`)) {
+        return `${wanted} ${n}`;
+      }
+    }
   }
 
   /** Writes a cell's note, or takes it away with an empty one. One step of undo. */
@@ -557,7 +747,7 @@ export class SheetDocument {
    * put an entry on the stack that undoes to itself and looks broken.
    */
   setCell(row: number, column: number, input: string): string | null {
-    const before = this.sheet.input(row, column);
+    const before = this.inputAt(row, column);
     if (before === input) {
       return null;
     }
@@ -580,9 +770,16 @@ export class SheetDocument {
     // One step, because typing a date is one action: it writes a
     // serial number and the format that makes the serial legible, and
     // undoing it has to take both back.
+    const scenario = this.shownScenario;
     this.transact(() => {
-      this.writeCell(row, column, input);
-      this.record({ kind: 'text', sheet: this.activeSheet, row, column, before, after: input });
+      if (scenario === null) {
+        this.writeCell(row, column, input);
+        this.record({ kind: 'text', sheet: this.activeSheet, row, column, before, after: input });
+      } else {
+        // Typed into the scenario that is showing, and not the base.
+        // Typing the base's own input back gives the cell back to it.
+        this.setScenarioInput(scenario, row, column, input === this.sheet.input(row, column) ? null : input);
+      }
       this.formatTypedDate(row, column, input);
       this.wrapTypedBreak(row, column, input);
     });
@@ -775,6 +972,11 @@ export class SheetDocument {
    * locale-aware number formatter off the frame path.
    */
   display(row: number, column: number): string {
+    return formatWith(this.shown.value(row, column), this.formats.formatAt(row, column).number);
+  }
+
+  /** What a cell displays in the base, whatever is on screen. */
+  baseDisplay(row: number, column: number): string {
     return formatWith(this.sheet.value(row, column), this.formats.formatAt(row, column).number);
   }
 
@@ -864,6 +1066,8 @@ export class SheetDocument {
         this.undoShift(edit);
       } else if (edit.kind === 'note') {
         this.page.notes.set(edit.row, edit.column, edit.before);
+      } else if (edit.kind === 'scenarioInput') {
+        this.page.scenarioInputs.set(edit.scenario, edit.row, edit.column, edit.before);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.before);
       } else if (edit.kind === 'rules') {
@@ -902,11 +1106,15 @@ export class SheetDocument {
         this.restoreRows(edit.rows, edit.shift);
         this.page.notes.restore(edit.notes);
         this.page.notes.shift(edit.shift);
+        this.restoreScenarioInputs(edit.scenarioInputs);
+        this.shiftScenarioInputs(edit.shift);
         this.restoreRanges(edit.ranges);
         this.shiftRanges(edit.shift);
         this.moveChartsWith(edit.shift, edit.widths, edit.rows);
       } else if (edit.kind === 'note') {
         this.page.notes.set(edit.row, edit.column, edit.after);
+      } else if (edit.kind === 'scenarioInput') {
+        this.page.scenarioInputs.set(edit.scenario, edit.row, edit.column, edit.after);
       } else if (edit.kind === 'names') {
         this.restoreNames(edit.after);
       } else if (edit.kind === 'rules') {
@@ -941,6 +1149,7 @@ export class SheetDocument {
     this.page.columnWidths = [...edit.widths];
     this.restoreRows(edit.rows, null);
     this.page.notes.restore(edit.notes);
+    this.restoreScenarioInputs(edit.scenarioInputs);
     this.restoreRanges(edit.ranges);
     for (const cell of edit.removed) {
       this.writeCell(cell.row, cell.column, cell.input);
@@ -1391,6 +1600,7 @@ export class SheetDocument {
       filtered
     };
     const notes = this.page.notes.all();
+    const scenarioInputs = this.scenarioInputsBySheet();
     const formats = shift.by < 0 ? this.formats.placement() : null;
     const ranges = this.pages.map(page => ({
       conditional: [...page.conditional],
@@ -1402,6 +1612,7 @@ export class SheetDocument {
     this.formats.shift(shift);
     this.merges.shift(shift);
     this.page.notes.shift(shift);
+    this.shiftScenarioInputs(shift);
     // Written past the setter: the columns moved, and the charts move
     // with the columns below, not with the widths.
     this.page.columnWidths = shiftWidths(this.columnWidths, shift);
@@ -1424,9 +1635,16 @@ export class SheetDocument {
       widths,
       rows,
       notes,
+      scenarioInputs,
       formats,
       ranges
     });
+  }
+
+  /** Moves every sheet's scenario inputs by a shift of the active sheet; see `ScenarioInputs.shift`. */
+  private shiftScenarioInputs(shift: Shift): void {
+    const named = { ...shift, sheet: shift.sheet ?? this.book.nameOf(this.activeSheet) };
+    this.pages.forEach((page, sheet) => page.scenarioInputs.shift(named, this.book.nameOf(sheet)));
   }
 
   // ---------------------------------------------------------------------
@@ -1588,6 +1806,7 @@ export class SheetDocument {
       formats: from.formats.copy(),
       merges: from.merges.copy(),
       notes: from.notes.copy(),
+      scenarioInputs: from.scenarioInputs.copy(),
       columnWidths: [...from.columnWidths],
       hiddenRows: new Set(from.hiddenRows),
       rowHeights: new Map(from.rowHeights),
@@ -1677,7 +1896,7 @@ export class SheetDocument {
 
   /** What the formula bar shows for the active cell. */
   get activeInput(): string {
-    return this.sheet.input(this.selection.row, this.selection.column);
+    return this.inputAt(this.selection.row, this.selection.column);
   }
 }
 

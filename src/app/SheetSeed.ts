@@ -67,6 +67,7 @@ export function seed(document: SheetDocument): void {
   dashboard(document);
   document.activate(SHEET.forecast);
   forecast(document);
+  scenarios(document);
 
   // On the regions, whose first cell is the whole of them — the
   // formula bar opens on SORT(UNIQUE(...)) — rather than on a tile,
@@ -193,7 +194,7 @@ function dashboard(document: SheetDocument): void {
   document.setCell(
     1,
     0,
-    'Every figure here is a formula over the Sales sheet. The months down column A are one formula that spills, the regions are SORT(UNIQUE(…)), and the five largest orders are one FILTER. Edit an order, a price on Reference, or the scenario on Forecast, and it all moves.'
+    'Every figure here is a formula over the Sales sheet. The months down column A are one formula that spills, the regions are SORT(UNIQUE(…)), and the five largest orders are one FILTER. Edit an order, a price on Reference, or the scenario on Forecast, and it all moves. Or pick Optimistic or Pessimistic beside the tabs: the whole workbook as it would be, with what moved tinted.'
   );
 
   // Four figures across the top, each a label over a value.
@@ -345,10 +346,43 @@ function forecast(document: SheetDocument): void {
     test: { kind: 'greaterThan', value: 0 },
     paint: { color: GOOD, bold: true }
   });
-  document.setNote(2, 1, 'Pick Low, Base or High from the list: the growth, the twelve months and the chart all follow.');
+  document.setNote(
+    2,
+    1,
+    'Pick Low, Base or High from the list: the growth, the twelve months and the chart all follow. The scenarios beside the tabs pick it too, with the prices and the loan rate.'
+  );
   document.setNote(FORECAST_HEAD + 1, 1, 'One formula: ROUND(average × (1 + growth) ^ SEQUENCE(12)), spilling twelve months.');
 
   chart(document, 'area', 'Next year, month by month', range(`A${FORECAST_HEAD + 1}:B${FORECAST_HEAD + 13}`), chartsLeft(document, 6), 70, 440, 280);
+}
+
+// -------------------------------------------------------------------
+// Scenarios: the workbook two other ways
+// -------------------------------------------------------------------
+
+/**
+ * Optimistic and Pessimistic: the growth Forecast picks, every list
+ * price on Reference, and the loan's rate, each typed differently.
+ *
+ * Inputs on two sheets, so that showing one moves all five: the prices
+ * reach every order on Sales, the dashboard totals them, and the
+ * forecast projects from the dashboard. Written onto the pages rather
+ * than through `setScenarioInput`, so the seed leaves nothing to undo.
+ */
+function scenarios(document: SheetDocument): void {
+  const ways: readonly { name: string; growth: string; prices: number; rate: string }[] = [
+    { name: 'Optimistic', growth: 'High', prices: 1.04, rate: '0.055' },
+    { name: 'Pessimistic', growth: 'Low', prices: 0.95, rate: '0.07' }
+  ];
+  for (const way of ways) {
+    const id = document.addScenario(way.name);
+    const forecast = document.pageAt(SHEET.forecast)?.scenarioInputs;
+    forecast?.set(id, 2, 1, way.growth);
+    forecast?.set(id, 4, 5, way.rate);
+    REGIONS.forEach((region, index) =>
+      document.pageAt(SHEET.reference)?.scenarioInputs.set(id, index + 1, 2, (region.price * way.prices).toFixed(2))
+    );
+  }
 }
 
 // -------------------------------------------------------------------

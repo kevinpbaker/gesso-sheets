@@ -1,5 +1,6 @@
 import { relativeRef, type RangeRef } from '../sheet/A1';
 import type { Note } from '../sheet/Notes';
+import type { Scenario, ScenarioInput } from '../sheet/ScenarioInputs';
 import type { ColourScale, ConditionalPaint, ConditionalRule, ConditionalTest } from '../sheet/Conditional';
 import type { Validation, ValidationRule } from '../sheet/Validation';
 import { isNamedRange, nameProblem } from '../sheet/Names';
@@ -75,6 +76,12 @@ export interface SheetSnapshot {
    * "typed here" would be a file that could skip the question.
    */
   readonly scripts?: readonly Script[];
+  /**
+   * The workbook's scenarios, by id and name; what each one types is
+   * kept on the sheets it types into. Absent in a file written before
+   * there were any, which reads as none.
+   */
+  readonly scenarios?: readonly Scenario[];
 }
 
 /**
@@ -143,6 +150,8 @@ export interface StoredSheet {
    * charts were added under.
    */
   readonly notes?: readonly Note[];
+  /** What each scenario types into this sheet; absent is nothing. */
+  readonly scenarioInputs?: readonly ScenarioInput[];
   readonly frozenRows: number;
   readonly frozenColumns: number;
   /** How large the sheet is drawn; absent is 100%. */
@@ -233,6 +242,7 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       validations: [...page.validations],
       charts: [...page.charts],
       notes: page.notes.all().filter(note => note.row < rowCount),
+      ...scenarioInputsOf(page.scenarioInputs.all().filter(input => input.row < rowCount)),
       frozenRows: page.frozenRows,
       frozenColumns: page.frozenColumns,
       zoom: page.zoom,
@@ -260,8 +270,13 @@ export function snapshotOf(document: SheetDocument, rowCount = Number.POSITIVE_I
       lastColumn: Math.max(entry.range.start.column, entry.range.end.column)
     }) : { name: entry.name, formula: entry.formula }),
     ...(document.book.iteration === null ? {} : { iteration: { ...document.book.iteration } }),
-    ...(document.scripts.length === 0 ? {} : { scripts: document.scripts.map(script => ({ ...script })) })
+    ...(document.scripts.length === 0 ? {} : { scripts: document.scripts.map(script => ({ ...script })) }),
+    ...(document.scenarios.length === 0 ? {} : { scenarios: document.scenarios.map(scenario => ({ ...scenario })) })
   };
+}
+
+function scenarioInputsOf(inputs: ScenarioInput[]): { scenarioInputs?: ScenarioInput[] } {
+  return inputs.length === 0 ? {} : { scenarioInputs: inputs };
 }
 
 /**
@@ -279,6 +294,8 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
   document.restoreSheets(snapshot.sheets.map(stored => stored.name));
   document.book.iteration = snapshot.iteration ?? null;
   document.scripts = (snapshot.scripts ?? []).map(script => ({ ...script }));
+  document.scenarios = (snapshot.scenarios ?? []).map(scenario => ({ ...scenario }));
+  const scenarioIds = new Set(document.scenarios.map(scenario => scenario.id));
   for (const [index, stored] of snapshot.sheets.entries()) {
     document.activate(index);
     document.setSheetColour(index, stored.colour);
@@ -299,6 +316,9 @@ export function applySnapshot(document: SheetDocument, snapshot: SheetSnapshot):
     page.charts.length = 0;
     page.charts.push(...stored.charts);
     page.notes.restore(stored.notes ?? []);
+    // Only for a scenario the file has: an input of one it does not
+    // list would be typed into nothing anybody could show.
+    page.scenarioInputs.restore((stored.scenarioInputs ?? []).filter(input => scenarioIds.has(input.scenario)));
     page.frozenRows = stored.frozenRows;
     page.frozenColumns = stored.frozenColumns;
     page.zoom = stored.zoom ?? 1;
@@ -418,8 +438,67 @@ export function parseSnapshot(text: string, columnCount: number): SheetSnapshot 
     active: Number.isInteger(active) && (active as number) >= 0 && (active as number) < sheets.length ? (active as number) : 0,
     names: namesFrom(source.names),
     ...iterationFrom(source.iteration),
-    ...scriptsFrom(source.scripts)
+    ...scriptsFrom(source.scripts),
+    ...scenariosFrom(source.scenarios)
   };
+}
+
+/** The most scenarios a file can hold. */
+const SCENARIO_LIMIT = 32;
+
+/**
+ * A file's scenarios: an id and a name each, ids and names unique, and
+ * none called Base, which is what showing none of them is called.
+ */
+function scenariosFrom(stored: unknown): { scenarios?: Scenario[] } {
+  if (!Array.isArray(stored)) {
+    return {};
+  }
+  const scenarios: Scenario[] = [];
+  for (const entry of stored) {
+    const held = entry as Record<string, unknown> | null;
+    if (typeof held !== 'object' || held === null || typeof held.id !== 'string' || typeof held.name !== 'string') {
+      continue;
+    }
+    const id = held.id.slice(0, 32);
+    const name = held.name.trim().slice(0, 64);
+    if (
+      id === '' ||
+      name === '' ||
+      name.toUpperCase() === 'BASE' ||
+      scenarios.some(scenario => scenario.id === id || scenario.name.toUpperCase() === name.toUpperCase())
+    ) {
+      continue;
+    }
+    scenarios.push({ id, name });
+    if (scenarios.length === SCENARIO_LIMIT) {
+      break;
+    }
+  }
+  return scenarios.length === 0 ? {} : { scenarios };
+}
+
+/** Scenario inputs, with anything that is not one dropped rather than trusted. */
+function scenarioInputsFrom(stored: unknown, columnCount: number): { scenarioInputs?: ScenarioInput[] } {
+  if (!Array.isArray(stored)) {
+    return {};
+  }
+  const inputs = stored.filter((input): input is ScenarioInput => {
+    const candidate = input as Partial<ScenarioInput>;
+    return (
+      typeof candidate === 'object' &&
+      candidate !== null &&
+      typeof candidate.scenario === 'string' &&
+      Number.isInteger(candidate.row) &&
+      Number.isInteger(candidate.column) &&
+      (candidate.row as number) >= 0 &&
+      (candidate.column as number) >= 0 &&
+      (candidate.column as number) < columnCount &&
+      typeof candidate.input === 'string' &&
+      candidate.input.length <= 32_767
+    );
+  });
+  return scenarioInputsOf(inputs);
 }
 
 /**
@@ -515,6 +594,7 @@ function sheetFrom(source: Record<string, unknown>, name: string, columnCount: n
     validations: validationsFrom(source.validations),
     charts: chartsFrom(source.charts),
     notes: notesFrom(source.notes),
+    ...scenarioInputsFrom(source.scenarioInputs, columnCount),
     frozenRows: countFrom(source.frozenRows),
     frozenColumns: countFrom(source.frozenColumns),
     zoom: typeof source.zoom === 'number' && source.zoom >= 0.25 && source.zoom <= 4 ? source.zoom : 1,

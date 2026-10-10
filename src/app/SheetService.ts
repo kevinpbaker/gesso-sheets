@@ -58,6 +58,8 @@ import {
   type SheetConditionalRule,
   type SheetSeriesView,
   type SheetScripts,
+  type SheetScenarioCell,
+  type SheetScenarios,
   type SheetScriptRun,
   type SheetValidationRule,
   type SheetWindow
@@ -72,6 +74,7 @@ import { cellKey, columnName } from '../sheet/A1';
 import { snapshotOf, applySnapshot, parseSnapshot, SCRIPT_SOURCE_LIMIT, type SheetSnapshot } from './SheetFile';
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SheetRepository } from './SheetRepository';
+import { scenarioPaint } from './scenarioPaint';
 import { DEFAULT_LIMITS, ScriptHost, type Script, type ScriptRunResult, type ScriptWorker } from '../script/ScriptHost';
 import { CellFunctions, loadInterpreter } from '../script/CellFunctions';
 import { SheetFunctions } from './SheetFunctions';
@@ -199,9 +202,10 @@ export class SheetService {
   readonly charts: Observable<SheetCharts>;
   readonly chartSeries: Observable<SheetSeriesView>;
   readonly scripts: Observable<SheetScripts>;
+  readonly scenarios: Observable<SheetScenarios>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
-  readonly stats = { slices: 0, publishes: 0 };
+  readonly stats = { slices: 0, publishes: 0, forks: 0 };
 
   /** What the conditional formats cost, for the budget spec and nothing else. */
   get painterStats(): { scans: number; scanned: number; evaluations: number } {
@@ -223,7 +227,9 @@ export class SheetService {
    * The conditional formats of the sheet in view, resolved for its
    * window; see `ConditionalPainter`.
    */
-  private readonly painter = new ConditionalPainter(() => this.document.sheet);
+  // The sheet on screen, so a rule over a scenario's values paints what
+  // the scenario says rather than what the base does.
+  private readonly painter = new ConditionalPainter(() => this.document.shown);
   /**
    * Paints a rule asked for that the document's palette does not
    * hold, appended after it and never reordered.
@@ -289,6 +295,14 @@ export class SheetService {
   private chartRefused = '';
   private readonly seriesSubject = new BehaviorSubject<SheetSeriesView>({ charts: {} });
   private readonly scriptsSubject = new BehaviorSubject<SheetScripts>({ entries: [], running: '', refused: '', last: null });
+  private readonly scenariosSubject = new BehaviorSubject<SheetScenarios>({ entries: [], shown: null });
+  /**
+   * Whether the scenario on screen has to be forked again before it can
+   * be believed: something changed since its fork was made. Any edit
+   * makes it so, because a fork is the base *with* the scenario's
+   * inputs, and either side moving moves it; see `step`.
+   */
+  private forkStale = false;
   private readonly scriptHost: ScriptHost | null;
   private scriptRuns = 0;
   private functionStressCells = 0;
@@ -403,7 +417,8 @@ export class SheetService {
       input: document.activeInput,
       explain: null,
       spilledFrom: null,
-      note: document.noteAt(document.selection.row, document.selection.column)
+      note: document.noteAt(document.selection.row, document.selection.column),
+      scenario: null
     });
     this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
     this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], formulas: [], refused: '' });
@@ -438,6 +453,7 @@ export class SheetService {
     this.charts = this.chartsSubject;
     this.chartSeries = this.seriesSubject;
     this.scripts = this.scriptsSubject;
+    this.scenarios = this.scenariosSubject;
     const { rowCount, columnCount: columns } = this.geometrySubject.value;
     this.scriptHost =
       options.scripts === undefined
@@ -1381,7 +1397,7 @@ export class SheetService {
     const rect = rectOf(this.document.selection);
     const { rowCount, columnCount } = this.geometrySubject.value;
     const filled = (column: number, row: number): boolean =>
-      column >= 0 && column < columnCount && this.document.sheet.input(row, column) !== '';
+      column >= 0 && column < columnCount && this.document.inputAt(row, column) !== '';
     const beside = [rect.firstColumn - 1, rect.lastColumn + 1].find(column => filled(column, rect.lastRow + 1) || filled(column, rect.firstRow));
     if (beside === undefined) {
       return;
@@ -1453,7 +1469,7 @@ export class SheetService {
     }
     const where = at(key);
     const options = optionsOf(view);
-    const before = this.document.sheet.input(where.row, where.column);
+    const before = this.document.inputAt(where.row, where.column);
     this.document.transact(
       () => this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options)),
       'replace'
@@ -1481,7 +1497,7 @@ export class SheetService {
     this.document.transact(() => {
       for (const key of targets) {
         const where = at(key);
-        const before = this.document.sheet.input(where.row, where.column);
+        const before = this.document.inputAt(where.row, where.column);
         this.document.setCell(where.row, where.column, replaceIn(before, view.query, replacement, options));
       }
     }, 'replace all');
@@ -1710,6 +1726,12 @@ export class SheetService {
    * guess about whether the first row is a heading.
    */
   sortRange(column: number, ascending: boolean, widen: boolean): void {
+    // A sort moves rows, formats and all, and the formats are the base's:
+    // a scenario changes what cells hold, never where they are.
+    if (this.document.scenario !== null) {
+      this.report('Sort with Base showing: a scenario changes values, not the order of rows.');
+      return;
+    }
     this.editedOverMark();
     const { rowCount, columnCount } = this.geometrySubject.value;
     const at = this.document.selection;
@@ -2863,6 +2885,8 @@ export class SheetService {
     this.functionsOn = new Set();
     this.trustedHere = [];
     this.publishScripts('');
+    this.forkStale = false;
+    this.publishScenarios();
     this.defineFunctions();
     this.publishPalette();
     if (stored === null) {
@@ -3127,7 +3151,9 @@ export class SheetService {
     // since deleted reads nothing, and draws nothing.
     const named = chart.range.start.sheet;
     const at = named === undefined ? this.document.active : this.document.book.sheetFor(named);
-    const source = at === null ? null : this.document.book.sheet(at);
+    // From the scenario on screen, when there is one: a chart is a
+    // picture of the values, and those are the values being shown.
+    const source = at === null ? null : (this.document.fork ?? this.document.book).sheet(at);
     const grid: CellValue[][] = [];
     for (let row = rect.firstRow; row <= rect.lastRow && source !== null; row++) {
       const line: CellValue[] = [];
@@ -3239,7 +3265,9 @@ export class SheetService {
     // cell whose formula starts returning an error moves from right to
     // left — so the formats go out again while any are in view. A view
     // of nothing but default cells still pays nothing.
-    if (!this.painter.isEmpty || this.formattedInView) {
+    // Nor does the base: a scenario's tint follows its values, as a
+    // rule's paint does.
+    if (!this.painter.isEmpty || this.formattedInView || this.document.fork !== null) {
       this.publishFormats();
     }
   }
@@ -3308,15 +3336,35 @@ export class SheetService {
   }
 
   private pump(): void {
-    if (this.pumping || this.document.sheet.pending === 0) {
+    // Every edit comes through here, and any edit can move a scenario —
+    // or change how many cells one types, which the picker counts.
+    if (this.document.scenario !== null) {
+      this.forkStale = true;
+    }
+    if (this.document.scenarios.length > 0) {
+      this.publishScenarios();
+    }
+    if (this.pumping || (this.document.sheet.pending === 0 && !this.forkStale)) {
       return;
     }
     this.pumping = true;
     this.step();
   }
 
+  /**
+   * One slice: of the base while it has work, then of the scenario on
+   * screen.
+   *
+   * The base first, because a fork is taken from an answer: forked from
+   * a base still recalculating, it would carry the base's unfinished
+   * work across and do it twice. Once the base has settled, a stale fork
+   * is made again — a copy of the base with the scenario's inputs typed
+   * in, which dirties what those inputs reach and nothing else — and
+   * recalculated in the same slices, so a scenario never holds the
+   * thread longer than the base would.
+   */
   private step(): void {
-    const result = this.document.sheet.recalculate(this.budget);
+    const result = this.sliceOfWork();
     this.stats.slices++;
     // A formula settling is a value changing, which a scale's extent
     // is computed from — so a recalculation invalidates it the same
@@ -3334,6 +3382,9 @@ export class SheetService {
     this.redrawCharts();
     if (result.done) {
       this.pumping = false;
+      // Which cells differ from the base is known now, so the editor's
+      // line about the active cell can say so.
+      this.publishEditor();
       this.reportFunctionStress();
       // A formula's new value is new text, and wrapped text may now
       // take more lines or fewer.
@@ -3341,6 +3392,31 @@ export class SheetService {
       return;
     }
     this.schedule(() => this.step());
+  }
+
+  private sliceOfWork(): { evaluated: number; done: boolean } {
+    const base = this.document.sheet;
+    if (base.pending > 0) {
+      const result = base.recalculate(this.budget);
+      return { evaluated: result.evaluated, done: result.done && !this.forkStale && (this.document.fork?.pending ?? 0) === 0 };
+    }
+    const scenario = this.document.scenario;
+    if (scenario === null) {
+      this.forkStale = false;
+      return { evaluated: 0, done: true };
+    }
+    if (this.forkStale || this.document.fork === null) {
+      this.forkStale = false;
+      this.document.fork = this.document.book.fork(this.document.overridesOf(scenario));
+      this.stats.forks++;
+      this.painter.invalidate();
+    }
+    const fork = this.document.fork;
+    if (fork === null) {
+      return { evaluated: 0, done: true };
+    }
+    const result = fork.recalculate(this.budget);
+    return { evaluated: result.evaluated, done: result.done && !this.forkStale };
   }
 
   /** Says what the proof's function chain came to, once it has settled. */
@@ -3410,7 +3486,7 @@ export class SheetService {
 
   /** What a cell draws while formulas are shown: its formula, or its answer if it has none. */
   private formulaOrDisplay(row: number, column: number): string {
-    const input = this.document.sheet.input(row, column);
+    const input = this.document.inputAt(row, column);
     return input.startsWith('=') ? input : this.document.display(row, column);
   }
 
@@ -3514,15 +3590,16 @@ export class SheetService {
    */
   private paintedId(row: number, column: number): number {
     const base = this.document.formats.idAt(row, column);
-    if (base === 0 && this.painter.isEmpty) {
+    const against = this.scenarioStanding(row, column);
+    if (base === 0 && this.painter.isEmpty && against === null) {
       // An unformatted cell shows a number as a number and text as
       // text, so the grid's reading of the string is already right.
       return base;
     }
-    const value = this.document.sheet.value(row, column);
+    const value = this.document.shown.value(row, column);
     const over = this.painter.isEmpty ? null : this.painter.paintFor(row, column, value);
     const own = this.document.formats.byId(base).paint;
-    const painted: CellPaint =
+    const ruled: CellPaint =
       over === null
         ? own
         : {
@@ -3532,8 +3609,9 @@ export class SheetService {
             ...(over.bold === undefined ? {} : { bold: over.bold }),
             ...(over.italic === undefined ? {} : { italic: over.italic })
           };
+    const painted = against === null ? ruled : scenarioPaint(ruled, against);
     const aligned = this.alignedFor(painted, row, column, value);
-    if (over === null && aligned === painted) {
+    if (over === null && against === null && aligned === painted) {
       return base;
     }
     // A *position* in the extras, resolved against the document's
@@ -3675,7 +3753,114 @@ export class SheetService {
       input,
       explain: this.explainAt(row, column),
       spilledFrom: anchor === null ? null : { ...anchor, input: this.document.sheet.input(anchor.row, anchor.column) },
-      note: this.document.noteAt(row, column)
+      note: this.document.noteAt(row, column),
+      scenario: this.scenarioCell(row, column)
+    });
+  }
+
+  /** The active cell against the base, while a scenario is shown and the cell is one it typed or changed. */
+  private scenarioCell(row: number, column: number): SheetScenarioCell | null {
+    const standing = this.scenarioStanding(row, column);
+    const scenario = this.document.scenarios.find(entry => entry.id === this.document.scenario);
+    if (standing === null || scenario === undefined) {
+      return null;
+    }
+    return { name: scenario.name, base: this.document.baseDisplay(row, column), typed: standing === 'typed' };
+  }
+
+  /**
+   * How a cell of the scenario on screen stands against the base: one it
+   * types, one whose value it changed, or null for one it leaves alone —
+   * and null for every cell while the base is showing, or while the
+   * scenario's fork is still to be made.
+   */
+  private scenarioStanding(row: number, column: number): 'typed' | 'changed' | null {
+    const scenario = this.document.scenario;
+    const fork = this.document.fork;
+    if (scenario === null || fork === null) {
+      return null;
+    }
+    if (this.document.scenarioInputAt(scenario, row, column) !== null) {
+      return 'typed';
+    }
+    const active = this.document.active;
+    return fork.value(active, row, column) === this.document.book.value(active, row, column) ? null : 'changed';
+  }
+
+  // ---------------------------------------------------------------------
+  // Scenarios
+  // ---------------------------------------------------------------------
+
+  showScenario(id: string | null): void {
+    this.document.showScenario(id);
+    this.forkStale = this.document.scenario !== null;
+    this.afterScenario();
+  }
+
+  addScenario(name: string, copy: boolean): void {
+    const trimmed = name.trim();
+    if (trimmed === '' || this.document.scenarios.length >= 32) {
+      return;
+    }
+    const id = this.document.addScenario(trimmed, copy ? this.document.scenario : null);
+    this.showScenario(id);
+    this.persist();
+  }
+
+  renameScenario(id: string, name: string): void {
+    this.document.renameScenario(id, name);
+    this.publishScenarios();
+    this.publishEditor();
+    this.persist();
+  }
+
+  deleteScenario(id: string): void {
+    this.document.deleteScenario(id);
+    this.forkStale = this.document.scenario !== null;
+    this.afterScenario();
+    this.persist();
+  }
+
+  resetScenarioCells(): void {
+    const scenario = this.document.scenario;
+    if (scenario === null) {
+      return;
+    }
+    const rect = rectOf(this.document.selection);
+    this.document.transact(() => {
+      for (let row = rect.firstRow; row <= rect.lastRow; row++) {
+        for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+          this.document.setScenarioInput(scenario, row, column, null);
+        }
+      }
+    }, 'use the base');
+    this.afterScenario();
+    this.persist();
+  }
+
+  /** Everything that shows a value, again, for a scenario shown, hidden, or typed into wholesale. */
+  private afterScenario(): void {
+    this.painter.invalidate();
+    this.publishScenarios();
+    this.publishWindow();
+    this.publishFormats();
+    this.publishEditor();
+    this.publishStats();
+    this.publishStatus();
+    this.publishSeries();
+    this.pump();
+  }
+
+  private publishScenarios(): void {
+    const inputs = new Map<string, number>();
+    for (const page of this.document.scenarioInputsBySheet()) {
+      for (const input of page) {
+        inputs.set(input.scenario, (inputs.get(input.scenario) ?? 0) + 1);
+      }
+    }
+    this.scenariosSubject.next({
+      entries: this.document.scenarios.map(entry => ({ id: entry.id, name: entry.name, inputs: inputs.get(entry.id) ?? 0 })),
+      shown: this.document.scenario
     });
   }
 
@@ -3688,7 +3873,7 @@ export class SheetService {
    * cell they are pointing at.
    */
   private explainAt(row: number, column: number): SheetExplain | null {
-    const found = explainCell(this.document.sheet, row, column);
+    const found = explainCell(this.document.shown, row, column);
     if (found === null) {
       return null;
     }
@@ -3716,12 +3901,12 @@ export class SheetService {
    */
   private publishStats(): void {
     const { rowCount } = this.geometrySubject.value;
-    this.statsSubject.next(aggregateOf(this.document.sheet, rectOf(this.document.selection), rowCount));
+    this.statsSubject.next(aggregateOf(this.document.shown, rectOf(this.document.selection), rowCount));
   }
 
   private statusNow(): SheetStatus {
     return {
-      pending: this.document.sheet.pending,
+      pending: this.document.sheet.pending + (this.document.fork?.pending ?? 0),
       evaluated: this.document.sheet.stats.evaluated,
       canUndo: this.document.canUndo,
       canRedo: this.document.canRedo,

@@ -64,6 +64,16 @@ interface SheetEntry {
   usedRows: number;
 }
 
+/** An input typed into a fork: one cell of a scenario. */
+export interface Override {
+  readonly sheet: number;
+  readonly row: number;
+  readonly column: number;
+  readonly input: string;
+  /** Written as text even if it reads as a number or a formula, as a Text-formatted cell is. */
+  readonly asText?: boolean;
+}
+
 export interface RecalcResult {
   /** Cells evaluated by this call. */
   readonly evaluated: number;
@@ -122,7 +132,7 @@ export class Workbook {
   private readonly facades: Sheet[] = [];
 
   private readonly cells = new Map<number, Cell>();
-  private readonly graph = new DependencyGraph();
+  private graph = new DependencyGraph();
   /** Cells whose value is out of date. */
   private readonly dirty = new Set<number>();
   /**
@@ -208,6 +218,16 @@ export class Workbook {
 
   /** Fixed for a whole recalculation, so two `NOW()`s agree. */
   private moment: FunctionContext | null = null;
+
+  /**
+   * True for a workbook made by `fork`, whose volatile formulas keep
+   * the values they were forked with: an edit here does not send every
+   * `RAND()` round again, only one the edit itself reaches. A scenario
+   * is a question about the inputs it changes, and a fork whose dice
+   * had been rolled again would differ from its base in every cell
+   * downstream of one, whatever the scenario changed.
+   */
+  private pinned = false;
 
   /**
    * Formulas that spill, by the key of the cell they are written in.
@@ -912,8 +932,8 @@ export class Workbook {
     }
     // An edit is a recalculation event, and a volatile formula is one
     // that has to be redone on every one of them however far away the
-    // edit was.
-    if (this.volatile.size > 0) {
+    // edit was. Not in a fork, which keeps its base's roll of the dice.
+    if (this.volatile.size > 0 && !this.pinned) {
       for (const cell of this.volatile) {
         this.dirty.add(cell);
       }
@@ -928,6 +948,74 @@ export class Workbook {
     this.moment = null;
     // Any plan in flight was ordered over a different set.
     this.plan = null;
+  }
+
+  // ---------------------------------------------------------------------
+  // Forks
+  // ---------------------------------------------------------------------
+
+  /**
+   * A second workbook that starts as this one and then has `overrides`
+   * typed into it: a scenario.
+   *
+   * Copied, not rebuilt. A rebuild types every input in again, which
+   * parses every formula and recalculates every cell, nearly all of
+   * them to the answer they already have. A fork copies the cell
+   * records with their values and shares their parsed formulas, which
+   * nothing ever writes, then writes the overrides through `setCell`
+   * like any edit, so what is dirty is what the overrides reach and the
+   * recalculation that follows is that and nothing else.
+   *
+   * Everything an edit or a recalculation writes is the fork's own: the
+   * cells, the graph, the dirty set, the sheets' entries. Spills are
+   * shared as they stand, because a spill is replaced and never changed.
+   * The fork reads the same script functions, rows and extent as this
+   * workbook, and its volatile formulas are pinned (see `pinned`).
+   *
+   * Taken from a settled workbook, so that what the fork starts from is
+   * an answer; a fork of one still recalculating carries the dirty set
+   * across and finishes the work itself.
+   */
+  fork(overrides: readonly Override[] = []): Workbook {
+    const copy = new Workbook([]);
+    copy.names.restore(this.names.all());
+    for (const entry of this.sheets) {
+      copy.sheets.push({ ...entry });
+      copy.facades.push(new Sheet(copy, copy.facades.length));
+    }
+    for (const [key, cell] of this.cells) {
+      copy.cells.set(key, { input: cell.input, formula: cell.formula, value: cell.value });
+    }
+    copy.graph = this.graph.clone();
+    for (const key of this.dirty) {
+      copy.dirty.add(key);
+    }
+    for (const key of this.volatile) {
+      copy.volatile.add(key);
+    }
+    for (const key of this.dynamic) {
+      copy.dynamic.add(key);
+    }
+    for (const key of this.subtotals) {
+      copy.subtotals.add(key);
+    }
+    for (const [key, spill] of this.spills) {
+      copy.spills.set(key, spill);
+    }
+    for (const [key, at] of this.spilled) {
+      copy.spilled.set(key, at);
+    }
+    copy.iteration = this.iteration;
+    copy.scripts = this.scripts;
+    copy.extent = this.extent;
+    copy.clock = this.clock;
+    copy.dice = this.dice;
+    copy.rowState = this.rowState;
+    copy.pinned = true;
+    for (const override of overrides) {
+      copy.setCell(override.sheet, override.row, override.column, override.input, override.asText ?? false);
+    }
+    return copy;
   }
 
   // ---------------------------------------------------------------------

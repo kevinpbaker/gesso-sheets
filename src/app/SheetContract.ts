@@ -196,6 +196,23 @@ export interface SheetEditor {
   readonly spilledFrom: { readonly row: number; readonly column: number; readonly input: string } | null;
   /** The note on this cell, or empty; what Shift+F2 opens with. */
   readonly note: string;
+  /**
+   * How this cell stands against the base, while a scenario is shown and
+   * the cell is one it typed or one whose value it changed; null
+   * otherwise. With the editor for the reason `explain` is: it changes
+   * when the active cell does.
+   */
+  readonly scenario: SheetScenarioCell | null;
+}
+
+/** The active cell in a scenario, against the base. */
+export interface SheetScenarioCell {
+  /** The scenario's name. */
+  readonly name: string;
+  /** What the base displays here. */
+  readonly base: string;
+  /** True for a cell the scenario types, false for one it only changes. */
+  readonly typed: boolean;
 }
 
 /**
@@ -747,6 +764,26 @@ export interface SheetScriptRun {
   readonly log: readonly string[];
 }
 
+/**
+ * The workbook's scenarios, and which one is showing.
+ *
+ * Its own key: it changes when somebody adds, renames, shows or types
+ * into a scenario, which is rarely, and the picker beside the tabs is
+ * its only reader.
+ */
+export interface SheetScenarios {
+  readonly entries: readonly SheetScenario[];
+  /** The scenario on screen by id, or null for the base. */
+  readonly shown: string | null;
+}
+
+export interface SheetScenario {
+  readonly id: string;
+  readonly name: string;
+  /** How many cells it types, on every sheet. */
+  readonly inputs: number;
+}
+
 export interface SheetCommands {
   /**
    * The range the render worker has mounted, on the sheet it is
@@ -1163,6 +1200,17 @@ export interface SheetCommands {
    * never in the file.
    */
   setFunctionsOn(on: boolean): void;
+  /** Shows a scenario by id, or the base with null. */
+  showScenario(id: string | null): void;
+  /**
+   * Adds a scenario and shows it. `copy` starts it with what the one now
+   * showing types; otherwise it starts as the base.
+   */
+  addScenario(name: string, copy: boolean): void;
+  renameScenario(id: string, name: string): void;
+  deleteScenario(id: string): void;
+  /** Gives the selected cells back to the base, in the scenario showing. One step of undo. */
+  resetScenarioCells(): void;
 }
 
 /** What a border command draws. */
@@ -1301,6 +1349,7 @@ export interface SheetView {
   /** What those charts draw; see `SheetSeriesView` for why it is apart. */
   readonly series: SheetSeriesView;
   readonly scripts: SheetScripts;
+  readonly scenarios: SheetScenarios;
 }
 
 /** What the controls read to draw themselves. */
@@ -1374,7 +1423,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
-  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '' },
+  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '', scenario: null },
   names: { entries: [], formulas: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
   clipboard: { text: '', serial: 0, marked: null },
@@ -1394,5 +1443,6 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   rowFit: { serial: 0, rows: [] },
   charts: { entries: [], selected: 0, refused: '' },
   series: { charts: {} },
-  scripts: { entries: [], running: '', refused: '', last: null }
+  scripts: { entries: [], running: '', refused: '', last: null },
+  scenarios: { entries: [], shown: null }
 });

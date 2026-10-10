@@ -40,6 +40,12 @@ export function xlsxOfDocument(document: SheetDocument, rowCount: number): { boo
 
   const sheets: XlsxOutSheet[] = [];
   const leftOut = new Set<string>();
+  // Excel's own scenarios are a different thing, kept in a sheet's
+  // what-if manager and not in its cells. The file carries the base,
+  // whatever is showing, and says the rest stayed behind.
+  if (document.scenarios.length > 0) {
+    leftOut.add('scenarios');
+  }
   const names = document.book.sheetNames();
   for (let index = 0; index < document.sheetCount; index++) {
     const page = document.pageAt(index);

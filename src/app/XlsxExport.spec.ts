@@ -170,8 +170,9 @@ describe('a workbook written as an .xlsx', () => {
     const document = new SheetDocument();
     seed(document);
     // Validations and conditional formats are written since Phase 23,
-    // and the seed's all fit: nothing it has is left out any more.
-    expect(xlsxOfDocument(document, ROWS).leftOut).toEqual([]);
+    // and the seed's all fit. Its scenarios are the one thing an .xlsx
+    // cannot carry, and the file is the base.
+    expect(xlsxOfDocument(document, ROWS).leftOut).toEqual(['scenarios']);
   });
 
   it('writes an array that spills over the cells it fills, and back', async () => {

@@ -3058,6 +3058,128 @@ Excel does not have, which Excel shows as `#NAME?`.
 
 ---
 
+# Part seven — scenarios
+
+A budget is a guess, and the guess usually comes in three: what we
+expect, what happens if it goes well, what happens if it does not. A
+spreadsheet holds one of them at a time. Excel's Scenario Manager swaps
+inputs in and out and writes a summary table; a person copies the
+sheet three times and keeps the copies in step by hand. Neither shows a
+scenario as the workbook it would be.
+
+Here a scenario is a name and a handful of inputs typed differently.
+Showing one shows the whole workbook as those inputs make it, on every
+sheet, with the cells it typed and the cells it moved tinted, and what
+the base says about the selected cell beside the tabs.
+
+## The rule Part Seven runs under
+
+**A scenario is a question about values.** It changes what cells hold
+and nothing else. Formats, rules, charts, names and the shape of the
+sheets are the base's and are shared: inserting a row while a scenario
+shows inserts it in the base and carries every scenario's inputs down
+with it.
+
+---
+
+### Phase 34 — Scenarios, forked — **done**
+
+`Workbook.fork(overrides)` makes the scenario. It copies the workbook
+as it stands, with its values, shares the parsed formulas (nothing
+writes one), types the overrides in through `setCell` like any edit,
+and so leaves dirty exactly what the overrides reach. The fork pins
+`RAND()` and `NOW()` to the base's values unless an override feeds
+them, or every random cell would read as a difference.
+
+Forked in the engine and not in a worker per scenario, and that was a
+decision taken with numbers in mind rather than a shortcut. A worker
+would rebuild the workbook from scratch — every formula parsed, every
+cell evaluated, nearly all of them to the answer the base already has —
+and again on every edit to the base, and its script functions would be
+`#NAME?`, because the interpreter and the person's trust in a file's
+functions live on the application worker. The fork runs there, in the
+same recalculation slices as the base, so the grid never waits for it.
+A worker pool is the right shape for Monte Carlo, thousands of runs
+each touching the whole model, and `fork` is what each worker would be
+handed.
+
+**Exit:** the seeded workbook with an Optimistic and a Pessimistic
+scenario; showing one moves all five sheets, tints what it typed and
+what moved, and leaves the base as it was; typing while it shows is the
+scenario's, and undoable; the file keeps it; `pnpm proof` unchanged.
+
+**Met.**
+
+- **The engine.** `Fork.spec.ts`: a fork answers with its overrides and
+  its base does not move; it recalculates the same cells the same edit
+  would in the base; it keeps the base's `RAND()`; forks are
+  independent of each other and of later base edits; it knows the
+  base's names.
+- **The document.** Scenarios are the workbook's (`{ id, name }`); what
+  each types lives on the sheet it types into, in `ScenarioInputs`,
+  keyed by cell like the notes and moved by a structural edit the same
+  way, a formula among them rewritten as the sheet's own are. Typing
+  goes through `SheetDocument.setCell`, which every paste, fill, cut,
+  find-and-replace and script run already passes through, so routing it
+  to the shown scenario there routes all of them. Typing the base's own
+  input gives the cell back to the base. One step of undo per edit, as
+  any edit. Adding, renaming and deleting a scenario is not on the
+  stack, for the reason a script is not.
+- **The service.** The base settles first, then a stale fork is made
+  again and recalculated in the same slices. Any edit makes it stale.
+  The window, the conditional painter, the selection's totals, the
+  error explanation and the charts read the scenario on screen. The
+  tint is folded into `paintedId` as a rule's paint is: violet
+  `#c4b5fd` where the scenario typed, `#ede9fe` where it only changed
+  the value. Amber was tried first and read as another input beside
+  the example's own `#fff8d6` input cells.
+- **The picker.** Beside the tabs: *Scenario: Base ▾*, violet while one
+  shows, with Base, each scenario and its input count, New, New from
+  this one, Rename, Delete, and *Use the base for the selected cells*.
+  Beside it, for the active cell: *Typed in Optimistic · Base: 6.1%*.
+- **The example.** Optimistic picks High growth on Forecast, prices on
+  Reference up 4% and the loan at 5.5%; Pessimistic picks Low, prices
+  down 5% and 7%. Next year is $524,866 against the base's $441,810 in
+  Optimistic. `SheetSeed.spec.ts` checks both settle with no error on
+  any sheet.
+- **Files.** A `.gsheet` keeps the scenarios and their inputs and opens
+  with the base showing. An `.xlsx` and a CSV carry the base, and the
+  `.xlsx` says the scenarios were left out.
+- **The cost, on the example.** Forking Optimistic and recalculating it
+  took 2.6 ms and evaluated 263 formulas; rebuilding the workbook from
+  its snapshot, as a worker would, took 7.4 ms and 300. The saving
+  there is mostly the parse: the prices reach nearly every formula in
+  the example. A scenario that changes the loan rate alone reaches three
+  formulas: the payment and the two that read it. `pnpm proof` passes unchanged, every run 1.5 to 2.4 ms.
+- **Checked in Chrome**, headless: the picker's menu, Optimistic shown
+  on the Dashboard, Forecast and Reference, the line beside the tabs
+  for a typed and a changed cell, 7 typed into Years while
+  Optimistic showed and the base still 5, and the same in the dark
+  theme.
+
+**Not done:**
+
+- **The fork is rebuilt from the whole workbook after every edit**
+  while a scenario shows: a copy of every cell and edge, 2.6 ms here.
+  A workbook of hundreds of thousands of cells would want a base edit
+  applied to the fork as well rather than the fork taken again.
+- **One scenario at a time.** No split view of two side by side, and
+  no table of a few cells across every scenario, which is the next
+  thing worth having.
+- **A sort while a scenario shows is refused**, with a message: it
+  moves formats, which are the base's.
+- **A colour scale gives way to the tint** while a scenario shows,
+  because the tint replaces the fill.
+- **Renaming a sheet does not rewrite an override that is a formula
+  naming it.** Overrides are almost always numbers.
+- **A script function's error message is kept by cell,** and the base
+  and the fork share the interpreter, so the fork's message for a cell
+  can replace the base's.
+- **The seed runs once per browser profile**, so a browser that
+  already has the example keeps the one it has, without scenarios.
+
+---
+
 ## Working against a local Gesso
 
 This project installs Gesso from the sibling checkout rather than from

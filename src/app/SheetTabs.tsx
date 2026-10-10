@@ -14,6 +14,7 @@ import { FocusService, internalState, type ComponentContext, type Inputs } from 
 
 import { Sheet, type SheetTab } from './SheetContract';
 import type { SheetEditing } from './SheetEditing';
+import { ScenarioPicker } from './ScenarioPicker';
 
 /**
  * The tabs along the bottom: which sheets there are, and which one
@@ -261,6 +262,7 @@ export function SheetTabs(inputs: Inputs<SheetTabsProps>, ctx: ComponentContext)
           sheet.send.addSheet();
         }, onAdd)}
         <box flex={1} minWidth={0} />
+        <ScenarioPicker editing={edit} />
         {tabs.pipe(
           map(view => [
             <text

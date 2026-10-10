@@ -44,7 +44,7 @@ export function readRect(document: SheetDocument, rect: Rect): Block {
   for (let row = rect.firstRow; row <= rect.lastRow; row++) {
     const line: string[] = [];
     for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
-      line.push(document.sheet.input(row, column));
+      line.push(document.inputAt(row, column));
     }
     rows.push(line);
   }
@@ -227,7 +227,7 @@ function grow(document: SheetDocument, rect: Rect, rowCount: number, columnCount
       return false;
     }
     for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
-      if (document.sheet.input(at, column) !== '') {
+      if (document.inputAt(at, column) !== '') {
         return true;
       }
     }
@@ -238,7 +238,7 @@ function grow(document: SheetDocument, rect: Rect, rowCount: number, columnCount
       return false;
     }
     for (let row = rect.firstRow; row <= rect.lastRow; row++) {
-      if (document.sheet.input(row, at) !== '') {
+      if (document.inputAt(row, at) !== '') {
         return true;
       }
     }
@@ -267,8 +267,8 @@ export function looksLikeHeader(document: SheetDocument, rect: Rect): boolean {
   }
   let sawText = false;
   for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
-    const head = document.sheet.value(rect.firstRow, column);
-    const below = document.sheet.value(rect.firstRow + 1, column);
+    const head = document.shown.value(rect.firstRow, column);
+    const below = document.shown.value(rect.firstRow + 1, column);
     if (head === null) {
       continue;
     }
@@ -314,8 +314,8 @@ export function copiedOf(document: SheetDocument, rect: Rect, cut: boolean): Cop
     const came: CellValue[] = [];
     const looks: CellFormat[] = [];
     for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
-      typed.push(document.sheet.input(row, column));
-      came.push(document.sheet.value(row, column));
+      typed.push(document.inputAt(row, column));
+      came.push(document.shown.value(row, column));
       looks.push(document.formatAt(row, column));
     }
     inputs.push(typed);

@@ -167,6 +167,36 @@ describe('the seeded workbook', () => {
     expect(document.setCell(2, 1, 'Hopeful')).toBe('A scenario is Low, Base or High.');
   });
 
+  it('has an Optimistic and a Pessimistic way, each settling without an error', () => {
+    const document = seeded();
+    expect(document.scenarios.map(scenario => scenario.name)).toEqual(['Optimistic', 'Pessimistic']);
+    for (const scenario of document.scenarios) {
+      document.showScenario(scenario.id);
+      document.fork = document.book.fork(document.overridesOf(scenario.id));
+      document.fork.recalculate();
+      everywhere(document, (sheet, row, column) => {
+        expect(document.display(row, column), `${scenario.name}, at sheet ${sheet}, ${row},${column}`).not.toMatch(/^#/);
+      });
+    }
+  });
+
+  it('projects next year higher in Optimistic and lower in Pessimistic, and leaves the base as it was', () => {
+    const document = seeded();
+    const nextYear = (book: { value(sheet: number, row: number, column: number): unknown }) =>
+      book.value(SHEET.forecast, 24, 1) as number;
+    const base = nextYear(document.book);
+    const [optimistic, pessimistic] = document.scenarios.map(scenario => {
+      const fork = document.book.fork(document.overridesOf(scenario.id));
+      fork.recalculate();
+      return fork;
+    });
+    expect(nextYear(optimistic)).toBeGreaterThan(base);
+    expect(nextYear(pessimistic)).toBeLessThan(base);
+    // Its inputs reach the orders on Sales, through the prices.
+    expect(optimistic.value(SHEET.sales, TOTAL_ROW, 6)).toBeGreaterThan(document.book.value(SHEET.sales, TOTAL_ROW, 6) as number);
+    expect(nextYear(document.book)).toBe(base);
+  });
+
   it('calls a named LAMBDA down a column, and hands it to MAP', () => {
     const document = seeded();
     document.activate(SHEET.sales);
