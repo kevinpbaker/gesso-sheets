@@ -105,6 +105,10 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   that sheet is out of view.
 - **Persistence.** The workbook is saved in the browser as you type
   and is there when you come back.
+- **Light and dark.** The sheet follows the system's appearance, and
+  View ▸ Theme overrides it, remembered in this browser. A cell's
+  fill is its author's colour in both, so text with no colour of its
+  own is written in whichever ink reads on that fill.
 - **Keyboard.** Every menu, every dialog and the whole toolbar are
   reachable without a pointer, and the specs for the chrome contain no
   pointer event to prove it. Ctrl+/ opens the sheet of shortcuts.
@@ -320,7 +324,8 @@ view has stopped arriving.
 
 ### Deploying
 
-The sheet is a static build — `dist/` is five files and a wasm — so
+The sheet is a static build — `dist/` is a page, its icons and
+manifest, and a folder of hashed assets with one wasm — so
 hosting it is hosting a directory. `vercel.json` is the whole of the
 configuration: the Vite preset, the build, and one rewrite that sends
 every path to `index.html`, because `/proof` is a route the router

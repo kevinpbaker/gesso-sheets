@@ -108,6 +108,9 @@ export type CommandId =
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
+  | 'appearanceAuto'
+  | 'appearanceLight'
+  | 'appearanceDark'
   | 'filterToSelection'
   | 'clearFilter'
   | 'freezeHere'
@@ -481,6 +484,10 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   zoomIn: { id: 'zoomIn', label: 'Zoom in' },
   zoomOut: { id: 'zoomOut', label: 'Zoom out' },
   zoomReset: { id: 'zoomReset', label: 'Zoom to 100%' },
+  /** The person's, not the document's: kept in this browser, like the status bar's figures. */
+  appearanceAuto: { id: 'appearanceAuto', label: 'Theme: match the system' },
+  appearanceLight: { id: 'appearanceLight', label: 'Theme: light' },
+  appearanceDark: { id: 'appearanceDark', label: 'Theme: dark' },
   showFormulas: { id: 'showFormulas', label: 'Show formulas', accelerator: { key: '`', ctrl: true } },
   /** The palette for the selection's text, opened beside its toolbar button. */
   textColour: { id: 'textColour', label: 'Text colour…' },
@@ -751,7 +758,11 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'zoomIn',
       'zoomOut',
-      'zoomReset'
+      'zoomReset',
+      SEPARATOR,
+      'appearanceAuto',
+      'appearanceLight',
+      'appearanceDark'
     ]
   },
   {

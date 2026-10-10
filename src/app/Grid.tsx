@@ -37,6 +37,7 @@ import {
   type Inputs
 } from 'gesso-framework';
 
+import { inkFor } from './cellInk';
 import { CHART_CATEGORIES, CHART_NAMES, CHART_VALUES } from './chartColours';
 import { guessOf, type Place } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
@@ -1131,8 +1132,13 @@ export function Grid(
       // A cell the application worker has not sent yet is drawn as a
       // rule rather than left blank, so a gap on a fling reads as
       // "not here yet" instead of as the end of the sheet.
-      color: combineLatest([value, paint]).pipe(
-        map(([text, how]) => (text === null ? 'placeholder' : how.color === '' ? 'text' : how.color))
+      // With no colour of its own, the ink follows the fill the cell is
+      // showing: the theme's own where there is none, or where the
+      // selection's wash is drawn over it. See `inkFor`.
+      color: combineLatest([value, paint, state]).pipe(
+        map(([text, how, where]) =>
+          text === null ? 'placeholder' : how.color !== '' ? how.color : where === 1 ? 'text' : inkFor(how.fill)
+        )
       ),
       /**
        * A fill wins everywhere except inside a selected range.

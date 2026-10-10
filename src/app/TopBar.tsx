@@ -12,6 +12,7 @@ import {
 import { ColorPalette, ColorPicker, Dialog } from 'gesso-components';
 import { FocusService, internalState, type ComponentContext, type Inputs } from 'gesso-framework';
 
+import { appearancePreference } from './appearance';
 import { FindBar } from './FindBar';
 import { formulaSpans } from './FormulaColours';
 import { MenuBar } from './MenuBar';
@@ -85,6 +86,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const focus = ctx.inject(FocusService);
   const edit = inputs.editing.value;
   const status = sheet.view.status;
+  const appearance = appearancePreference(ctx);
   const proof = inputs.proof.value === true;
   const files = inputs.files.value;
 
@@ -480,6 +482,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     sheet.send.sortRange(single ? at.column : Math.min(cornerOf(at).column, at.anchorColumn), ascending, single);
   };
 
+  /** The View menu's settings, ticked as they stand when it opens. */
+  const checkedNow = (id: CommandId): boolean | undefined => {
+    switch (id) {
+      case 'showFormulas':
+        return status.value.showingFormulas;
+      case 'showReferences':
+        return edit.referencesShown.value;
+      case 'appearanceAuto':
+        return appearance.value.value === 'auto';
+      case 'appearanceLight':
+        return appearance.value.value === 'light';
+      case 'appearanceDark':
+        return appearance.value.value === 'dark';
+      default:
+        return undefined;
+    }
+  };
+
   const run = (id: CommandId): void => {
     switch (id) {
       case 'undo':
@@ -867,6 +887,15 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'zoomReset':
         sheet.send.setZoom(zoomStep(sheet.view.geometry.value.zoom, id));
         break;
+      case 'appearanceAuto':
+        appearance.set('auto');
+        break;
+      case 'appearanceLight':
+        appearance.set('light');
+        break;
+      case 'appearanceDark':
+        appearance.set('dark');
+        break;
       case 'iterate':
         sheet.send.setIteration(true);
         break;
@@ -1208,6 +1237,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
           menus={menusFor(proof)}
           enabled={enabled}
           labelNow={labelNow}
+          checkedNow={checkedNow}
           onChoose={run}
           /**
            * The sheet gets the keyboard back, unless the command that

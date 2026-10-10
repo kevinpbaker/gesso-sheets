@@ -2,6 +2,7 @@ import { percent } from 'gesso-core';
 import { createComponent, route, RouterOutlet, type ComponentContext, type Inputs } from 'gesso-framework';
 
 import { PROOF_PATH } from '../route';
+import { appearanceTheme } from './appearance';
 import { SheetApp } from './SheetApp';
 
 /**
@@ -44,7 +45,7 @@ export const PROOF = route({ path: PROOF_PATH, component: ProofScreen });
 export const ROUTES = [SHEET, DOCUMENT, PROOF];
 
 /**
- * The application's root, which is an outlet and a background.
+ * The application's root, which is an outlet, a background and a theme.
  *
  * `RouterOutlet` cannot *be* the root — its render returns an
  * Observable, and the layout root has to be a box — so it goes inside
@@ -52,10 +53,14 @@ export const ROUTES = [SHEET, DOCUMENT, PROOF];
  * purpose: chrome drawn around the outlet would be chrome the proof
  * route and the plain route shared, and they share the screen rather
  * than a frame around it.
+ *
+ * The theme is set here, once, and inherited by everything under it.
+ * The screen names its colours by role — `surface`, `border`, `text` —
+ * so light and dark are the same tree painted from two palettes.
  */
-export function AppRoot(_inputs: Inputs<{}>, _ctx: ComponentContext) {
+export function AppRoot(_inputs: Inputs<{}>, ctx: ComponentContext) {
   return (
-    <column width={percent(100)} height={percent(100)} backgroundColor="background">
+    <column width={percent(100)} height={percent(100)} backgroundColor="background" theme={appearanceTheme(ctx)}>
       {createComponent(RouterOutlet)}
     </column>
   );

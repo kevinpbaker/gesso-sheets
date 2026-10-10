@@ -3,13 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>gessosheet</title>
+    <title>Gessosheet</title>
+    <meta name="description" content="A spreadsheet that keeps recalculating while the page is frozen. Formulas on one thread, the grid on another, and nothing on the main thread." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f9fafb" />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#1a1d23" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <script>
+      /*
+        The appearance the person chose in View, read before the first
+        paint so a page forced to light on a dark desktop does not open
+        dark for a moment. The render worker keeps the choice through
+        the shell under this key; it cannot reach this page's styles
+        itself, so this is the one place the main thread is told.
+      */
+      try {
+        const raw = localStorage.getItem('gessosheet:appearance');
+        let chosen = raw;
+        try {
+          chosen = JSON.parse(raw);
+        } catch {}
+        if (chosen === 'light' || chosen === 'dark') {
+          document.documentElement.dataset.theme = chosen;
+        }
+      } catch {}
+    </script>
     <style>
       /*
-        The canvas is sized to its host, so the host needs a size. That
-        is the whole of the CSS this page has, and on `/` it is the
-        whole of the CSS the application has: everything below is
-        painted, not styled.
+        The canvas is sized to its host, so the host needs a size. On
+        `/` that and the outline below are the whole of the CSS the
+        application has: everything else is painted, not styled.
 
         `/proof` adds the strip along the top, and it brings its own
         styles with it — see `proofPanel` in `gesso-devtools`. It is built rather than
@@ -17,7 +42,33 @@
         should not carry the markup for it, unstyled for a frame and
         then removed. The column layout is left in place for it to
         arrive into.
+
+        The colours are Gesso's light and dark palettes, so the page
+        under the canvas is the colour the canvas will paint.
       */
+      :root {
+        color-scheme: light;
+        --background: #ffffff;
+        --surface: #f9fafb;
+        --border: #e5e7eb;
+        --muted: #5b6370;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
+          --background: #111318;
+          --surface: #1a1d23;
+          --border: #2a2e36;
+          --muted: #9ca3af;
+        }
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --background: #111318;
+        --surface: #1a1d23;
+        --border: #2a2e36;
+        --muted: #9ca3af;
+      }
       html,
       body {
         margin: 0;
@@ -27,16 +78,57 @@
         display: flex;
         flex-direction: column;
         font: 12px/1.4 system-ui, sans-serif;
-        background: #f6f6f7;
+        background: var(--background);
       }
+      /*
+        An empty sheet, drawn under the canvas until its first frame
+        covers it: the bars along the top, the column headers, the
+        gutter and the grid, at the sizes the grid uses. The wasm and
+        two workers take a moment to arrive, and a blank page for that
+        moment reads as broken where a sheet reads as loading.
+
+        Nothing here moves. A spinner would be the main thread
+        animating something, and that thread doing nothing at all is
+        the point of the application.
+
+        `isolation` makes #app a stacking context, so the label at
+        z-index -1 paints above #app's background and below the
+        canvas, which arrives as an ordinary child and covers it.
+      */
       #app {
         flex: 1;
         min-height: 0;
+        position: relative;
+        isolation: isolate;
+        background:
+          linear-gradient(var(--border), var(--border)) 0 35px / 100% 1px no-repeat,
+          linear-gradient(var(--border), var(--border)) 0 70px / 100% 1px no-repeat,
+          repeating-linear-gradient(to bottom, transparent 0 23px, var(--border) 23px 24px) 0 70px / 100% 100% no-repeat,
+          repeating-linear-gradient(to right, transparent 0 51px, var(--border) 51px 52px) 0 70px / 52px 100% no-repeat,
+          repeating-linear-gradient(to right, transparent 0 95px, var(--border) 95px 96px) 52px 70px / 100% 100% no-repeat,
+          linear-gradient(var(--surface), var(--surface)) 0 0 / 100% 94px no-repeat,
+          linear-gradient(var(--surface), var(--surface)) 0 0 / 52px 100% no-repeat,
+          var(--background);
+      }
+      #app::before {
+        content: 'Loading Gessosheet…';
+        position: absolute;
+        z-index: -1;
+        top: 45%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        padding: 8px 14px;
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        background: var(--surface);
+        color: var(--muted);
+        font-size: 13px;
       }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <noscript>Gessosheet is a spreadsheet that runs in your browser, and it needs JavaScript to do that.</noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

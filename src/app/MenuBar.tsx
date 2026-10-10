@@ -34,6 +34,12 @@ export interface MenuBarProps {
    * every command it returns undefined for, the table's label.
    */
   readonly labelNow?: (id: CommandId) => string | undefined;
+  /**
+   * Whether a command that is a setting is on, read as its menu opens:
+   * true is a tick, false an empty place for one, and undefined — every
+   * command that is an action — no place at all.
+   */
+  readonly checkedNow?: (id: CommandId) => boolean | undefined;
   /** Receives the bar itself, so F10 can put the keyboard on it. */
   readonly ref?: (node: UiNode | null) => void;
 }
@@ -47,6 +53,7 @@ export function MenuBar(inputs: Inputs<MenuBarProps>, _ctx: ComponentContext) {
       const accelerator = COMMANDS[id].accelerator;
       return accelerator === undefined ? undefined : acceleratorLabel(accelerator);
     },
+    checkedOf: (id: CommandId) => inputs.checkedNow.value?.(id),
     onChoose: (id: CommandId) => inputs.onChoose.value(id),
     onDismiss: () => inputs.onDismiss.value(),
     barRef: inputs.ref.value ?? undefined
