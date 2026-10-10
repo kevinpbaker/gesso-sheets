@@ -621,6 +621,8 @@ export interface SheetStatus {
   readonly iterating: boolean;
   /** Whether the sheet is showing its formulas instead of their answers. */
   readonly showingFormulas: boolean;
+  /** The column a filter on this sheet was chosen by, or -1 with none; for the toolbar and the header. */
+  readonly filterColumn: number;
 }
 
 /**
@@ -982,6 +984,8 @@ export interface SheetCommands {
    * PDF, which the page explains how to make.
    */
   print(pdf: boolean): void;
+  /** Σ: a total of the numbers beside the selection; see `SheetService.autoSum`. */
+  autoSum(fn: 'SUM' | 'AVERAGE' | 'COUNT' | 'MAX' | 'MIN'): void;
   /** A quiet save to the document's file did not happen, and why. */
   fileNotSaved(why: string): void;
   /** Calls a document something else; the open one, or any in the library. */
@@ -1591,7 +1595,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
   editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '', scenario: null, spread: null },
   names: { entries: [], formulas: [], refused: '' },
-  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
+  status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false, filterColumn: -1 },
   clipboard: { text: '', serial: 0, marked: null },
   transfer: { download: null, report: '' },
   document: { id: '', name: '', file: null, edited: false, elsewhere: false, saving: 'off', autosave: false },

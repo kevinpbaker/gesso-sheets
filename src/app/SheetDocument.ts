@@ -314,6 +314,11 @@ interface Page {
    * that is hiding it. What the screen sees is the union.
    */
   readonly filteredRows: Set<number>;
+  /**
+   * The column the filter was chosen by, for the mark in its header;
+   * -1 with no filter. Kept as the rows are, for the session.
+   */
+  filterColumn: number;
   /** How many rows and columns stay put while the rest scrolls. */
   frozenRows: number;
   frozenColumns: number;
@@ -355,6 +360,7 @@ function newPage(sheet: Sheet): Page {
     rowHeights: new Map<number, number>(),
     fittedRows: new Map<number, number>(),
     filteredRows: new Set<number>(),
+    filterColumn: -1,
     frozenRows: 0,
     frozenColumns: 0,
     zoom: 1,
@@ -638,6 +644,14 @@ export class SheetDocument {
 
   get filteredRows(): Set<number> {
     return this.page.filteredRows;
+  }
+
+  get filterColumn(): number {
+    return this.page.filteredRows.size === 0 ? -1 : this.page.filterColumn;
+  }
+
+  set filterColumn(column: number) {
+    this.page.filterColumn = column;
   }
 
   get rowHeights(): Map<number, number> {
@@ -1812,6 +1826,7 @@ export class SheetDocument {
       rowHeights: new Map(from.rowHeights),
       fittedRows: new Map(from.fittedRows),
       filteredRows: new Set(from.filteredRows),
+      filterColumn: from.filterColumn,
       frozenRows: from.frozenRows,
       frozenColumns: from.frozenColumns,
       zoom: from.zoom,

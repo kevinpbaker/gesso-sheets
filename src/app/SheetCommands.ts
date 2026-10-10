@@ -65,6 +65,9 @@ export type CommandId =
   | 'alignRight'
   | 'wrap'
   | 'chooseFont'
+  | 'autoSum'
+  | 'insertFunction'
+  | 'functionReference'
   | 'chooseFontSize'
   | 'chooseNumberFormat'
   | 'formatGeneral'
@@ -456,6 +459,14 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   tabColour: { id: 'tabColour', label: 'Tab colour…' },
   /** The toolbar's lists, from the Format menu, for a keyboard that started there. */
   chooseFont: { id: 'chooseFont', label: 'Font…' },
+  /**
+   * Phase 41. AutoSum is Excel's Alt+=, which no browser keeps for
+   * itself. The two function commands open one reference, the Insert
+   * menu's with a button on each row that puts the function in the cell.
+   */
+  autoSum: { id: 'autoSum', label: 'AutoSum', accelerator: { key: '=', alt: true } },
+  insertFunction: { id: 'insertFunction', label: 'Function…' },
+  functionReference: { id: 'functionReference', label: 'Functions…' },
   chooseFontSize: { id: 'chooseFontSize', label: 'Font size…' },
   chooseNumberFormat: { id: 'chooseNumberFormat', label: 'Number format…' },
 
@@ -715,6 +726,9 @@ export const MENUS: readonly MenuDefinition[] = [
       SEPARATOR,
       'insertChart',
       SEPARATOR,
+      'autoSum',
+      'insertFunction',
+      SEPARATOR,
       'editNote',
       'defineName',
       'manageNames'
@@ -855,7 +869,7 @@ export const MENUS: readonly MenuDefinition[] = [
     id: 'help',
     label: 'Help',
     mnemonic: 'h',
-    entries: ['shortcuts']
+    entries: ['functionReference', 'shortcuts']
   }
 ];
 

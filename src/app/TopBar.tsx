@@ -19,6 +19,7 @@ import { MenuBar } from './MenuBar';
 import { NameBox, ONE_CELL } from './NameBox';
 import { ChartBar } from './ChartBar';
 import { DocumentBar } from './DocumentBar';
+import { FunctionsDialog } from './FunctionsDialog';
 import { FONT_SIZES, FONTS } from './fonts';
 import { HomeDialog } from './HomeDialog';
 import { VersionsDialog } from './VersionsDialog';
@@ -257,6 +258,31 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const BORDERS: readonly CommandId[] = ['borderAll', 'borderOutline', 'borderTop', 'borderBottom', 'borderThickBottom', 'borderNone'];
   const bordersMenu = (): void =>
     openDropdown('borders', 'Borders', BORDERS.map(id => ({ value: id, label: COMMANDS[id].label })), value => run(value as CommandId));
+  const SUMS: readonly { readonly fn: 'SUM' | 'AVERAGE' | 'COUNT' | 'MAX' | 'MIN'; readonly label: string }[] = [
+    { fn: 'SUM', label: 'Sum' },
+    { fn: 'AVERAGE', label: 'Average' },
+    { fn: 'COUNT', label: 'Count numbers' },
+    { fn: 'MAX', label: 'Max' },
+    { fn: 'MIN', label: 'Min' }
+  ];
+  const sumMenu = (): void =>
+    openDropdown(
+      'autoSum',
+      'AutoSum',
+      [...SUMS.map(each => ({ value: each.fn, label: each.label })), { value: 'more', label: 'More functions…' }],
+      value => {
+        if (value === 'more') {
+          run('insertFunction');
+        } else {
+          sheet.send.autoSum(value as 'SUM' | 'AVERAGE' | 'COUNT' | 'MAX' | 'MIN');
+        }
+      }
+    );
+  /** The filter on this sheet, which the toolbar's funnel shows and toggles. */
+  const filtered = status.pipe(
+    map(current => current.filterColumn >= 0),
+    distinctUntilChanged()
+  );
   const mergeMenu = (): void =>
     openDropdown(
       'merge',
@@ -368,6 +394,24 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     { id: 'alignCenter', icon: ICONS.alignCenter, ...runs('alignCenter'), pressed: on(p => p.align === 'center') },
     { id: 'alignRight', icon: ICONS.alignRight, ...runs('alignRight'), pressed: on(p => p.align === 'end') },
     { id: 'wrap', text: 'Wrap', ...runs('wrap'), pressed: on(p => p.wrap) },
+    {
+      id: 'filter',
+      icon: ICONS.filter,
+      label: 'Filter',
+      startsGroup: true,
+      pressed: filtered,
+      tip: () =>
+        status.value.filterColumn >= 0 ? 'Filter (on: press to show every row)' : 'Filter (keep only the rows like the active cell)',
+      onRun: () => run(status.value.filterColumn >= 0 ? 'clearFilter' : 'filterToSelection')
+    },
+    {
+      id: 'autoSum',
+      text: '\u03a3 \u25be',
+      label: 'AutoSum',
+      tip: `AutoSum (${acceleratorLabel(COMMANDS.autoSum.accelerator!)})`,
+      onRun: sumMenu,
+      anchor: anchorFor('autoSum')
+    },
     // The proof route's one extra button. A toolbar id is not a
     // command id — `currency` is `formatCurrency` here — so the
     // question is asked of the command rather than filtered out of
@@ -453,6 +497,23 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
   const closeHome = (): void => {
     homeOpen.value = false;
     edit.focusSheet();
+  };
+  /** Whether the function reference is open, and whether it was opened to insert one. */
+  const functionsOpen = internalState(false);
+  const functionsInserting = internalState(false);
+  const closeFunctions = (): void => {
+    functionsOpen.value = false;
+    edit.focusSheet();
+  };
+  /**
+   * A function into the active cell: a new formula, `=NAME(`, or the
+   * name added to the one being typed. The formula hint takes over.
+   */
+  const insertFunction = (name: string): void => {
+    functionsOpen.value = false;
+    edit.focusSheet();
+    const typing = edit.draftNow();
+    edit.apply({ kind: 'replace', text: typing === null ? `=${name}(` : `${typing}${name}(` });
   };
   /** Whether File ▸ Version history is open. */
   const historyOpen = internalState(false);
@@ -896,6 +957,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'chooseFont':
         fontMenu();
         return;
+      case 'autoSum':
+        sheet.send.autoSum('SUM');
+        break;
+      case 'insertFunction':
+      case 'functionReference':
+        functionsInserting.value = id === 'insertFunction';
+        functionsOpen.value = true;
+        return;
       case 'chooseFontSize':
         sizeMenu();
         return;
@@ -1144,6 +1213,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     }
     if (historyOpen.value) {
       closeHistory();
+      return true;
+    }
+    if (functionsOpen.value) {
+      closeFunctions();
       return true;
     }
     if (noteOpen.value) {
@@ -1646,6 +1719,7 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         onDelete={(id: string) => sheet.send.deleteDocument(id)}
         onClose={closeHome}
       />
+      <FunctionsDialog open={functionsOpen} inserting={functionsInserting} onInsert={insertFunction} onClose={closeFunctions} />
       <VersionsDialog
         open={historyOpen}
         versions={sheet.view.versions}

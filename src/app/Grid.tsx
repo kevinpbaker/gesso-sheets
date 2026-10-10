@@ -1,4 +1,3 @@
-import { fontStack } from './fonts';
 import { BehaviorSubject, combineLatest, type Observable } from 'rxjs';
 import { distinctUntilChanged, map } from 'rxjs/operators';
 
@@ -28,7 +27,7 @@ import {
   type SheetRange,
   type UiVirtualSheet
 } from 'gesso-core';
-import { Menu, type MenuItem } from 'gesso-components';
+import { Icon, Menu, type MenuItem } from 'gesso-components';
 import {
   createComponent,
   fanOut,
@@ -74,6 +73,8 @@ import {
   type SheetWindow
 } from './SheetContract';
 import { colouredReferences, formulaSpans, type ColouredReference } from './FormulaColours';
+import { fontStack } from './fonts';
+import { ICONS } from './icons';
 import { cycleAbsolute, pick, repick } from './FormulaEditing';
 import { COMMANDS, commandFor, type CommandId } from './SheetCommands';
 import { isPrintable, keyAction, stampText } from './SheetKeys';
@@ -3045,6 +3046,15 @@ export function Grid(
    */
   const columnHeader = (column: number): UiElement => {
     const stuck = column < frozen.value.columns;
+    /**
+     * Whether this column is the one a filter was chosen by — Phase 41.
+     * A funnel at the right of its letter, as every spreadsheet marks
+     * a filtered column, and said in its name for a screen reader.
+     */
+    const filteredHere = sheet.view.status.pipe(
+      map(current => current.filterColumn === column),
+      distinctUntilChanged()
+    );
     return Box(
       {
         key: column,
@@ -3065,7 +3075,7 @@ export function Grid(
         borderColor: GRID_LINE,
         borderWidth: 1,
         role: 'columnheader',
-        label: columnName(column),
+        label: filteredHere.pipe(map(is => (is ? `${columnName(column)}, filtered` : columnName(column)))),
         posInSet: column + 1
       },
       Text({
@@ -3076,6 +3086,24 @@ export function Grid(
         verticalAlign: 'middle',
         selectable: false
       }),
+      Box(
+        {
+          key: 'filtered',
+          position: 'absolute',
+          right: 9,
+          top: 6,
+          opacity: filteredHere.pipe(map(is => (is ? 1 : 0)))
+        },
+        createComponent(Icon, {
+          path: ICONS.filter.path,
+          viewBox: ICONS.filter.viewBox,
+          size: 12,
+          color: 'primary',
+          style: ICONS.filter.style,
+          strokeWidth: 2,
+          fillRule: 'nonzero'
+        })
+      ),
       Box({
         key: 'grip',
         width: touching.pipe(map(GRIP)),

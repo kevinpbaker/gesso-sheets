@@ -146,6 +146,8 @@ export interface SheetServiceOptions {
   readonly library?: SheetLibrary;
   /** What the very first document starts with, before anybody types. */
   readonly seed?: (document: SheetDocument) => void;
+  /** What that first document is called; Untitled without one. */
+  readonly seedName?: string;
   /** The clock a document's `used` is read from. */
   readonly now?: () => number;
   /**
@@ -326,6 +328,7 @@ export class SheetService {
   private opening: Promise<void> = Promise.resolve();
   private readonly library: SheetLibrary | undefined;
   private readonly seed: ((document: SheetDocument) => void) | undefined;
+  private readonly seedName: string;
   private readonly now: () => number;
   private downloadSerial = 0;
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
@@ -485,6 +488,7 @@ export class SheetService {
     this.library = options.library;
     this.printer = options.printer;
     this.seed = options.seed;
+    this.seedName = options.seedName ?? 'Untitled';
     this.now = options.now ?? Date.now;
     this.budget = options.budget ?? 2_000;
     this.schedule = options.schedule ?? defaultSchedule;
@@ -1207,6 +1211,73 @@ export class SheetService {
   clearRange(): void {
     this.editedOverMark();
     this.document.transact(() => clearRect(this.document, rectOf(this.document.selection)), 'clear');
+    this.afterEdit();
+  }
+
+  /**
+   * AutoSum — Phase 41: a total of the numbers beside the selection,
+   * as Excel's Σ writes one.
+   *
+   * On one cell, the run of numbers directly above it, or failing that
+   * directly to its left, totalled into the cell. On a range, a total
+   * under each of its columns — or, for a range one row high, to the
+   * right of it. Written as a formula and kept, rather than left open
+   * for editing as Excel does: what range it chose is in the formula
+   * bar, and Ctrl+Z takes it back in one step.
+   */
+  autoSum(fn: 'SUM' | 'AVERAGE' | 'COUNT' | 'MAX' | 'MIN'): void {
+    const rect = rectOf(this.document.selection);
+    const sheet = this.document.shown;
+    const isNumber = (row: number, column: number): boolean => typeof sheet.value(row, column) === 'number';
+    const range = (firstRow: number, firstColumn: number, lastRow: number, lastColumn: number): string =>
+      firstRow === lastRow && firstColumn === lastColumn
+        ? `${columnName(firstColumn)}${firstRow + 1}`
+        : formatRange({ start: relativeRef(firstRow, firstColumn), end: relativeRef(lastRow, lastColumn) });
+    const writes: { row: number; column: number; input: string }[] = [];
+    if (rect.firstRow === rect.lastRow && rect.firstColumn === rect.lastColumn) {
+      const { firstRow: row, firstColumn: column } = rect;
+      let top = row;
+      while (top > 0 && isNumber(top - 1, column)) {
+        top--;
+      }
+      let left = column;
+      while (left > 0 && isNumber(row, left - 1)) {
+        left--;
+      }
+      if (top < row) {
+        writes.push({ row, column, input: `=${fn}(${range(top, column, row - 1, column)})` });
+      } else if (left < column) {
+        writes.push({ row, column, input: `=${fn}(${range(row, left, row, column - 1)})` });
+      } else {
+        this.report(`There are no numbers above ${columnName(column)}${row + 1} or to its left to total.`);
+        return;
+      }
+    } else if (rect.firstRow === rect.lastRow) {
+      writes.push({
+        row: rect.firstRow,
+        column: rect.lastColumn + 1,
+        input: `=${fn}(${range(rect.firstRow, rect.firstColumn, rect.lastRow, rect.lastColumn)})`
+      });
+    } else {
+      for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+        writes.push({ row: rect.lastRow + 1, column, input: `=${fn}(${range(rect.firstRow, column, rect.lastRow, column)})` });
+      }
+    }
+    const { rowCount, columnCount } = this.geometrySubject.value;
+    const kept = writes.filter(write => write.row < rowCount && write.column < columnCount);
+    if (kept.length === 0) {
+      return;
+    }
+    this.editedOverMark();
+    this.document.transact(() => {
+      for (const write of kept) {
+        this.document.setCell(write.row, write.column, write.input);
+      }
+    }, fn === 'SUM' ? 'AutoSum' : `Auto${fn.charAt(0)}${fn.slice(1).toLowerCase()}`);
+    const first = kept[0];
+    const last = kept[kept.length - 1];
+    this.document.setSelection(first.row, first.column, last.row, last.column);
+    this.selectionSubject.next(this.document.selection);
     this.afterEdit();
   }
 
@@ -2116,6 +2187,7 @@ export class SheetService {
     const header = looksLikeHeader(this.document, rect) ? rect.firstRow : -1;
 
     this.document.filteredRows.clear();
+    this.document.filterColumn = at.column;
     for (let row = rect.firstRow; row <= rect.lastRow; row++) {
       if (row === header || row === at.row) {
         continue;
@@ -2128,6 +2200,7 @@ export class SheetService {
     this.publishGeometry();
     this.publishWindow();
     this.publishFormats();
+    this.publishStatus();
     this.persist();
   }
 
@@ -2146,10 +2219,12 @@ export class SheetService {
       return;
     }
     this.document.filteredRows.clear();
+    this.document.filterColumn = -1;
     this.rowsShownChanged();
     this.publishGeometry();
     this.publishWindow();
     this.publishFormats();
+    this.publishStatus();
     this.persist();
   }
 
@@ -2931,7 +3006,9 @@ export class SheetService {
     const first = found === undefined && id !== 'new' && entries.length === 0;
     const entry: DocumentEntry = found ?? {
       id: first ? FIRST_DOCUMENT : library.newId(),
-      name: 'Untitled',
+      // The example is called what it is, so the home screen does not
+      // open on an Untitled that is somebody's quarter of orders.
+      name: first ? this.seedName : 'Untitled',
       used: this.now(),
       file: null
     };
@@ -4723,7 +4800,8 @@ export class SheetService {
       undoLabel: this.document.undoLabel,
       redoLabel: this.document.redoLabel,
       iterating: this.document.book.iteration !== null,
-      showingFormulas: this.showingFormulas
+      showingFormulas: this.showingFormulas,
+      filterColumn: this.document.filterColumn
     };
   }
 }
