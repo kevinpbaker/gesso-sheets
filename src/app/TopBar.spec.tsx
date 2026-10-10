@@ -828,6 +828,9 @@ describe('the toolbar', () => {
     expect(ring()).toEqual([]);
     expect(undo()).toBe('controlBackground');
 
+    // The workbook's name, the menu bar, then the toolbar.
+    h.ui.fireEvent.tab();
+    await h.ui.settle();
     h.ui.fireEvent.tab();
     await h.ui.settle();
     h.ui.fireEvent.tab();

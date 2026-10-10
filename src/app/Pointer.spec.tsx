@@ -456,9 +456,10 @@ describe('the menu under the right button', () => {
  * this window is 70.4 + 476.
  */
 describe('where the menu under the right button opens', () => {
-  const TALL = { width: 700, height: 600 };
+  /** Raised with the title bar and the toolbar's own row in Phases 38 and 40, so the grid is the height it was. */
+  const TALL = { width: 700, height: 658.4 };
   const menu = () => h.ui.getVisibleBox(h.ui.getByRole('menu', { name: 'Cell actions' }));
-  /** A right-click in the middle of a row's height, 24 pixels each from 94.4. */
+  /** A right-click in the middle of a row's height, 24 pixels each from 152.8. */
   const rightClickRow = async (rowName: string) => {
     const box = h.ui.getVisibleBox(row(rowName));
     h.ui.fireEvent.contextMenu(h.ui.getByRole('grid'), { x: 300, y: box.y + box.height / 2 });
@@ -469,19 +470,19 @@ describe('where the menu under the right button opens', () => {
   it('opens below the pointer when it fits below', async () => {
     h = await mount(undefined, TALL);
     await rightClickRow('1');
-    expect([near(menu().y), menu().height]).toEqual([106.4, 424]);
+    expect([near(menu().y), menu().height]).toEqual([164.8, 424]);
   });
 
   it('opens above the pointer when it fits above and not below', async () => {
     h = await mount(undefined, TALL);
     await rightClickRow('18');
-    expect(near(menu().y)).toBe(near(514.4 - 424));
+    expect(near(menu().y)).toBe(near(572.8 - 424));
   });
 
   it('is moved until all of it shows when it fits on neither side', async () => {
     h = await mount(undefined, TALL);
     await rightClickRow('8');
-    expect(near(menu().y)).toBe(near(546.4 - 424));
+    expect(near(menu().y)).toBe(near(604.8 - 424));
   });
 });
 
