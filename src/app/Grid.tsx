@@ -296,6 +296,11 @@ export function Grid(
   let latestFormats: { cells: Readonly<Record<string, Readonly<Record<string, number>>>> } | null = null;
   let latestPalette: readonly CellPaint[] = [PLAIN_PAINT];
   let latestUncertainty: SheetUncertainty = { cells: {} };
+  /** Whether the theme is dark: the fills below and the charts are drawn for it. */
+  const dark$ = appearanceTheme(ctx).pipe(
+    map(theme => theme === darkTheme),
+    distinctUntilChanged()
+  );
   /**
    * The palette as the theme draws it: in the dark theme a light fill
    * is shown as its dark equivalent (see `shownFill`), and the ink is
@@ -304,13 +309,7 @@ export function Grid(
    * and not per cell, so a theme change is one repaint and no cell
    * binds to the theme.
    */
-  const shownPalette$ = combineLatest([
-    sheet.view.palette,
-    appearanceTheme(ctx).pipe(
-      map(theme => theme === darkTheme),
-      distinctUntilChanged()
-    )
-  ]).pipe(map(([palette, dark]) => ({ entries: shownPalette(palette.entries, dark) })));
+  const shownPalette$ = combineLatest([sheet.view.palette, dark$]).pipe(map(([palette, dark]) => ({ entries: shownPalette(palette.entries, dark) })));
 
   const paintOf = (row: number, column: number): CellPaint => {
     const id = latestFormats?.cells[row]?.[column] ?? 0;
@@ -957,6 +956,12 @@ export function Grid(
   /** The charts on this sheet, and what they draw; fed below, read by the outlines as well. */
   const charts = internalState<SheetCharts>({ entries: [], selected: 0 });
   const series = internalState<SheetSeriesView>({ charts: {} });
+  /**
+   * Whether the charts are drawn for the dark theme. Read when a row
+   * builds its charts, and the rows are built again when it changes,
+   * so a chart's picture is made again in the new theme at once.
+   */
+  let chartsDark = false;
   /** Which sheet is showing, for whether a chart's cells are on it. */
   let activeSheet = 0;
   /** The selected chart's cells, when they are on the sheet showing; see `paintOutlines`. */
@@ -2863,7 +2868,8 @@ export function Grid(
         selected: charts.value.selected === chart.id,
         rowOffset: offset,
         drag: chartDrag,
-        on: chartHandlers
+        on: chartHandlers,
+        dark: chartsDark
       })
     );
   };
@@ -3425,6 +3431,13 @@ export function Grid(
     throw new Error('LazySheet did not hand back its window.');
   }
   const sheetWindow = window;
+  // The charts' theme, once there is a window to rebuild; see `chartsDark`.
+  ctx.effect(dark$, dark => {
+    if (dark !== chartsDark) {
+      chartsDark = dark;
+      sheetWindow.invalidate();
+    }
+  });
   // A note that appears or goes under the selection changes what the
   // row draws beside it; see `notePopup`.
   ctx.effect(sheet.view.notes, () => sheetWindow.invalidate());

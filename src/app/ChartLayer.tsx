@@ -69,6 +69,8 @@ export interface ChartElementProps {
   /** The live rectangle while this chart is being dragged, or null. */
   readonly drag: ChartDrag | null;
   readonly on: ChartCallbacks;
+  /** Whether the theme is dark, which the picture is made for; see `ChartInk`. */
+  readonly dark: boolean;
 }
 
 /**
@@ -81,7 +83,7 @@ export interface ChartElementProps {
  * it ended up, not where it passed through.
  */
 export function chartElement(props: ChartElementProps): UiElement {
-  const { chart, data, selected, rowOffset, drag, on } = props;
+  const { chart, data, selected, rowOffset, drag, on, dark } = props;
   const live = drag !== null && drag.id === chart.id ? drag : null;
   const x = live?.x ?? chart.x;
   const y = live?.y ?? chart.y;
@@ -120,7 +122,7 @@ export function chartElement(props: ChartElementProps): UiElement {
       borderWidth: selected ? 1 : 0,
       borderColor: selected ? 'primary' : 'transparent',
       paint: {
-        draw: (surface: PaintSurface, box: PaintBox) => drawChart(surface, box, chart, data),
+        draw: (surface: PaintSurface, box: PaintBox) => drawChart(surface, box, chart, data, dark),
         /**
          * Everything the picture depends on, and nothing else.
          *
@@ -129,9 +131,11 @@ export function chartElement(props: ChartElementProps): UiElement {
          * sheet is one image draw a frame. `data` is compared by
          * identity, which is exactly right: the service rebuilds the
          * object when the numbers change and the differ hands the
-         * same one back when they have not.
+         * same one back when they have not. And the theme: the
+         * picture is made in it, and one made in the light theme was
+         * shown on after View ▸ Theme went dark.
          */
-        inputs: [chart.kind, chart.title, chart.legend, chart.range, width, height, data]
+        inputs: [chart.kind, chart.title, chart.legend, chart.range, width, height, data, dark]
       },
       onPointerDown: (event: UiPointerEvent) => {
         on.select(chart.id);

@@ -1,4 +1,4 @@
-import type { PaintBox, PaintSurface } from 'gesso-core';
+import { darkColors, parseColor, relativeLuminance, type PaintBox, type PaintSurface, type UiColorValue } from 'gesso-core';
 
 import {
   axisLabel,
@@ -44,6 +44,81 @@ const TITLE_HEIGHT = 22;
 const LEGEND_HEIGHT = 22;
 const LABEL_SIZE = 10;
 
+/**
+ * The colours a chart is drawn in, other than its series'.
+ *
+ * Light is the theme's own names, as it always was. Dark is written
+ * out: a chart is a `Paint`, a picture made once and kept, and the
+ * picture made in the light theme went on being shown after View ▸
+ * Theme went dark — a pale panel glaring on a dark sheet. The theme is
+ * now one of the picture's inputs, so it is made again, and in the
+ * dark it is made with colours chosen for it rather than borrowed: a
+ * border a step brighter than the sheet's own rules so the panel has
+ * an edge, and gridlines a step dimmer so they stay behind the data.
+ */
+export interface ChartInk {
+  readonly surface: UiColorValue;
+  readonly border: UiColorValue;
+  readonly title: UiColorValue;
+  readonly label: UiColorValue;
+  readonly grid: UiColorValue;
+  readonly zero: UiColorValue;
+}
+
+export const LIGHT_INK: ChartInk = {
+  surface: 'surface',
+  border: 'border',
+  title: 'text',
+  label: 'textMuted',
+  grid: 'controlBorder',
+  zero: 'border'
+};
+
+export const DARK_INK: ChartInk = {
+  surface: '#1a1d23',
+  border: '#4b515c',
+  title: '#f3f4f6',
+  label: '#9ca3af',
+  grid: '#2a2e36',
+  zero: '#4b515c'
+};
+
+/**
+ * A series' colour, on the surface it is drawn on.
+ *
+ * The same eight in both themes, so a series is the colour it was a
+ * moment ago — all eight read at three to one or better on the dark
+ * panel. A colour that would not is mixed a third of the way to white,
+ * which keeps its hue and gives it an edge; that is a guard for the
+ * palette changing, and none of today's needs it.
+ */
+export function seriesColour(index: number, dark: boolean): string {
+  return dark ? readableOnDark(colourOf(index)) : colourOf(index);
+}
+
+/** A colour, lifted toward white when it would read at less than three to one on the dark panel. */
+
+const DARK_SURFACE_LUMINANCE = relativeLuminance(darkColors.surface);
+
+export function readableOnDark(colour: string): string {
+  const parsed = parseColor(colour);
+  if (parsed === undefined || (relativeLuminance(parsed) + 0.05) / (DARK_SURFACE_LUMINANCE + 0.05) >= 3) {
+    return colour;
+  }
+  const mixed = [parsed.r, parsed.g, parsed.b].map(channel => Math.round((channel + (1 - channel) / 3) * 255));
+  return `#${mixed.map(channel => channel.toString(16).padStart(2, '0')).join('')}`;
+}
+
+/**
+ * The ink and the series colours for the picture being made.
+ *
+ * Module state rather than a parameter on every helper below, because
+ * `drawChart` is synchronous and sets both before it draws and puts
+ * them back after: no other picture can be part way through.
+ */
+let ink: ChartInk = LIGHT_INK;
+let colourAt: (index: number) => string = colourOf;
+
 interface Plot {
   readonly x: number;
   readonly y: number;
@@ -55,16 +130,28 @@ export function drawChart(
   surface: PaintSurface,
   box: PaintBox,
   chart: SheetChart,
-  data: SheetChartSeries | null
+  data: SheetChartSeries | null,
+  dark = false
 ): void {
+  ink = dark ? DARK_INK : LIGHT_INK;
+  colourAt = index => seriesColour(index, dark);
+  try {
+    paintChart(surface, box, chart, data, dark);
+  } finally {
+    ink = LIGHT_INK;
+    colourAt = colourOf;
+  }
+}
+
+function paintChart(surface: PaintSurface, box: PaintBox, chart: SheetChart, data: SheetChartSeries | null, dark: boolean): void {
   const hairline = 1 / box.scale;
 
   surface.save();
   surface.beginPath();
   surface.roundRect(0, 0, box.width, box.height, 4);
-  surface.fillColor('surface');
+  surface.fillColor(ink.surface);
   surface.fill();
-  surface.strokeColor('border');
+  surface.strokeColor(ink.border);
   surface.lineWidth(hairline);
   surface.stroke();
   surface.restore();
@@ -76,7 +163,7 @@ export function drawChart(
 
   let top = PADDING;
   if (chart.title !== '') {
-    surface.fillColor('text');
+    surface.fillColor(ink.title);
     surface.text(chart.title, box.width / 2, top + 14, { fontSize: 13, fontWeight: 600, align: 'center' });
     top += TITLE_HEIGHT;
   }
@@ -97,7 +184,7 @@ export function drawChart(
    * cost of saying so.
    */
   if (data !== null && data.read > longestOf(series)) {
-    surface.fillColor('textMuted');
+    surface.fillColor(ink.label);
     surface.text(`${data.read.toLocaleString()} points`, box.width - PADDING, bottom, {
       fontSize: 9,
       align: 'right'
@@ -107,19 +194,19 @@ export function drawChart(
 
   // What the shading is, in the same corner and the same voice.
   if (banded) {
-    surface.fillColor('textMuted');
+    surface.fillColor(ink.label);
     surface.text('Shaded: P10 to P90', box.width - PADDING, bottom, { fontSize: 9, align: 'right' });
     bottom -= 12;
   }
 
   if (series.length === 0) {
-    surface.fillColor('textMuted');
+    surface.fillColor(ink.label);
     surface.text('Nothing to draw', box.width / 2, (top + bottom) / 2, { fontSize: 11, align: 'center' });
     return;
   }
 
   if (chart.kind === 'pie') {
-    drawPie(surface, { x: PADDING, y: top, width: box.width - PADDING * 2, height: bottom - top }, series, categories);
+    drawPie(surface, { x: PADDING, y: top, width: box.width - PADDING * 2, height: bottom - top }, series, categories, dark);
     return;
   }
 
@@ -190,10 +277,10 @@ function drawAxes(
     }
     // The zero line is the one a reader measures from, so it is drawn
     // as an axis and not as a gridline.
-    surface.strokeColor(value === 0 ? 'border' : 'controlBorder');
+    surface.strokeColor(value === 0 ? ink.zero : ink.grid);
     surface.stroke();
 
-    surface.fillColor('textMuted');
+    surface.fillColor(ink.label);
     if (sideways) {
       surface.text(axisLabel(value, ticks, format), at, plot.y + plot.height + 13, {
         fontSize: LABEL_SIZE,
@@ -229,7 +316,7 @@ function drawCategories(
   const room = sideways ? plot.height : plot.width;
   const step = Math.max(1, Math.ceil(categories.length / Math.floor(room / 48)));
   const count = countOf(series);
-  surface.fillColor('textMuted');
+  surface.fillColor(ink.label);
   for (let at = 0; at < categories.length; at += step) {
     const middle = alongCategory(at, count, plot, sideways) + bandOf(count, plot, sideways) / 2;
     if (sideways) {
@@ -243,7 +330,7 @@ function drawCategories(
 function drawPoints(surface: PaintSurface, plot: Plot, series: readonly Series[], ticks: ReturnType<typeof niceTicks>, kind: ChartKind): void {
   const count = countOf(series);
   series.forEach((one, index) => {
-    const colour = colourOf(index);
+    const colour = colourAt(index);
     if (kind === 'scatter') {
       surface.fillColor(colour);
       for (const point of one.points) {
@@ -287,7 +374,7 @@ function drawArea(
       return;
     }
     surface.save();
-    surface.fillColor(colourOf(index));
+    surface.fillColor(colourAt(index));
     // Stacked areas would hide each other outright; overlaid ones at
     // least show both, and the translucency says they are overlaid.
     surface.alpha(0.35);
@@ -329,7 +416,7 @@ function drawBands(
       return;
     }
     surface.save();
-    surface.fillColor(colourOf(index));
+    surface.fillColor(colourAt(index));
     surface.alpha(0.22);
     surface.beginPath();
     band.high.forEach((point, at) => (at === 0 ? surface.moveTo(x(point.x), y(point.y)) : surface.lineTo(x(point.x), y(point.y))));
@@ -339,7 +426,7 @@ function drawBands(
     surface.closePath();
     surface.fill();
     surface.alpha(0.55);
-    surface.strokeColor(colourOf(index));
+    surface.strokeColor(colourAt(index));
     surface.lineWidth(0.75);
     for (const edge of [band.high, band.low]) {
       surface.beginPath();
@@ -370,7 +457,7 @@ function drawBars(
   const each = (band - gap) / Math.max(1, series.length);
   const base = alongValue(Math.min(Math.max(0, ticks.low), ticks.high), ticks, plot, sideways);
   series.forEach((one, index) => {
-    surface.fillColor(colourOf(index));
+    surface.fillColor(colourAt(index));
     for (const point of one.points) {
       const start = alongCategory(point.x, count, plot, sideways) + gap / 2 + index * each;
       const at = alongValue(point.y, ticks, plot, sideways);
@@ -391,7 +478,7 @@ function drawStacked(surface: PaintSurface, plot: Plot, series: readonly Series[
   const gap = band * 0.2;
   const running: number[] = [];
   series.forEach((one, index) => {
-    surface.fillColor(colourOf(index));
+    surface.fillColor(colourAt(index));
     for (const point of one.points) {
       const from = running[point.x] ?? 0;
       const to = from + point.y;
@@ -405,7 +492,7 @@ function drawStacked(surface: PaintSurface, plot: Plot, series: readonly Series[
   });
 }
 
-function drawPie(surface: PaintSurface, plot: Plot, series: readonly Series[], categories: readonly string[]): void {
+function drawPie(surface: PaintSurface, plot: Plot, series: readonly Series[], categories: readonly string[], dark: boolean): void {
   const slices = pieSlices(series[0], categories);
   if (slices.length === 0) {
     return;
@@ -414,7 +501,7 @@ function drawPie(surface: PaintSurface, plot: Plot, series: readonly Series[], c
   const middleY = plot.y + plot.height / 2;
   const radius = Math.max(4, Math.min(plot.width, plot.height) / 2 - 18);
   for (const slice of slices) {
-    surface.fillColor(slice.colour);
+    surface.fillColor(dark ? readableOnDark(slice.colour) : slice.colour);
     surface.beginPath();
     surface.moveTo(middleX, middleY);
     surface.arc(middleX, middleY, radius, slice.from, slice.to);
@@ -423,7 +510,7 @@ function drawPie(surface: PaintSurface, plot: Plot, series: readonly Series[], c
   }
   // Labels outside the ring rather than inside it: a thin slice has
   // no room for its own name and a leader line is a different chart.
-  surface.fillColor('text');
+  surface.fillColor(ink.title);
   for (const slice of slices) {
     if (slice.to - slice.from < 0.2) {
       continue;
@@ -447,11 +534,11 @@ function drawLegend(surface: PaintSurface, box: PaintBox, series: readonly Serie
   const total = widths.reduce((sum, width) => sum + width, 0);
   let x = Math.max(PADDING, (box.width - total) / 2);
   names.forEach((name, index) => {
-    surface.fillColor(colourOf(index));
+    surface.fillColor(colourAt(index));
     surface.beginPath();
     surface.roundRect(x, baseline - 7, 8, 8, 2);
     surface.fill();
-    surface.fillColor('textMuted');
+    surface.fillColor(ink.label);
     surface.text(name, x + 12, baseline, { fontSize: LABEL_SIZE });
     x += widths[index];
   });
