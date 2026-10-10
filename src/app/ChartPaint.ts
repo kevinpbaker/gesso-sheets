@@ -1,6 +1,7 @@
 import type { PaintBox, PaintSurface } from 'gesso-core';
 
 import {
+  axisLabel,
   colourOf,
   hasAxes,
   isSideways,
@@ -8,12 +9,11 @@ import {
   niceTicks,
   pieSlices,
   stackedTotals,
-  tickLabel,
   valueSpan,
   type ChartKind
 } from '../sheet/Chart';
 import type { Series } from '../sheet/Series';
-import type { SheetChart, SheetChartBand, SheetChartSeries } from './SheetContract';
+import type { NumberFormatPatch, SheetChart, SheetChartBand, SheetChartSeries } from './SheetContract';
 
 /**
  * A chart, drawn.
@@ -137,7 +137,7 @@ export function drawChart(
   // The band can reach past the series, and is drawn inside the axes.
   const span = valueSpan(banded ? [...series, ...bandSeries(bands)] : series, chart.kind);
   const ticks = niceTicks(span.low, span.high, sideways ? 4 : 5);
-  drawAxes(surface, box, plot, ticks, categories, series, chart.kind);
+  drawAxes(surface, box, plot, ticks, categories, series, chart.kind, data?.format ?? { kind: 'general' });
 
   switch (chart.kind) {
     case 'line':
@@ -170,7 +170,8 @@ function drawAxes(
   ticks: ReturnType<typeof niceTicks>,
   categories: readonly string[],
   series: readonly Series[],
-  kind: ChartKind
+  kind: ChartKind,
+  format: NumberFormatPatch
 ): void {
   const hairline = 1 / box.scale;
   const sideways = isSideways(kind);
@@ -194,12 +195,12 @@ function drawAxes(
 
     surface.fillColor('textMuted');
     if (sideways) {
-      surface.text(tickLabel(value, ticks.step), at, plot.y + plot.height + 13, {
+      surface.text(axisLabel(value, ticks, format), at, plot.y + plot.height + 13, {
         fontSize: LABEL_SIZE,
         align: 'center'
       });
     } else {
-      surface.text(tickLabel(value, ticks.step), plot.x - 6, at + 3, { fontSize: LABEL_SIZE, align: 'right' });
+      surface.text(axisLabel(value, ticks, format), plot.x - 6, at + 3, { fontSize: LABEL_SIZE, align: 'right' });
     }
   }
   surface.restore();

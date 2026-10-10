@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { colourOf, niceTicks, pieSlices, stackedTotals, tickLabel, valueSpan, type ChartKind } from './Chart';
+import { axisLabel, colourOf, niceTicks, pieSlices, stackedTotals, tickLabel, valueSpan, type ChartKind } from './Chart';
+import type { NumberFormat } from './Format';
 import type { Series } from './Series';
 
 /**
@@ -132,6 +133,49 @@ describe('labelling a tick', () => {
 
   it('does not print a negative zero', () => {
     expect(tickLabel(-0, 0.5)).toBe('0.0');
+  });
+});
+
+/**
+ * An axis under a column of currency reads as currency.
+ *
+ * "Revenue by month" was labelled 10000 … 60000 beside cells that say
+ * $22,290; it says $10K … $60K now.
+ */
+describe('labelling a tick in the cells format', () => {
+  const dollars = { kind: 'currency', places: 2, symbol: '$' } as const;
+  /** Every label on the axis `niceTicks` gives a span, in a format. */
+  const axis = (low: number, high: number, format: NumberFormat, want = 5) => {
+    const ticks = niceTicks(low, high, want);
+    return ticks.values.map(value => axisLabel(value, ticks, format));
+  };
+
+  it('puts the symbol on, and shortens an axis of tens of thousands', () => {
+    // The seed's two revenue charts, as they were drawn in a browser.
+    expect(axis(19_845, 54_393, dollars)).toEqual(['$10K', '$20K', '$30K', '$40K', '$50K', '$60K']);
+    expect(axis(0, 106_269, dollars, 4)).toEqual(['$0', '$50K', '$100K', '$150K']);
+    expect(axis(0, 2_400_000, dollars, 4)).toEqual(['$0', '$1M', '$2M', '$3M']);
+    expect(axis(0, 1_400_000, dollars, 4)).toEqual(['$0', '$0.5M', '$1.0M', '$1.5M']);
+  });
+
+  it('keeps an axis under ten thousand whole, grouped as the cells are', () => {
+    expect(axis(0, 2_400, dollars)).toEqual(['$0', '$500', '$1,000', '$1,500', '$2,000', '$2,500']);
+    expect(axis(-500, 500, dollars, 2)).toEqual(['($500)', '$0', '$500']);
+  });
+
+  it('shortens a plain number too, and leaves a small one alone', () => {
+    expect(axis(0, 60_000, { kind: 'general' }, 3)).toEqual(['0', '20K', '40K', '60K']);
+    expect(axis(0, 1.5, { kind: 'general' }, 3)).toEqual(['0.0', '0.5', '1.0', '1.5']);
+    expect(axis(-20_000, 0, { kind: 'number', places: 0, thousands: true }, 2)).toEqual(['-20K', '-10K', '0']);
+  });
+
+  it('writes a share as a percentage, at the precision of the step', () => {
+    expect(axis(0, 0.25, { kind: 'percent', places: 1 })).toEqual(['0%', '5%', '10%', '15%', '20%', '25%']);
+    expect(axis(0, 0.01, { kind: 'percent', places: 0 }, 2)).toEqual(['0.0%', '0.5%', '1.0%']);
+  });
+
+  it('writes a date as a date', () => {
+    expect(axis(46_023, 46_037, { kind: 'date', pattern: 'ymd' }, 2)).toEqual(['2025-12-29', '2026-01-08', '2026-01-18']);
   });
 });
 

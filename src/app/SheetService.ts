@@ -1761,6 +1761,8 @@ export class SheetService {
     this.publishWindow();
     this.publishStatus();
     this.publishActiveFormat();
+    // A chart's value axis is labelled in its cells' number format.
+    this.redrawCharts();
     this.fitRowsLater('all');
     this.persist();
     this.pump();
@@ -3225,6 +3227,7 @@ export class SheetService {
       grid.push(line);
     }
     const { byColumn, headers, labels } = layoutOf(grid);
+    const parts = sourceParts(rect, byColumn, headers, labels);
     const options = {
       byColumn,
       headers,
@@ -3241,7 +3244,14 @@ export class SheetService {
       categories: read.categories,
       series: read.series,
       read: read.read,
-      source: at === null ? null : { sheet: at, ...sourceParts(rect, byColumn, headers, labels) },
+      source: at === null ? null : { sheet: at, ...parts },
+      // The first value cell's, which is the one a person formats when
+      // they format the column; a range of mixed formats has no one
+      // answer and the first is as good as any.
+      format:
+        at === null || parts.values === null
+          ? DEFAULT_FORMAT.number
+          : (this.document.pageAt(at)?.formats.formatAt(parts.values.firstRow, parts.values.firstColumn).number ?? DEFAULT_FORMAT.number),
       ...(bands === undefined ? {} : { bands })
     };
   }

@@ -1,4 +1,5 @@
 import type { RangeRef } from './A1';
+import { formatWith, type NumberFormat } from './Format';
 import type { Series } from './Series';
 
 /**
@@ -228,6 +229,71 @@ export function tickLabel(value: number, step: number): string {
   const text = value.toFixed(places);
   // `-0.00` is arithmetic showing through, and nobody means it.
   return text === `-${(0).toFixed(places)}` ? (0).toFixed(places) : text;
+}
+
+/**
+ * The suffixes a large axis is shortened with, largest first, and how
+ * far its ticks must reach before each is used. Thousands from ten
+ * thousand rather than from one: `$2,500` is short already, and
+ * `$2.5K` beside it would be the same width and harder to read.
+ */
+const SCALES: readonly (readonly [number, number, string])[] = [
+  [1e9, 1e9, 'B'],
+  [1e6, 1e6, 'M'],
+  [1e3, 1e4, 'K']
+];
+
+/**
+ * A tick, in the format of the cells it measures.
+ *
+ * A column of revenue formatted as currency was charted on an axis of
+ * 10000, 20000 … 60000: the numbers were right and they were not the
+ * numbers on the sheet. The axis wears the source's format now —
+ * the symbol, the percent sign, the date — at the precision its step
+ * deserves rather than the cells' own places, because `$60,000.00` on
+ * an axis is two zeros of noise per tick.
+ *
+ * **Shortened when the axis is large.** `$60K` rather than
+ * `$60,000`, and the scale is chosen from the whole axis rather than
+ * from each value, so one axis never mixes `$500K` with `$1.5M` — or
+ * `0` with `0K`, which is why zero is left bare.
+ */
+export function axisLabel(value: number, ticks: Ticks, format: NumberFormat): string {
+  if (!Number.isFinite(value)) {
+    return '';
+  }
+  const step = ticks.step;
+  switch (format.kind) {
+    case 'percent':
+      return `${tickLabel(value * 100, step * 100)}%`;
+    case 'date':
+    case 'time':
+    case 'datetime':
+    case 'scientific':
+      return formatWith(value, format);
+    case 'general':
+    case 'text':
+    case 'number':
+    case 'currency': {
+      const reach = Math.max(Math.abs(ticks.low), Math.abs(ticks.high));
+      const [scale, , suffix] = SCALES.find(([, from]) => reach >= from) ?? [1, 0, ''];
+      const plain = value === 0 && scale > 1 ? '0' : tickLabel(Math.abs(value) / scale, step / scale);
+      const grouped = format.kind === 'currency' || (format.kind === 'number' && format.thousands) || scale > 1;
+      const digits = (grouped ? groupThousands(plain) : plain) + (value === 0 ? '' : suffix);
+      if (format.kind === 'currency') {
+        // Brackets for a negative, as the cells write it.
+        return value < 0 ? `(${format.symbol}${digits})` : `${format.symbol}${digits}`;
+      }
+      return value < 0 && Number(plain) !== 0 ? `-${digits}` : digits;
+    }
+  }
+}
+
+/** Thousands separators on the whole part of a printed number. */
+function groupThousands(text: string): string {
+  const [whole, fraction] = text.split('.');
+  const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return fraction === undefined ? grouped : `${grouped}.${fraction}`;
 }
 
 export interface Slice {

@@ -722,6 +722,12 @@ export interface SheetChartSeries {
    */
   readonly source: SheetChartSource | null;
   /**
+   * The number format of the first value the chart reads, so the value
+   * axis is labelled as the cells are — `$60K` under a column of
+   * currency, not `60000`.
+   */
+  readonly format: NumberFormatPatch;
+  /**
    * Where each series fell across the last simulation, P10 to P90, point
    * for point, while there is one that reaches its cells; absent
    * otherwise, and absent for a chart thinned to its width, whose points

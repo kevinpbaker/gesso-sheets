@@ -170,6 +170,20 @@ describe('what a chart is sent to draw', () => {
     expect(h.only().series[0].points[0].y).toBe(50);
   });
 
+  /** So its value axis says $60K under a column of currency, and not 60000. */
+  it('sends the number format of the cells it reads, and sends it again when it changes', () => {
+    const h = harness(20);
+    h.service.setSelection(0, 0, 19, 0);
+    h.service.insertChart('line');
+    expect(h.only().format).toEqual({ kind: 'general' });
+
+    h.service.setSelection(0, 0, 19, 0);
+    h.service.format({ number: { kind: 'currency', places: 2, symbol: '$' } });
+    h.drain();
+
+    expect(h.only().format).toEqual({ kind: 'currency', places: 2, symbol: '$' });
+  });
+
   it('has nothing to send once the chart is gone', () => {
     const h = harness(20);
     h.service.insertChart('line');
