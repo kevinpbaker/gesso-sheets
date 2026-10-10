@@ -3613,10 +3613,12 @@ A mark in the corner of a cell with a note.
 - **The filter is still one value in one column.** A list of values to
   tick in the header, and filtering by more than one column, are the
   next step; the funnel in the header marks and does not yet open one.
-- **A filter on a table under a merged title hides the table's header
-  row**, because the region the filter reads starts at the title and
-  so does not look like it has a header. Found in Chrome on the Sales
-  sheet; it was so before this phase.
+- ~~**A filter on a table under a merged title hides the table's header
+  row**~~ — **fixed.** The region started at the title, so the title
+  was taken for the heading and the headings for data; a sort from one
+  cell sorted them in among the orders too. Both now read
+  `tableRegion`, which leaves out the leading lines of a table that
+  have one cell filled at most.
 
 ---
 

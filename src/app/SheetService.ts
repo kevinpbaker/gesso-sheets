@@ -105,7 +105,7 @@ import {
   pasteCopied,
   transposedText,
   type Copied,
-  currentRegion,
+  tableRegion,
   fillRect,
   fillTarget,
   looksLikeHeader,
@@ -1914,7 +1914,7 @@ export class SheetService {
     const at = this.document.selection;
     const selected = rectOf(at);
     const rect = widen
-      ? currentRegion(this.document, at.row, at.column, rowCount, columnCount)
+      ? tableRegion(this.document, at.row, at.column, rowCount, columnCount)
       : { ...selected, lastRow: Math.min(selected.lastRow, rowCount - 1) };
 
     this.document.transact(
@@ -2172,7 +2172,7 @@ export class SheetService {
    * Filtering by the value under the cursor, which is the filter
    * people actually use and the one that needs no dialog: stand on
    * `North` and ask for it, and the sheet is the North rows. The
-   * block is the current region, on the same reasoning as a sort —
+   * block is the table it stands in, on the same reasoning as a sort —
    * where the table stops is a question only this side can answer.
    *
    * It is a *snapshot*, not a rule. Editing a cell afterwards does
@@ -2182,7 +2182,7 @@ export class SheetService {
   filterToSelection(): void {
     const { rowCount, columnCount } = this.geometrySubject.value;
     const at = this.document.selection;
-    const rect = currentRegion(this.document, at.row, at.column, rowCount, columnCount);
+    const rect = tableRegion(this.document, at.row, at.column, rowCount, columnCount);
     const wanted = this.document.display(at.row, at.column);
     const header = looksLikeHeader(this.document, rect) ? rect.firstRow : -1;
 

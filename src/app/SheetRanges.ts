@@ -221,6 +221,51 @@ export function currentRegion(
   }
 }
 
+/**
+ * The table a cell is standing in: its current region, less the title
+ * lines above the table.
+ *
+ * A title sits flush on top of the table it names — `Northwind
+ * Trading — orders` in A1, a line under it in A2, the headings in
+ * row 3 — so the current region takes it in, and a sort or a filter
+ * that guesses at a heading then reads the title as the heading and
+ * the real headings as data. The filter hid them; the sort sorted
+ * them in among the orders.
+ *
+ * A title line is a leading row of a table wider than one column with
+ * one cell filled in it at most, which is what a title, a subtitle, or
+ * a title merged across the table all are and what a row of headings
+ * never is. It stops at the cell asked about, so standing on the title
+ * still finds the title.
+ */
+export function tableRegion(
+  document: SheetDocument,
+  row: number,
+  column: number,
+  rowCount: number,
+  columnCount: number
+): Rect {
+  const rect = currentRegion(document, row, column, rowCount, columnCount);
+  if (rect.lastColumn === rect.firstColumn) {
+    return rect;
+  }
+  let firstRow = rect.firstRow;
+  while (firstRow < row && filledIn(document, firstRow, rect) <= 1) {
+    firstRow++;
+  }
+  return { ...rect, firstRow };
+}
+
+function filledIn(document: SheetDocument, row: number, rect: Rect): number {
+  let filled = 0;
+  for (let column = rect.firstColumn; column <= rect.lastColumn; column++) {
+    if (document.inputAt(row, column) !== '') {
+      filled++;
+    }
+  }
+  return filled;
+}
+
 function grow(document: SheetDocument, rect: Rect, rowCount: number, columnCount: number): Rect {
   const filledRow = (at: number): boolean => {
     if (at < 0 || at >= rowCount) {

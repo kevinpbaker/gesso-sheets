@@ -579,6 +579,30 @@ describe('filtering to what the cursor is on', () => {
   });
 
   /**
+   * The Sales sheet's shape: a title and a line under it sit flush on
+   * the headings, so the region starts at the title. The headings are
+   * still the heading, and stay.
+   */
+  it('keeps the heading of a table with a title on top of it', () => {
+    const { service } = harness(d => {
+      d.setCell(0, 0, 'Northwind Trading — orders');
+      d.setCell(1, 0, '3 orders');
+      d.setCell(2, 0, 'Region');
+      d.setCell(2, 1, 'Units');
+      d.setCell(3, 0, 'North');
+      d.setCell(3, 1, '10');
+      d.setCell(4, 0, 'South');
+      d.setCell(4, 1, '20');
+      d.setCell(5, 0, 'North');
+      d.setCell(5, 1, '30');
+    });
+    service.setSelection(3, 0, 3, 0);
+    service.filterToSelection();
+
+    expect(hidden(service)).toEqual([4]);
+  });
+
+  /**
    * A snapshot and not a rule: an edit that changes a cell does not
    * make rows vanish under somebody's hands.
    */

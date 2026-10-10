@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { GENERAL, PLAIN } from '../sheet/Format';
 import { SheetDocument } from './SheetDocument';
-import { currentRegion, looksLikeHeader } from './SheetRanges';
+import { currentRegion, looksLikeHeader, tableRegion } from './SheetRanges';
 import { sortRect } from './SheetSort';
 
 /**
@@ -211,6 +211,43 @@ describe('the block a cell is standing in', () => {
   it('does not run off the end of the sheet', () => {
     const document = sheetOf([['a'], ['b']]);
     expect(currentRegion(document, 0, 0, 2, 1).lastRow).toBe(1);
+  });
+});
+
+describe('the table under a title', () => {
+  const titled = () =>
+    sheetOf([
+      ['Northwind Trading — orders'],
+      ['3 orders, priced from the Reference sheet'],
+      ['Region', 'Units'],
+      ['North', '120'],
+      ['South', '157']
+    ]);
+
+  it('leaves the title lines out, so the headings come first', () => {
+    expect(tableRegion(titled(), 3, 0, 100, 20)).toEqual(rect(2, 4, 0, 1));
+  });
+
+  it('is the whole region when it is standing on the title', () => {
+    expect(tableRegion(titled(), 0, 0, 100, 20)).toEqual(rect(0, 4, 0, 1));
+  });
+
+  /** One column wide, a lone cell over the rest is a heading and not a title. */
+  it('keeps the first row of a table one column wide', () => {
+    const document = sheetOf([['Units'], ['120'], ['157']]);
+    expect(tableRegion(document, 2, 0, 100, 20)).toEqual(rect(0, 2, 0, 0));
+  });
+
+  it('sorts the orders and leaves the title and the headings where they were', () => {
+    const document = sheetOf([
+      ['Orders'],
+      ['Region', 'Units'],
+      ['South', '157'],
+      ['North', '120']
+    ]);
+    const table = tableRegion(document, 2, 0, 100, 20);
+    sortRect(document, table, { column: 0, ascending: true, hasHeader: looksLikeHeader(document, table) });
+    expect(column(document, 0, 4)).toEqual(['Orders', 'Region', 'North', 'South']);
   });
 });
 
