@@ -451,9 +451,10 @@ describe('the menu under the right button', () => {
  * Eleven commands are 424 pixels of menu. Opened from the middle of a
  * window 600 tall it fits neither below the pointer nor above it, and
  * the engine put it on one side anyway with a piece hanging off the
- * window — in a browser 813 tall, its first command off the top. It
- * goes as low as it can now, with its bottom at the sheet's, which in
- * this window is 70.4 + 476.
+ * window — in a browser 813 tall, its first command off the top.
+ * Since Gesso 0.6.17 the engine slides it back over the pointer until
+ * all of it is on the screen, as a native menu does: its bottom at the
+ * window's, 658.4.
  */
 describe('where the menu under the right button opens', () => {
   /** Raised with the title bar and the toolbar's own row in Phases 38 and 40, so the grid is the height it was. */
@@ -482,7 +483,7 @@ describe('where the menu under the right button opens', () => {
   it('is moved until all of it shows when it fits on neither side', async () => {
     h = await mount(undefined, TALL);
     await rightClickRow('8');
-    expect(near(menu().y)).toBe(near(604.8 - 424));
+    expect(near(menu().y)).toBe(near(TALL.height - 424));
   });
 });
 

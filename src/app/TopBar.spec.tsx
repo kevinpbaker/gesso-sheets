@@ -183,22 +183,31 @@ describe('the top bar from the keyboard', () => {
      * bottom of the Data menu was drawn outside its own background.
      * Every menu is checked, because which one overflows depends on
      * nothing more than how long somebody's label is.
+     *
+     * A menu longer than the window stops at its edge and scrolls,
+     * since Gesso 0.6.17, so it is the rows *between* the panel's top
+     * and bottom that are drawn in it; End scrolls the last one into
+     * that space, which is what says the rest can be reached.
      */
     it('draws every command inside its own panel', async () => {
       for (const menu of MENUS) {
         await press('F10');
         await press(menu.mnemonic);
         const panel = h.ui.getLayout(h.ui.getByRole('menu', { name: menu.label }));
+        expect.soft(panel.y + panel.height, `${menu.label}: panel past the window`).toBeLessThanOrEqual(420);
         for (const item of h.ui.getAllByRole('menuitem')) {
           const box = h.ui.getLayout(item);
           const name = textProperty(item) ?? '';
-          expect.soft(box.y + box.height, `${menu.label}: '${name}' below its panel`).toBeLessThanOrEqual(
-            panel.y + panel.height
-          );
           expect.soft(box.x + box.width, `${menu.label}: '${name}' past its panel`).toBeLessThanOrEqual(
             panel.x + panel.width
           );
         }
+        await press('End');
+        const items = h.ui.getAllByRole('menuitem');
+        const last = h.ui.getVisibleBox(items[items.length - 1]);
+        expect.soft(last.y + last.height, `${menu.label}: its last command out of reach`).toBeLessThanOrEqual(
+          panel.y + panel.height
+        );
         await press('Escape');
         await press('Escape');
       }

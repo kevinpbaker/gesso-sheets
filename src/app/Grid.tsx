@@ -1705,34 +1705,10 @@ export function Grid(
   const openMenu = (kind: 'cell' | 'column' | 'row', at: { x: number; y: number }): void => {
     const items = MENU_FOR[kind].filter(inMenu).map(id => ({ value: id, label: COMMANDS[id].label }));
     menuItems.next(items);
-    menuAt.next(menuPoint(at, items.length));
+    // Asked for where the pointer was: Gesso slides a menu that fits
+    // on neither side of it until all of it is on the screen.
+    menuAt.next(at);
     menuOpen.next(true);
-  };
-  /**
-   * Where to ask for the menu so that all of it is on the screen.
-   *
-   * The engine opens a menu below its point, flips it above when it
-   * does not fit below and there is more room above — and stops there.
-   * A menu that fits on neither side is flipped and placed off the top
-   * of the window, which is where the cell menu went from the middle
-   * of a sheet on a laptop: eleven commands, four hundred and
-   * twenty-four pixels, and four hundred and ten above the pointer.
-   *
-   * So the point is moved before it is asked for. Below when it fits
-   * below, the point as it was when it fits above (the engine's flip
-   * does the rest), and otherwise as low as it can go with its bottom
-   * at the sheet's — where the engine, finding exactly enough room
-   * below, leaves it. The sheet's box rather than the window's because
-   * it is the box this component knows, and it is inside the window.
-   */
-  const menuPoint = (at: { x: number; y: number }, count: number): { x: number; y: number } => {
-    const box = viewport.value;
-    const height = count * MENU_ROW + MENU_FRAME;
-    const bottom = box.y + box.height;
-    if (at.y + height <= bottom || at.y - height >= box.y) {
-      return at;
-    }
-    return { x: at.x, y: Math.max(box.y, bottom - height) };
   };
   /**
    * A right-click: on something outside the selection, that thing is
@@ -4364,16 +4340,6 @@ const SELECT_ALL = 'Select all';
  * family and everywhere.
  */
 const OUTLINE = 2;
-
-/**
- * How tall one command in `Menu` is, and what the menu adds round
- * them: its rows are eight pixels of padding round a twenty-pixel
- * line, two apart, inside four of padding. They are the component's
- * numbers, written down here because the right-click menu has to know
- * its height before it is laid out to be put where all of it shows.
- */
-const MENU_ROW = 38;
-const MENU_FRAME = 6;
 
 /** How wide an error's explanation may grow before it wraps. */
 const EXPLAIN_WIDTH = 320;
