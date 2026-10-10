@@ -74,9 +74,9 @@ no more than 4 ms over a frame while idle.*
 A spreadsheet somebody would keep a budget in, not a demo of a grid.
 
 - **The engine.** A parser, a dependency graph and an incremental
-  recalculator on their own thread. Nearly ninety functions across
-  logic, maths, statistics, text, lookup, dates and conditional
-  aggregates: `SUMIFS`, `XLOOKUP`, `INDEX/MATCH`, `TEXTJOIN`,
+  recalculator on their own thread. Over a hundred and fifty functions
+  across logic, maths, statistics, text, lookup, dates, finance,
+  arrays and conditional aggregates: `SUMIFS`, `XLOOKUP`, `INDEX/MATCH`, `TEXTJOIN`,
   `EOMONTH`, `STDEV`, `PERCENTILE`, `IFERROR`, and the `">10"` criteria
   grammar they share. Dates are serials with a format, as in Excel.
   Errors explain themselves: land on a `#REF!` and a line under the
@@ -98,6 +98,11 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   including colour scales, resolved for the visible window only, so a
   rule over a million cells costs the same scroll as no rule. Data
   validation with a dropdown when the rule is a list.
+- **Charts.** Line, column, bar, stacked, area, pie and scatter, over
+  the sheet and dragged where you want them, with the value axis in
+  the cells' own format. A chart of fifty thousand rows is sent to the
+  render worker at the resolution its width can draw, and says so in
+  its corner.
 - **Workbooks.** Many sheets, with tabs to add, rename, reorder,
   duplicate and colour. `Sheet2!A1` and `'Q3 Budget'!A1:B9` in the
   parser. Named ranges from the name box or `Insert ▸ Name`. A formula
@@ -105,6 +110,22 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   that sheet is out of view.
 - **Persistence.** The workbook is saved in the browser as you type
   and is there when you come back.
+- **Files.** Open and save `.gsheet` through the file system, several
+  documents at once, recent files, a file dropped on the window. CSV
+  in and out. `.xlsx` in and out with its formulas, formats, merges,
+  names, conditional formats, validations and charts; what a file has
+  that this sheet does not is named in a sentence rather than dropped
+  without a word.
+- **Formulas that are functions.** `LET`, and `LAMBDA` kept under a
+  name and called like any other function, with `MAP`, `REDUCE`,
+  `SCAN`, `BYROW` and their kin to hand one to.
+- **Scripts.** A small typed API — read a range, write it, format it,
+  add a sheet — run from *Data ▸ Scripts* on a worker of its own, one
+  undo step a run, behind a written security model
+  ([`SCRIPTS.md`](SCRIPTS.md)). And functions written in JavaScript
+  that a formula calls, `=TAX(B2, 0.2)`, run by an interpreter inside
+  the evaluator with its own time and memory limits, off by default in
+  a file somebody else wrote.
 - **Scenarios.** Name a way the year might go and type its inputs
   differently: *Scenario ▾* beside the tabs shows the whole workbook
   as it would be, with what the scenario typed and what that moved
@@ -146,7 +167,7 @@ px/s fling, with no blank cell in any frame. The band that keeps it
 clean, and why it belongs on the fetch side rather than the mount side,
 is in [`PHASE0.md`](PHASE0.md).
 
-The suite is 1,469 specs, most of them running the engine headless in
+The suite is 2,643 specs, most of them running the engine headless in
 node. A handful are budget specs that count: patches per
 scroll, formulas rewritten per insert, cells published for a
 cross-sheet reference. They assert the number, not an upper bound.
@@ -175,15 +196,20 @@ alone, so the render worker's frames spread to a timer's cadence and
 no input arrives. What does not happen is the part people expect: the
 sheet does not stop computing, and it does not stop drawing.
 
-The longer story, with the exit criterion for each of fourteen phases
+The longer story, with the exit criterion for each of thirty-seven phases
 and what running it in a real browser found that the suite could not,
 is [`ROADMAP.md`](ROADMAP.md).
 
 ## What it is not yet
 
-Charts and import/export of `.xlsx` are the next two phases. Pivot
-tables, macros, collaborative editing, rich text within a single cell,
-and touch-sized targets are not planned for this round.
+Charts and `.xlsx` were the next two phases the last time this was
+written. They are above now, and scripting, scenarios and a Monte
+Carlo simulation with them. What is still not here: pivot tables; collaborative editing; rich text within
+a single cell, where a bold word inside a cell is a different text
+model from formatting per cell; images in a cell or over the sheet;
+flash fill. An `.xlsm`'s VBA macros are not run: a different language
+with a large runtime, and running a stranger's is the security
+problem everybody already knows.
 
 ---
 
