@@ -3,7 +3,7 @@ import { CELL_FONT_SIZE, ROW_HEIGHT } from './dimensions';
 import type { SheetDocument } from './SheetDocument';
 
 /**
- * The sheet in view as a page a browser can print — Phase 37.
+ * The sheet in view as a page a browser can print — Phase 39.
  *
  * A canvas prints as a picture of the screen, cut at the window's edge,
  * which is not what anybody means by printing a spreadsheet. What they

@@ -165,7 +165,7 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
      * A blank workbook, here, with Back to return to this one.
      *
      * In this tab rather than a new one, which is what it did until
-     * Phase 36: a new tab is a second application worker starting from
+     * Phase 38: a new tab is a second application worker starting from
      * nothing, a second or two of blank page, and a popup blocker's to
      * refuse — in a headless browser it simply did not arrive.
      *

@@ -785,7 +785,7 @@ describe('the toolbar', () => {
         break;
       }
     }
-    // The workbook's name at the top is the first, since Phase 36.
+    // The workbook's name at the top is the first, since Phase 38.
     expect(stops).toEqual(['textbox', 'menubar', 'toolbar', 'textbox', 'textbox', 'grid']);
   });
 

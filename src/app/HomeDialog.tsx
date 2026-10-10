@@ -9,7 +9,7 @@ import { matching, whenSaid } from './whereItIs';
 
 /**
  * Every workbook this browser keeps, to open, start, rename, copy and
- * delete — Phase 36's home screen.
+ * delete — Phase 38's home screen.
  *
  * A dialog over the sheet rather than a page of its own: the sheet
  * behind it is the workbook somebody was in, and Escape puts them back

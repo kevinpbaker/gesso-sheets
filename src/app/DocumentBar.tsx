@@ -12,7 +12,7 @@ import { saveSaid } from './whereItIs';
 
 /**
  * The line along the very top: which workbook this is, and whether it
- * is safe — Phase 36.
+ * is safe — Phase 38.
  *
  * Until this the name was a word in the corner of the status bar, and
  * there was no way to say whether an edit had been kept. Every

@@ -43,7 +43,7 @@ export interface DocumentEntry {
   readonly trustedFunctions?: readonly string[];
   /**
    * When its contents last changed, in epoch milliseconds, to within
-   * half a minute; absent for a document from before Phase 36, whose
+   * half a minute; absent for a document from before Phase 38, whose
    * `used` is the best there is. The home screen's *Last edited*.
    */
   readonly edited?: number;

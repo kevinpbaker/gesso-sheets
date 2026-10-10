@@ -44,7 +44,7 @@ serveChannels([sheetChannel(service)]);
 self.addEventListener('beforeunload', () => void service.flush());
 
 /**
- * The print window's end of Print — Phase 37.
+ * The print window's end of Print — Phase 39.
  *
  * The render worker opens `public/print.html` in a popup while the
  * click is fresh, and this worker builds the page; the two meet on a

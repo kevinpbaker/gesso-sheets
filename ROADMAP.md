@@ -37,7 +37,7 @@ and `LAMBDA` first, then scripts that act on the workbook, behind a
 written security model. [Part Six](#part-six--functions-in-script) is
 functions written in JavaScript that a formula calls, run by an
 interpreter inside the evaluator.
-[Part Eight](#part-eight--a-tool-for-every-day) is the workspace
+[Part Ten](#part-ten--a-tool-for-every-day) is the workspace
 around the engine: where a workbook is kept, printing, the toolbar
 people expect, and the small things a working day reaches for.
 `pnpm proof` is the frame budget: it drives the built application in headless
@@ -3239,148 +3239,6 @@ edit; `pnpm proof` unchanged with the pane closed.
 
 ---
 
-# Part eight — a tool for every day
-
-A review of the sheet as somebody's daily tool found the engine strong
-and the workspace around it thin. Nobody could say where their work
-was: the workbook's name was a word in the bottom corner, nothing said
-whether an edit had been kept, and the library of workbooks the
-application had kept since Phase 16 had no screen at all. Nothing could
-be printed. The toolbar had a currency button and no font, no number
-format, no borders. Those are the things a person reaches for in the
-first five minutes of a working day, and an engine that recalculates
-on another thread does not make up for a hand that cannot find them.
-
-Nothing here is new ground in a spreadsheet. That is the point of it.
-
-## The rule Part Eight runs under
-
-**A finished thing over a started one.** Each phase lands as a version
-somebody would use, specced through the render tree and seen in
-Chrome, or it is written down here as not done and why. Part Two's rules
-still hold: patches proportional to the viewport, `src/sheet` imports
-nothing, and the chrome is reachable from the keyboard alone, which its
-specs prove by containing no pointer event.
-
----
-
-### Phase 36 — Where is my work? — **done**
-
-The name at the top, editable in place; a few words beside it that say
-*Saving…*, *Saved*, or that something is wrong, and where; a home
-screen of every workbook; *Keep saving to this file*; and restore
-points.
-
-**Exit:** a rename at the top reaches the library; the save state reads
-*Saved in this browser* after an edit and red when the repository
-refuses one; the home screen lists, searches, opens, starts, renames,
-duplicates and — after asking — deletes; a workbook saved to a file
-with *Keep saving* on writes every saved change there; a version kept
-at the first edit after opening is restored, and what it replaced is
-kept too.
-
-**Met.**
-
-- **Where the work is.** A title bar above the menus holds the name, as
-  a field — Enter renames, Escape puts it back, File ▸ Rename puts the
-  keyboard there — and a line beside it from `saveSaid` in
-  `whereItIs.ts`: *Saved in this browser*, *Saved in this browser and to
-  Q3.gsheet*, *Q3.gsheet is behind*, *Saving to Q3.gsheet…*, or in red
-  *Not saved: this browser refused to store it* and *Open in another
-  tab, so not saved here*. The repository says where its saves have got
-  to through `watch`, which before this only the console was told.
-  The name is one tab stop before the menu bar; the two buttons beside
-  it are File menu items and not stops.
-- **The home screen.** File ▸ All workbooks, or the squares at the top
-  left: every workbook in the library, newest edit first, with when and
-  where each is kept, a search over every word of the names, and
-  Rename, Duplicate and Delete in each row. Delete asks in the row, and
-  a workbook open in another tab is refused, since that tab would save
-  it back. Deleting the open one moves to the next most recent. Below
-  the list are the files the shell remembers, *Open recent*'s list from
-  the same place, and a sentence saying that workbooks live in this
-  browser's storage for the site and that clearing it deletes them.
-  The library gained `remove`, and an entry an `edited` time written
-  when a save lands, at most twice a minute.
-- **Files.** File ▸ Save already wrote a real file: the shell uses the
-  File System Access API's save picker where there is one, remembers
-  the handle, and the next Save writes back to it without asking;
-  elsewhere it downloads. *Keep saving to this file* writes every
-  change the repository has kept to that handle as well, quietly.
-  Turned on with no file it asks where first; in a browser that can only
-  download it says so; a write the browser refuses after a reload —
-  the permission is per session — says to press Ctrl+S.
-- **Versions.** Kept beside the workbook in OPFS, a small list and a
-  file per version, thirty at most: the workbook as it was opened, at
-  its first edit (so reading one costs nothing), then every ten minutes
-  of editing, and at every save to a file. File ▸ Version history lists
-  them by time and why, and Restore keeps what is there now as a
-  version first. `Library.spec.ts` covers the service and
-  `Home.spec.tsx` the screen.
-- **File ▸ New** opened `/d/new` in a new tab, which a popup blocker or
-  a headless browser simply refused. It opens a blank workbook in this
-  tab now, pushed so Back returns.
-
-**Not done:**
-
-- **The undo stack does not survive a restore**: the workbook is
-  rebuilt from the version. Restoring again from *Before a restore*
-  takes it back.
-- **A version is the whole workbook**, so thirty of a large one cost
-  thirty times its size. Nothing thins old versions out yet.
-- **The first workbook is called Untitled** even though it is the
-  Northwind example.
-
----
-
-### Phase 37 — Output
-
-File ▸ Print, and Export as PDF, which is the same page and the
-browser's own *Save as PDF*. File ▸ Import, a picker for a CSV or an
-`.xlsx`, rather than drag and drop alone.
-
-**Exit:** Print opens a page of the sheet in view — its values as
-shown, its bold, fills, alignment and borders, its merges — that the
-browser prints; Import offers a picker and lands a CSV as a sheet and
-an `.xlsx` as a workbook.
-
----
-
-### Phase 38 — The toolbar people expect
-
-A row of its own, in the order every spreadsheet has: undo and redo,
-print, number format, font and size, bold italic underline, colours,
-borders and merge, alignment and wrap, filter, functions. A font family
-and size, a number format dropdown, borders and merge as dropdowns, and
-a tab's colour from the colour palette in the tab's own menu.
-
-**Exit:** each control reaches the document — a font family is kept in
-the file and drawn — and the toolbar is still one tab stop.
-
----
-
-### Phase 39 — Everyday data work
-
-A filter toggle on the toolbar, and a mark in the header of a filtered
-column. AutoSum, with Sum, Average, Count, Max and Min, over the range
-beside the selection. A function reference, Help ▸ Functions and
-Insert ▸ Function, from the signatures the formula editor already has.
-A mark in the corner of a cell with a note.
-
-**Exit:** each, specced through the render tree.
-
----
-
-### Phase 40 — Polish
-
-A blank workbook that opens fast, and the status bar's figures with a
-picker, as Google Sheets has.
-
-**Exit:** File ▸ New lands in Chrome; the status bar's figures are
-chosen from a menu and kept.
-
----
-
 # Part nine — how sure
 
 A forecast is one number, and everybody reading it knows it is not
@@ -3389,12 +3247,12 @@ be, and a spreadsheet has never said. The tools that do — @RISK, Crystal
 Ball — are add-ins with their own windows. Here a guess is a formula,
 and the spread of everything it reaches is drawn in the cells.
 
-(Part eight, *a tool for every day*, came first and took Phases 36 to
-40, so this part's phase is 41.)
+(Part eight was kept for another session's *a tool for every day*,
+which landed after this one, as [Part ten](#part-ten--a-tool-for-every-day).)
 
 ---
 
-### Phase 41 — Guesses, and a simulation of them — **done**
+### Phase 36 — Guesses, and a simulation of them — **done**
 
 `=NORMAL(mean, spread)`, `=UNIFORM(low, high)` and
 `=TRIANGULAR(low, likeliest, high)` state a guess. Outside a simulation
@@ -3507,6 +3365,185 @@ thinned chart says how many points it read.
 **Not done:** no band for a thinned chart, which would need the band
 thinned by the same points as the series; and no error bars on a
 column chart.
+
+---
+
+# Part ten — a tool for every day
+
+A review of the sheet as somebody's daily tool found the engine strong
+and the workspace around it thin. Nobody could say where their work
+was: the workbook's name was a word in the bottom corner, nothing said
+whether an edit had been kept, and the library of workbooks the
+application had kept since Phase 16 had no screen at all. Nothing could
+be printed. The toolbar had a currency button and no font, no number
+format, no borders. Those are the things a person reaches for in the
+first five minutes of a working day, and an engine that recalculates
+on another thread does not make up for a hand that cannot find them.
+
+Nothing here is new ground in a spreadsheet. That is the point of it.
+
+## The rule Part Ten runs under
+
+**A finished thing over a started one.** Each phase lands as a version
+somebody would use, specced through the render tree and seen in
+Chrome, or it is written down here as not done and why. Part Two's rules
+still hold: patches proportional to the viewport, `src/sheet` imports
+nothing, and the chrome is reachable from the keyboard alone, which its
+specs prove by containing no pointer event.
+
+---
+
+### Phase 38 — Where is my work? — **done**
+
+The name at the top, editable in place; a few words beside it that say
+*Saving…*, *Saved*, or that something is wrong, and where; a home
+screen of every workbook; *Keep saving to this file*; and restore
+points.
+
+**Exit:** a rename at the top reaches the library; the save state reads
+*Saved in this browser* after an edit and red when the repository
+refuses one; the home screen lists, searches, opens, starts, renames,
+duplicates and — after asking — deletes; a workbook saved to a file
+with *Keep saving* on writes every saved change there; a version kept
+at the first edit after opening is restored, and what it replaced is
+kept too.
+
+**Met.**
+
+- **Where the work is.** A title bar above the menus holds the name, as
+  a field — Enter renames, Escape puts it back, File ▸ Rename puts the
+  keyboard there — and a line beside it from `saveSaid` in
+  `whereItIs.ts`: *Saved in this browser*, *Saved in this browser and to
+  Q3.gsheet*, *Q3.gsheet is behind*, *Saving to Q3.gsheet…*, or in red
+  *Not saved: this browser refused to store it* and *Open in another
+  tab, so not saved here*. The repository says where its saves have got
+  to through `watch`, which before this only the console was told.
+  The name is one tab stop before the menu bar; the two buttons beside
+  it are File menu items and not stops.
+- **The home screen.** File ▸ All workbooks, or the squares at the top
+  left: every workbook in the library, newest edit first, with when and
+  where each is kept, a search over every word of the names, and
+  Rename, Duplicate and Delete in each row. Delete asks in the row, and
+  a workbook open in another tab is refused, since that tab would save
+  it back. Deleting the open one moves to the next most recent. Below
+  the list are the files the shell remembers, *Open recent*'s list from
+  the same place, and a sentence saying that workbooks live in this
+  browser's storage for the site and that clearing it deletes them.
+  The library gained `remove`, and an entry an `edited` time written
+  when a save lands, at most twice a minute.
+- **Files.** File ▸ Save already wrote a real file: the shell uses the
+  File System Access API's save picker where there is one, remembers
+  the handle, and the next Save writes back to it without asking;
+  elsewhere it downloads. *Keep saving to this file* writes every
+  change the repository has kept to that handle as well, quietly.
+  Turned on with no file it asks where first; in a browser that can only
+  download it says so; a write the browser refuses after a reload —
+  the permission is per session — says to press Ctrl+S.
+- **Versions.** Kept beside the workbook in OPFS, a small list and a
+  file per version, thirty at most: the workbook as it was opened, at
+  its first edit (so reading one costs nothing), then every ten minutes
+  of editing, and at every save to a file. File ▸ Version history lists
+  them by time and why, and Restore keeps what is there now as a
+  version first. `Library.spec.ts` covers the service and
+  `Home.spec.tsx` the screen.
+- **File ▸ New** opened `/d/new` in a new tab, which a popup blocker or
+  a headless browser simply refused. It opens a blank workbook in this
+  tab now, pushed so Back returns.
+
+**Not done:**
+
+- **The undo stack does not survive a restore**: the workbook is
+  rebuilt from the version. Restoring again from *Before a restore*
+  takes it back.
+- **A version is the whole workbook**, so thirty of a large one cost
+  thirty times its size. Nothing thins old versions out yet.
+- **The first workbook is called Untitled** even though it is the
+  Northwind example.
+
+---
+
+### Phase 39 — Output — **done**
+
+File ▸ Print, and Export as PDF, which is the same page and the
+browser's own *Save as PDF*. File ▸ Import, a picker for a CSV or an
+`.xlsx`, rather than drag and drop alone.
+
+**Exit:** Print opens a page of the sheet in view — its values as
+shown, its bold, fills, alignment and borders, its merges — that the
+browser prints; Import offers a picker and lands a CSV as a sheet and
+an `.xlsx` as a workbook.
+
+**Met.**
+
+- **Print.** `src/sheet/Print.ts` turned out to be the formula printer —
+  a formula back as text — so there was nothing to wire up and the page
+  was built. `SheetPrint.ts`, on the application worker, writes the
+  sheet in view as an HTML table from A1 to the last cell anything is
+  typed, spilled or merged into: values as displayed, a conditional
+  format's paint over the cell's own (a colour scale printed without its
+  colours is a column of numbers that lost its point), bold, italic,
+  underline, size, colours, alignment with numbers to the right, wrap,
+  borders, merges as spans, column widths, and hidden and filtered rows
+  and hidden columns left out. Everything from a cell is escaped and a
+  colour that is not a plain colour is dropped.
+- **The window.** File ▸ Print (Ctrl+P) opens `public/print.html` in a
+  popup *before* asking for the page, because a popup asked for after a
+  round trip to another worker is one a browser may stop allowing. The
+  application worker sends the page on a `BroadcastChannel`, keeping
+  the last one for a window that loads late. The page opens the
+  browser's print dialog by itself and keeps a bar, not printed, with
+  Print, Gridlines, Landscape and Close. File ▸ Export as PDF is the
+  same page saying to choose *Save as PDF* — which is what a browser's
+  PDF export is. A blocked popup says to allow pop-ups.
+- **Import.** File ▸ Import CSV or Excel is Open's picker narrowed to
+  those: a CSV lands as a sheet of this workbook, an `.xlsx` as a
+  workbook of its own, as a drop does.
+- `SheetPrint.spec.ts` asserts the markup; `Files.spec.tsx` the popup,
+  the job and the import, through the menu. Checked in Chrome, headless:
+  the Northwind dashboard printed with its banner merged across, its
+  fills and its figures right-aligned.
+
+**Not done:**
+
+- **Charts are not printed.** They are painted on the canvas and the
+  page is a table; a chart would need drawing again as SVG.
+- **One sheet at a time**, the one in view, and no print area, repeated
+  header rows or scaling to a page's width.
+
+---
+
+### Phase 40 — The toolbar people expect
+
+A row of its own, in the order every spreadsheet has: undo and redo,
+print, number format, font and size, bold italic underline, colours,
+borders and merge, alignment and wrap, filter, functions. A font family
+and size, a number format dropdown, borders and merge as dropdowns, and
+a tab's colour from the colour palette in the tab's own menu.
+
+**Exit:** each control reaches the document — a font family is kept in
+the file and drawn — and the toolbar is still one tab stop.
+
+---
+
+### Phase 41 — Everyday data work
+
+A filter toggle on the toolbar, and a mark in the header of a filtered
+column. AutoSum, with Sum, Average, Count, Max and Min, over the range
+beside the selection. A function reference, Help ▸ Functions and
+Insert ▸ Function, from the signatures the formula editor already has.
+A mark in the corner of a cell with a note.
+
+**Exit:** each, specced through the render tree.
+
+---
+
+### Phase 42 — Polish
+
+A blank workbook that opens fast, and the status bar's figures with a
+picker, as Google Sheets has.
+
+**Exit:** File ▸ New lands in Chrome; the status bar's figures are
+chosen from a menu and kept.
 
 ---
 

@@ -248,7 +248,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    */
   newDocument: { id: 'newDocument', label: 'New' },
   /**
-   * Phase 36's four. *All workbooks* is the home screen; *Rename* puts
+   * Phase 38's four. *All workbooks* is the home screen; *Rename* puts
    * the keyboard in the name at the top; *Keep saving to this file* is
    * ticked while it is on; *Version history* lists the restore points.
    */
@@ -259,7 +259,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   openFile: { id: 'openFile', label: 'Open…', accelerator: { key: 'o', ctrl: true } },
   openRecent: { id: 'openRecent', label: 'Open recent…' },
   /**
-   * Phase 37. Import is Open's picker narrowed to what is not a
+   * Phase 39. Import is Open's picker narrowed to what is not a
    * workbook of this application's own: a CSV lands as a sheet here,
    * an `.xlsx` as a workbook of its own. Print and Export as PDF are
    * one page, the second saying how to save it.

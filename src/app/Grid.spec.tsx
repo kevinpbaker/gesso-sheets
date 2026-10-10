@@ -37,7 +37,7 @@ import { SheetService } from './SheetService';
  * Tall enough that the grid is the size it has always been.
  *
  * The chrome around it grows — a row of toolbar icons in Phase 9, a
- * strip of tabs in Phase 13, a title bar in Phase 36 — and every time it does the grid loses
+ * strip of tabs in Phase 13, a title bar in Phase 38 — and every time it does the grid loses
  * rows and the specs that count them start measuring the chrome. The
  * window is raised to match rather than the numbers being re-tuned,
  * because the numbers are the claims.
