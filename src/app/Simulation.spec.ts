@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { type SheetEditor, type SheetSimulation, type SheetUncertainty } from './SheetContract';
+import { type SheetEditor, type SheetSeriesView, type SheetSimulation, type SheetUncertainty } from './SheetContract';
 import { SheetDocument } from './SheetDocument';
 import { SheetService, type Schedule } from './SheetService';
 
@@ -125,5 +125,61 @@ describe('a simulation, through the service', () => {
     expect(latest<SheetSimulation>(service.simulation).on).toBe('Bigger start');
     service.setSelection(2, 1, 2, 1);
     expect(Number(latest<SheetEditor>(service.editor).spread!.p50)).toBeGreaterThan(5_000);
+  });
+});
+
+describe('a chart, while a simulation holds', () => {
+  /** Twelve months of a growth with a spread, in B6:B17, labelled down A. */
+  function charted(kind: 'line' | 'column') {
+    const h = harness();
+    h.service.setViewport(0, 0, 20, 0, 4);
+    for (let month = 1; month <= 12; month++) {
+      h.service.setCell(4 + month, 0, `M${month}`);
+      h.service.setCell(4 + month, 1, `=B2*(1+B1)^${month}`);
+    }
+    h.drain();
+    h.service.setSelection(5, 0, 16, 1);
+    h.service.insertChart(kind);
+    h.drain();
+    return h;
+  }
+  const bandsOf = (service: SheetService) => {
+    const view = latest<SheetSeriesView>(service.chartSeries);
+    return Object.values(view.charts)[0]?.bands;
+  };
+
+  it('has no band before a simulation', () => {
+    const { service } = charted('line');
+    expect(bandsOf(service)).toBeUndefined();
+  });
+
+  it('draws each month between its P10 and P90 once one has run, and loses it when it is cleared', () => {
+    const { service, drain } = charted('line');
+    service.runSimulation(1_000);
+    drain();
+    const series = Object.values(latest<SheetSeriesView>(service.chartSeries).charts)[0].series[0];
+    const band = bandsOf(service)![0]!;
+    // The chart takes the first row as its header, so the series is the
+    // months after it, and the band is point for point the series.
+    expect(series.points.length).toBeGreaterThan(8);
+    expect(band.low).toHaveLength(series.points.length);
+    expect(band.high).toHaveLength(series.points.length);
+    band.low.forEach((point, at) => {
+      expect(point.x).toBe(series.points[at].x);
+      expect(point.y).toBeLessThan(series.points[at].y);
+      expect(band.high[at].y).toBeGreaterThan(series.points[at].y);
+    });
+    // The spread widens with the months, as compounding a guess does.
+    const last = band.low.length - 1;
+    expect(band.high[last].y - band.low[last].y).toBeGreaterThan(band.high[0].y - band.low[0].y);
+    service.stopSimulation();
+    expect(bandsOf(service)).toBeUndefined();
+  });
+
+  it('puts no band on a kind of chart that has no line to put one round', () => {
+    const { service, drain } = charted('column');
+    service.runSimulation(500);
+    drain();
+    expect(bandsOf(service)).toBeUndefined();
   });
 });

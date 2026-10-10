@@ -61,6 +61,7 @@ import {
   type SheetScenarioCell,
   type SheetScenarios,
   type SheetCompare,
+  type SheetChartBand,
   type SheetSimulation,
   type SheetSpread,
   type SheetUncertainty,
@@ -3224,7 +3225,7 @@ export class SheetService {
       grid.push(line);
     }
     const { byColumn, headers, labels } = layoutOf(grid);
-    const read = seriesFrom(grid, {
+    const options = {
       byColumn,
       headers,
       labels,
@@ -3233,13 +3234,65 @@ export class SheetService {
       // and reads one series, so it is cut the same way and never
       // notices.
       limit: chart.place.width
-    });
+    };
+    const read = seriesFrom(grid, options);
+    const bands = at === null ? undefined : this.bandsFor(chart, grid, rect, at, options, read);
     return {
       categories: read.categories,
       series: read.series,
       read: read.read,
-      source: at === null ? null : { sheet: at, ...sourceParts(rect, byColumn, headers, labels) }
+      source: at === null ? null : { sheet: at, ...sourceParts(rect, byColumn, headers, labels) },
+      ...(bands === undefined ? {} : { bands })
     };
+  }
+
+  /**
+   * A chart's P10–P90 band, from the simulation, when there is one that
+   * reaches the chart's cells.
+   *
+   * Read the way the chart itself is: the same grid with each cell the
+   * guesses reach replaced by its tenth percentile, then by its
+   * ninetieth, put through `seriesFrom` with the same options, so the
+   * band's points are the series' points exactly. Not for a chart
+   * thinned to its width, whose points are not one cell each, nor for
+   * one whose kind has no line to put a band round.
+   */
+  private bandsFor(
+    chart: Chart,
+    grid: readonly (readonly CellValue[])[],
+    rect: { firstRow: number; firstColumn: number },
+    sheet: number,
+    options: Parameters<typeof seriesFrom>[1],
+    read: ReturnType<typeof seriesFrom>
+  ): (SheetChartBand | null)[] | undefined {
+    const run = this.simulationRun;
+    const thinned = read.series.some(one => one.points.length < read.read);
+    if (run === null || thinned || !this.simulationHolds() || (chart.kind !== 'line' && chart.kind !== 'area')) {
+      return undefined;
+    }
+    let reached = false;
+    const percentile = (which: 'p10' | 'p90'): CellValue[][] =>
+      grid.map((line, row) =>
+        line.map((value, column) => {
+          const spread = run.simulation.spreadOf(keyOn(sheet, rect.firstRow + row, rect.firstColumn + column));
+          if (spread === null || typeof value !== 'number') {
+            return value;
+          }
+          reached = true;
+          return spread[which];
+        })
+      );
+    const low = seriesFrom(percentile('p10'), options);
+    const high = seriesFrom(percentile('p90'), options);
+    if (!reached) {
+      return undefined;
+    }
+    return read.series.map((one, index) => {
+      const lows = low.series[index]?.points ?? [];
+      const highs = high.series[index]?.points ?? [];
+      const moves = highs.some((point, at) => point.y !== lows[at]?.y || point.y !== one.points[at]?.y);
+      return moves && lows.length === one.points.length && highs.length === one.points.length ? { low: lows, high: highs } : null;
+    });
   }
 
   /**
@@ -4018,6 +4071,7 @@ export class SheetService {
       this.simulationShown = now;
       this.publishUncertainty();
       this.publishEditor();
+      this.redrawCharts();
     }
     if (run.running) {
       this.schedule(() => this.simulateSlice());
@@ -4034,6 +4088,7 @@ export class SheetService {
     this.publishSimulation();
     this.publishUncertainty();
     this.publishEditor();
+    this.redrawCharts();
   }
 
   /** Whether the simulation still describes the version on screen as it stands. */

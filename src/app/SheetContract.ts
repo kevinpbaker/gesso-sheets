@@ -2,7 +2,7 @@ import { channel } from 'gesso-framework';
 import type { ColourScale, ConditionalPaint, ConditionalTest } from '../sheet/Conditional';
 import type { ValidationRule } from '../sheet/Validation';
 import type { ChartKind } from '../sheet/Chart';
-import type { Series } from '../sheet/Series';
+import type { Series, SeriesPoint } from '../sheet/Series';
 
 import { NO_BORDERS, type CellPaint } from '../sheet/Format';
 import { NO_STATS, type SheetStats } from './Statistics';
@@ -721,6 +721,20 @@ export interface SheetChartSeries {
    * and the values. Null for a chart whose sheet is gone.
    */
   readonly source: SheetChartSource | null;
+  /**
+   * Where each series fell across the last simulation, P10 to P90, point
+   * for point, while there is one that reaches its cells; absent
+   * otherwise, and absent for a chart thinned to its width, whose points
+   * are not one cell each. By series, null for one the guesses do not
+   * reach.
+   */
+  readonly bands?: readonly (SheetChartBand | null)[];
+}
+
+/** A series' P10 and P90, at the same points as the series itself. */
+export interface SheetChartBand {
+  readonly low: readonly SeriesPoint[];
+  readonly high: readonly SeriesPoint[];
 }
 
 export interface SheetChartSource {

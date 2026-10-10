@@ -13,7 +13,7 @@ import {
   type ChartKind
 } from '../sheet/Chart';
 import type { Series } from '../sheet/Series';
-import type { SheetChart, SheetChartSeries } from './SheetContract';
+import type { SheetChart, SheetChartBand, SheetChartSeries } from './SheetContract';
 
 /**
  * A chart, drawn.
@@ -71,6 +71,8 @@ export function drawChart(
 
   const series = data?.series ?? [];
   const categories = data?.categories ?? [];
+  const bands = data?.bands ?? [];
+  const banded = bands.some(band => band !== null);
 
   let top = PADDING;
   if (chart.title !== '') {
@@ -103,6 +105,13 @@ export function drawChart(
     bottom -= 12;
   }
 
+  // What the shading is, in the same corner and the same voice.
+  if (banded) {
+    surface.fillColor('textMuted');
+    surface.text('Shaded: P10 to P90', box.width - PADDING, bottom, { fontSize: 9, align: 'right' });
+    bottom -= 12;
+  }
+
   if (series.length === 0) {
     surface.fillColor('textMuted');
     surface.text('Nothing to draw', box.width / 2, (top + bottom) / 2, { fontSize: 11, align: 'center' });
@@ -125,17 +134,19 @@ export function drawChart(
     return;
   }
 
-  const span = valueSpan(series, chart.kind);
+  // The band can reach past the series, and is drawn inside the axes.
+  const span = valueSpan(banded ? [...series, ...bandSeries(bands)] : series, chart.kind);
   const ticks = niceTicks(span.low, span.high, sideways ? 4 : 5);
   drawAxes(surface, box, plot, ticks, categories, series, chart.kind);
 
   switch (chart.kind) {
     case 'line':
     case 'scatter':
+      drawBands(surface, plot, series, bands, ticks);
       drawPoints(surface, plot, series, ticks, chart.kind);
       break;
     case 'area':
-      drawArea(surface, plot, series, ticks);
+      drawArea(surface, plot, series, ticks, bands);
       break;
     case 'stacked':
       drawStacked(surface, plot, series, ticks);
@@ -261,7 +272,13 @@ function drawPoints(surface: PaintSurface, plot: Plot, series: readonly Series[]
   });
 }
 
-function drawArea(surface: PaintSurface, plot: Plot, series: readonly Series[], ticks: ReturnType<typeof niceTicks>): void {
+function drawArea(
+  surface: PaintSurface,
+  plot: Plot,
+  series: readonly Series[],
+  ticks: ReturnType<typeof niceTicks>,
+  bands: readonly (SheetChartBand | null)[]
+): void {
   const count = countOf(series);
   const base = alongValue(Math.max(ticks.low, 0), ticks, plot, false);
   series.forEach((one, index) => {
@@ -284,7 +301,57 @@ function drawArea(surface: PaintSurface, plot: Plot, series: readonly Series[], 
     surface.fill();
     surface.restore();
   });
+  // Over the fill and under the line, so the band reads as a halo round
+  // the forecast rather than as more of the area.
+  drawBands(surface, plot, series, bands, ticks);
   drawPoints(surface, plot, series, ticks, 'line');
+}
+
+/**
+ * Each series' P10–P90 band: the shape between its two percentile
+ * lines, in its own colour, faint, with the two edges drawn as hairlines
+ * so the band has a top and a bottom where it is thin.
+ */
+function drawBands(
+  surface: PaintSurface,
+  plot: Plot,
+  series: readonly Series[],
+  bands: readonly (SheetChartBand | null)[],
+  ticks: ReturnType<typeof niceTicks>
+): void {
+  const count = countOf(series);
+  const middle = bandOf(count, plot, false) / 2;
+  const x = (at: number): number => alongCategory(at, count, plot, false) + middle;
+  const y = (value: number): number => alongValue(value, ticks, plot, false);
+  bands.forEach((band, index) => {
+    if (band === null || band.high.length === 0) {
+      return;
+    }
+    surface.save();
+    surface.fillColor(colourOf(index));
+    surface.alpha(0.22);
+    surface.beginPath();
+    band.high.forEach((point, at) => (at === 0 ? surface.moveTo(x(point.x), y(point.y)) : surface.lineTo(x(point.x), y(point.y))));
+    for (let at = band.low.length - 1; at >= 0; at--) {
+      surface.lineTo(x(band.low[at].x), y(band.low[at].y));
+    }
+    surface.closePath();
+    surface.fill();
+    surface.alpha(0.55);
+    surface.strokeColor(colourOf(index));
+    surface.lineWidth(0.75);
+    for (const edge of [band.high, band.low]) {
+      surface.beginPath();
+      edge.forEach((point, at) => (at === 0 ? surface.moveTo(x(point.x), y(point.y)) : surface.lineTo(x(point.x), y(point.y))));
+      surface.stroke();
+    }
+    surface.restore();
+  });
+}
+
+/** The bands' edges as series, so the value axis can be made to hold them. */
+function bandSeries(bands: readonly (SheetChartBand | null)[]): Series[] {
+  return bands.flatMap(band => (band === null ? [] : [{ name: '', points: band.low }, { name: '', points: band.high }]));
 }
 
 function drawBars(

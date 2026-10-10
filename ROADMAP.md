@@ -3325,13 +3325,42 @@ percentiles; any edit putting the result away; `pnpm proof` unchanged.
 
 - **A pool of workers**, for models where a trial reaches thousands of
   cells; see above.
-- **The chart draws the forecast, not its band.** A P10–P90 band behind
-  the area is the obvious next picture.
+- **The chart draws the forecast, not its band** — until Phase 37,
+  below.
 - **The pane beside the grid draws no histograms.**
 - **Excel has no `NORMAL`.** An `.xlsx` carries the likeliest values,
   and the formulas as written, which Excel shows as `#NAME?` if it
   recalculates.
 - **Guesses are independent.** No correlation between two of them.
+
+---
+
+### Phase 37 — The band on the chart — **done**
+
+A line or area chart over cells a simulation reaches draws each series
+between its P10 and its P90: a fan round the forecast, widening as the
+guesses compound, labelled *Shaded: P10 to P90* in the corner where a
+thinned chart says how many points it read.
+
+- **The service** reads the band the way the chart reads itself: the
+  chart's grid with each reached cell replaced by its tenth percentile,
+  then its ninetieth, through `seriesFrom` with the same options, so
+  the band's points are the series' points. It goes out on the series
+  key as `bands`, by series, republished with the histograms and taken
+  away when the simulation is. Not for a chart thinned to its width,
+  whose points are not one cell each, and not for columns, bars, stacks
+  or pies.
+- **The painter** draws the band over an area's fill and under its line,
+  in the series' colour at 22%, with its two edges as hairlines, and
+  stretches the value axis to hold it.
+- `Simulation.spec.ts`: no band before a run; after one, every point
+  below the series at P10 and above it at P90, the spread widening with
+  the months; none once cleared; none on a column chart.
+- **Checked in Chrome:** the forecast's area chart with its fan.
+
+**Not done:** no band for a thinned chart, which would need the band
+thinned by the same points as the series; and no error bars on a
+column chart.
 
 ---
 
