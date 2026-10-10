@@ -3543,7 +3543,13 @@ the file and drawn — and the toolbar is still one tab stop.
   A cell keeps the name — `Georgia` — which is what an `.xlsx` calls it,
   and the grid draws a stack (`fonts.ts`) that falls back to the metric
   twin a Linux desktop ships and then to the generic family. Read from
-  and written to `.xlsx` by name, and printed.
+  and written to `.xlsx` by name, and printed. The font is one more
+  binding per cell, which is the cost `fanOut` was written about, so
+  the grid binds it only once the workbook has a font in its palette —
+  built again when the first one arrives, as it is for a zoom — and a
+  workbook with none, which is every one `pnpm proof` scrolls, pays
+  nothing. `pnpm proof` was not run for this part: the machine it was
+  written on was shared, and its budgets are timings.
 - **The tab colour** is the colour palette the text and fill use, in a
   menu of the tab's own — a right-click, or Shift+F10 or the context-menu
   key on the strip — beside Rename, Duplicate, Delete and the moves.

@@ -42,9 +42,13 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
   const sheet = ctx.channel(Sheet);
   const edit = editing(ctx, sheet);
   const files = fileActions(ctx, sheet);
-  const view = combineLatest([sheet.view.geometry, sheet.view.status]).pipe(
-    map(([geometry, status]) => ({ zoom: geometry.zoom, widen: status.showingFormulas ? 2 : 1 })),
-    distinctUntilChanged((a, b) => a.zoom === b.zoom && a.widen === b.widen)
+  const view = combineLatest([sheet.view.geometry, sheet.view.status, sheet.view.palette]).pipe(
+    map(([geometry, status, palette]) => ({
+      zoom: geometry.zoom,
+      widen: status.showingFormulas ? 2 : 1,
+      fonts: palette.entries.some(paint => paint.fontFamily !== undefined && paint.fontFamily !== '')
+    })),
+    distinctUntilChanged((a, b) => a.zoom === b.zoom && a.widen === b.widen && a.fonts === b.fonts)
   );
 
   /**
@@ -89,8 +93,8 @@ export function SheetApp(inputs: Inputs<SheetAppProps>, ctx: ComponentContext) {
        * frame now and then.
        */}
       {view.pipe(
-        map(({ zoom, widen }, built) => [
-          <Grid key={`zoom-${zoom}-${widen}`} editing={edit} zoom={zoom} widen={widen} rebuilt={built > 0} />
+        map(({ zoom, widen, fonts }, built) => [
+          <Grid key={`zoom-${zoom}-${widen}-${fonts}`} editing={edit} zoom={zoom} widen={widen} fonts={fonts} rebuilt={built > 0} />
         ])
       )}
       <SheetTabs editing={edit} />

@@ -156,7 +156,7 @@ const GRID_LINE = 'border';
  * `SheetApp` is where it is shared.
  */
 export function Grid(
-  _inputs: Inputs<{ editing: SheetEditing; zoom?: number; widen?: number; rebuilt?: boolean }>,
+  _inputs: Inputs<{ editing: SheetEditing; zoom?: number; widen?: number; fonts?: boolean; rebuilt?: boolean }>,
   ctx: ComponentContext
 ) {
   /**
@@ -180,6 +180,16 @@ export function Grid(
    * tall as a line of text whatever that text is.
    */
   const widen = _inputs.widen.value ?? 1;
+  /**
+   * Whether any cell in the workbook has a font of its own — Phase 40.
+   *
+   * Read once, like the zoom, and the grid is built again the moment
+   * the first font arrives. A cell's font is one more binding per cell,
+   * and a binding per cell is the cost `fanOut` was written about — so
+   * a workbook with no fonts, which is every workbook the proof
+   * scrolls, does not pay it.
+   */
+  const fonts = _inputs.fonts.value === true;
   const scaled = (size: number): number => Math.round(size * zoom);
   /** A size on screen, in the document's pixels. */
   const unscaled = (size: number): number => Math.round(size / zoom);
@@ -1238,7 +1248,7 @@ export function Grid(
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
-      fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))),
+      ...(fonts ? { fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))) } : {}),
       /**
        * Wrapped text breaks at the cell's width, and the row is made
        * tall enough to hold it — see the `rowFit` effect below.
@@ -4020,7 +4030,7 @@ export function Grid(
       paddingLeft: covered ? 0 : CELL_PADDING,
       paddingRight: covered ? 0 : CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
-      fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))),
+      ...(fonts ? { fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))) } : {}),
       textWrap: paint.pipe(map(how => (how.wrap ? 'word' : 'none'))),
       fontWeight: paint.pipe(map(how => (how.bold ? 'bold' : 'normal'))),
       fontStyle: paint.pipe(map(how => (how.italic ? 'italic' : 'normal'))),
