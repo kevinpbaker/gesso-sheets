@@ -9,6 +9,7 @@ import { SheetDocument } from './SheetDocument';
 import { InMemorySheetLibrary } from './SheetLibrary';
 import { sheetChannel } from './sheetChannel';
 import { SheetService } from './SheetService';
+import type { PrintJob } from './SheetPrint';
 
 /**
  * The File menu, end to end, with the shell played by the spec.
@@ -25,6 +26,9 @@ interface Harness {
   service: SheetService;
   /** Every file request the shell has been sent, answered by `answer`. */
   asked: { id: number; request: ShellFileRequest }[];
+  /** Every popup asked for, and the print jobs the service handed out. */
+  popups: { id: number; url: string; name: string }[];
+  printed: PrintJob[];
 }
 
 let h: Harness | undefined;
@@ -45,18 +49,28 @@ async function settle(): Promise<void> {
 
 async function mount(): Promise<Harness> {
   const library = new InMemorySheetLibrary();
-  const service = new SheetService(new SheetDocument(), { library, rowCount: 200, columnCount: 20 });
+  const printed: PrintJob[] = [];
+  const service = new SheetService(new SheetDocument(), {
+    library,
+    rowCount: 200,
+    columnCount: 20,
+    printer: job => printed.push(job)
+  });
   service.openDocument('');
   await service.settled;
   const served = serveForTest([sheetChannel(service)]);
   const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 1400, height: 600 });
   const asked: Harness['asked'] = [];
+  const popups: Harness['popups'] = [];
   ui.runtime.onShellRequest((request: ShellRequest) => {
     if (request.type === 'file') {
       asked.push({ id: request.id, request: request.request });
     }
+    if (request.type === 'popup') {
+      popups.push({ id: request.id, url: request.url, name: request.name });
+    }
   });
-  h = { ui, served, service, asked };
+  h = { ui, served, service, asked, popups, printed };
   await settle();
   return h;
 }
@@ -169,5 +183,37 @@ describe('the File menu', () => {
     await settle();
     expect(h!.asked[1].request).toEqual({ op: 'reopen', handle: 3 });
     expect(h!.ui.queryByRole('form', { name: 'Recent files' })).toBeNull();
+  });
+
+  it('imports a CSV or an Excel workbook from a picker', async () => {
+    await mount();
+    await menu('f', 'Import CSV or Excel…');
+    const { request } = h!.asked[0];
+    expect(request.op === 'open' && request.accept?.flatMap(type => type.extensions)).toEqual(['.csv', '.tsv', '.txt', '.xlsx']);
+    await answer({
+      ...EMPTY,
+      outcome: 'ok',
+      files: [{ name: 'regions.csv', mediaType: 'text/csv', lastModified: 0, bytes: new TextEncoder().encode('North,10\n').buffer, handle: null }]
+    });
+    expect(h!.service.snapshot().sheets.map(sheet => sheet.name)).toEqual(['Sheet1', 'regions']);
+  });
+
+  it('prints into a window of its own, opened while the click is fresh', async () => {
+    await mount();
+    h!.service.setCell(0, 0, 'Region');
+    await menu('f', 'Print…');
+    expect(h!.popups).toEqual([{ id: expect.any(Number), url: '/print.html', name: 'gessosheet-print' }]);
+    expect(h!.printed).toHaveLength(1);
+    expect(h!.printed[0]).toMatchObject({ title: 'Untitled', pdf: false });
+    expect(h!.printed[0].html).toContain('<td>Region</td>');
+  });
+
+  it('says what to do when the print window is blocked', async () => {
+    await mount();
+    await menu('f', 'Export as PDF…');
+    expect(h!.printed[0].pdf).toBe(true);
+    h!.ui.runtime.settlePopup(h!.popups[0].id, false);
+    await settle();
+    expect(h!.ui.getByText('The print window was blocked. Allow pop-ups for this site, then print again.')).toBeDefined();
   });
 });

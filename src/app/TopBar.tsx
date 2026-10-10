@@ -619,6 +619,13 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'openFile':
         files.open();
         break;
+      case 'importFile':
+        files.importFile();
+        break;
+      case 'print':
+      case 'exportPdf':
+        files.print(id === 'exportPdf');
+        break;
       case 'openRecent':
         askFor('recent', () => (recenting.value = true));
         return;

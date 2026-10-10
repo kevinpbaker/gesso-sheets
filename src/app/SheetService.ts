@@ -85,6 +85,7 @@ import { snapshotOf, applySnapshot, parseSnapshot, SCRIPT_SOURCE_LIMIT, type She
 import { FIRST_DOCUMENT, type DocumentEntry, type SheetLibrary } from './SheetLibrary';
 import type { SaveState, SheetRepository } from './SheetRepository';
 import { VERSION_EVERY_MS, type VersionReason } from './SheetVersions';
+import { printTable, type PrintJob } from './SheetPrint';
 import { scenarioPaint } from './scenarioPaint';
 import { DEFAULT_LIMITS, ScriptHost, type Script, type ScriptRunResult, type ScriptWorker } from '../script/ScriptHost';
 import { CellFunctions, loadInterpreter } from '../script/CellFunctions';
@@ -152,6 +153,12 @@ export interface SheetServiceOptions {
    * scripts can be written and saved and not run.
    */
   readonly scripts?: () => ScriptWorker;
+  /**
+   * Where a page to print goes: the print window, through a
+   * `BroadcastChannel`, in the browser. Without one, Print says it
+   * cannot.
+   */
+  readonly printer?: (job: PrintJob) => void;
   /** How long a run may take, in milliseconds; five seconds unless a spec says otherwise. */
   readonly scriptMilliseconds?: number;
 }
@@ -277,6 +284,8 @@ export class SheetService {
   private readonly clipboardSubject = new BehaviorSubject<SheetClipboard>({ text: '', serial: 0, marked: null });
   private readonly transferSubject = new BehaviorSubject<SheetTransfer>({ download: null, report: '' });
   private readonly documentSubject = new BehaviorSubject<SheetDocumentView>(NO_DOCUMENT);
+  private readonly printer: ((job: PrintJob) => void) | undefined;
+  private printJobs = 0;
   private readonly librarySubject = new BehaviorSubject<SheetLibraryView>({ entries: [], serial: 0 });
   private readonly versionsSubject = new BehaviorSubject<SheetVersionsView>({ entries: [], serial: 0 });
   /** Where the open document's repository says its saves have got to. */
@@ -474,6 +483,7 @@ export class SheetService {
   constructor(document: SheetDocument, options: SheetServiceOptions = {}) {
     this.document = document;
     this.library = options.library;
+    this.printer = options.printer;
     this.seed = options.seed;
     this.now = options.now ?? Date.now;
     this.budget = options.budget ?? 2_000;
@@ -3189,7 +3199,8 @@ export class SheetService {
         return;
       }
       const now = this.now();
-      const copy: DocumentEntry = { id: library.newId(), name: `Copy of ${found.name}`, used: now, edited: now, file: null };
+      // Never opened, so not the one a tab at `/` opens as the last used.
+      const copy: DocumentEntry = { id: library.newId(), name: `Copy of ${found.name}`, used: 0, edited: now, file: null };
       await library.put(copy);
       const repository = library.repository(copy.id);
       repository.save(snapshot);
@@ -3274,6 +3285,34 @@ export class SheetService {
       }
       this.report(on ? `Every change now goes to ${this.entry.file?.name ?? 'its file'} as well.` : 'Changes are kept in this browser; Save writes the file.');
     });
+  }
+
+  /** Builds the sheet in view as a page and sends it to the print window. */
+  print(pdf: boolean): void {
+    if (this.printer === undefined) {
+      this.report('This browser has no way to print from here.');
+      return;
+    }
+    const workbook = this.entry?.name ?? 'Untitled';
+    const sheets = this.document.sheets();
+    const title = sheets.length > 1 ? `${workbook} — ${this.document.sheet.name}` : workbook;
+    // As drawn: a conditional format's colour is part of what the
+    // sheet says, and a colour scale printed without its colours is a
+    // column of numbers that lost its meaning on the way to paper.
+    const paintOf = (row: number, column: number): CellPaint => {
+      const own = this.document.formats.formatAt(row, column).paint;
+      const over = this.painter.isEmpty ? null : this.painter.paintFor(row, column, this.document.shown.value(row, column));
+      return over === null
+        ? own
+        : {
+            ...own,
+            ...(over.fill === undefined ? {} : { fill: over.fill }),
+            ...(over.color === undefined ? {} : { color: over.color }),
+            ...(over.bold === undefined ? {} : { bold: over.bold }),
+            ...(over.italic === undefined ? {} : { italic: over.italic })
+          };
+    };
+    this.printer({ id: ++this.printJobs, title, html: printTable(this.document, paintOf), pdf });
   }
 
   /** A quiet save to the file was refused: said once, with what to do. */

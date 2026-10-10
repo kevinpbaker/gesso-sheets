@@ -59,6 +59,10 @@ export interface FileActions {
   open(): void;
   /** A workbook from the library, by id, in this tab. */
   openDocument(id: string): void;
+  /** A picker for a CSV or an Excel workbook: File ▸ Import. */
+  importFile(): void;
+  /** The print window, with the sheet in view on it: File ▸ Print, or as a PDF. */
+  print(pdf: boolean): void;
   /** One of the files the shell remembers. */
   reopen(handle: number): void;
   /** Save, or Save As. */
@@ -178,6 +182,21 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
     },
     open: () => void shell.openFiles({ accept: [WORKBOOK, XLSX, CSV], multiple: true }).then(deliver),
     reopen: handle => void shell.reopenFile(handle).then(deliver),
+    importFile: () => void shell.openFiles({ accept: [CSV, XLSX], multiple: true }).then(deliver),
+    /**
+     * The window first, while the click that asked is fresh — a popup
+     * asked for after a round trip to the other worker is one the
+     * browser may already have stopped allowing — and the page second,
+     * which the application worker builds and sends it.
+     */
+    print: pdf => {
+      void shell.openPopup({ url: '/print.html', name: 'gessosheet-print', width: 1000, height: 760 }).then(opened => {
+        if (!opened) {
+          sheet.send.reportFile('The print window was blocked. Allow pop-ups for this site, then print again.');
+        }
+      });
+      sheet.send.print(pdf);
+    },
     save: asNew => sheet.send.saveDocument(asNew),
     exportCsv: () => sheet.send.exportCsv(),
     exportXlsx: () => sheet.send.exportXlsx(),

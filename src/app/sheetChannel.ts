@@ -68,6 +68,7 @@ export function sheetChannel(service: SheetService): ServedChannel {
       saveDocument: asNew => service.saveDocument(asNew),
       fileSaved: (kind, name, handle, via, quiet) => service.fileSaved(kind, name, handle, via, quiet),
       fileNotSaved: why => service.fileNotSaved(why),
+      print: pdf => service.print(pdf),
       renameDocument: (id, name) => service.renameDocument(id, name),
       listDocuments: () => service.listDocuments(),
       duplicateDocument: id => service.duplicateDocument(id),

@@ -976,6 +976,12 @@ export interface SheetCommands {
   saveDocument(asNew: boolean): void;
   /** Where the shell put a download, so a workbook can remember its file. */
   fileSaved(kind: 'workbook' | 'csv' | 'xlsx', name: string, handle: number | null, via: 'file' | 'download', quiet?: boolean): void;
+  /**
+   * Builds the sheet in view as a printable page and hands it to the
+   * print window; see `SheetPrint.ts`. `pdf` says it was asked for as a
+   * PDF, which the page explains how to make.
+   */
+  print(pdf: boolean): void;
   /** A quiet save to the document's file did not happen, and why. */
   fileNotSaved(why: string): void;
   /** Calls a document something else; the open one, or any in the library. */

@@ -26,6 +26,9 @@ export type CommandId =
   | 'autosave'
   | 'versionHistory'
   | 'openFile'
+  | 'importFile'
+  | 'print'
+  | 'exportPdf'
   | 'openRecent'
   | 'saveDocument'
   | 'saveDocumentAs'
@@ -255,6 +258,15 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
   versionHistory: { id: 'versionHistory', label: 'Version history…' },
   openFile: { id: 'openFile', label: 'Open…', accelerator: { key: 'o', ctrl: true } },
   openRecent: { id: 'openRecent', label: 'Open recent…' },
+  /**
+   * Phase 37. Import is Open's picker narrowed to what is not a
+   * workbook of this application's own: a CSV lands as a sheet here,
+   * an `.xlsx` as a workbook of its own. Print and Export as PDF are
+   * one page, the second saying how to save it.
+   */
+  importFile: { id: 'importFile', label: 'Import CSV or Excel…' },
+  print: { id: 'print', label: 'Print…', accelerator: { key: 'p', ctrl: true } },
+  exportPdf: { id: 'exportPdf', label: 'Export as PDF…' },
   saveDocument: { id: 'saveDocument', label: 'Save', accelerator: { key: 's', ctrl: true } },
   saveDocumentAs: { id: 'saveDocumentAs', label: 'Save as…', accelerator: { key: 's', ctrl: true, shift: true } },
   downloadCsv: { id: 'downloadCsv', label: 'Download sheet as CSV' },
@@ -648,6 +660,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'home',
       'openFile',
       'openRecent',
+      'importFile',
       SEPARATOR,
       'renameDocument',
       'saveDocument',
@@ -655,6 +668,8 @@ export const MENUS: readonly MenuDefinition[] = [
       'autosave',
       'versionHistory',
       SEPARATOR,
+      'print',
+      'exportPdf',
       'downloadXlsx',
       'downloadCsv'
     ]

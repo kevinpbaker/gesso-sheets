@@ -5,6 +5,7 @@ import { OpfsSheetLibrary } from './OpfsSheetLibrary';
 import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
+import type { PrintJob } from './SheetPrint';
 import { SheetService } from './SheetService';
 import { spawnScriptWorker } from '../script/browserWorker';
 
@@ -32,7 +33,7 @@ import { spawnScriptWorker } from '../script/browserWorker';
  * neither worker.
  */
 const library = new OpfsSheetLibrary(COLUMN_COUNT);
-const service = new SheetService(new SheetDocument(), { library, seed, scripts: spawnScriptWorker });
+const service = new SheetService(new SheetDocument(), { library, seed, scripts: spawnScriptWorker, printer: printWindow() });
 
 serveChannels([sheetChannel(service)]);
 
@@ -41,3 +42,30 @@ serveChannels([sheetChannel(service)]);
 // belongs on a worker: on the shell it would be a stall at exactly
 // the moment a person is leaving.
 self.addEventListener('beforeunload', () => void service.flush());
+
+/**
+ * The print window's end of Print — Phase 37.
+ *
+ * The render worker opens `public/print.html` in a popup while the
+ * click is fresh, and this worker builds the page; the two meet on a
+ * `BroadcastChannel`, which reaches a window of the same origin from a
+ * worker with no window of its own. The page may not have loaded when
+ * the job is ready, so the last job is kept and sent again when the
+ * page says it is listening.
+ */
+function printWindow(): ((job: PrintJob) => void) | undefined {
+  if (typeof BroadcastChannel === 'undefined') {
+    return undefined;
+  }
+  const channel = new BroadcastChannel('gessosheet-print');
+  let last: PrintJob | null = null;
+  channel.onmessage = event => {
+    if ((event.data as { ready?: boolean } | null)?.ready === true && last !== null) {
+      channel.postMessage(last);
+    }
+  };
+  return job => {
+    last = job;
+    channel.postMessage(job);
+  };
+}
