@@ -7,6 +7,7 @@ import {
   Button,
   Column,
   contextMenu,
+  darkTheme,
   decorated,
   EditableText,
   editorFor,
@@ -40,7 +41,8 @@ import {
   type Inputs
 } from 'gesso-framework';
 
-import { inkFor } from './cellInk';
+import { appearanceTheme } from './appearance';
+import { inkFor, shownPalette } from './cellInk';
 import { CHART_CATEGORIES, CHART_NAMES, CHART_VALUES } from './chartColours';
 import { guessOf, type Place } from './alignment';
 import { columnName, relativeRef } from '../sheet/A1';
@@ -294,6 +296,21 @@ export function Grid(
   let latestFormats: { cells: Readonly<Record<string, Readonly<Record<string, number>>>> } | null = null;
   let latestPalette: readonly CellPaint[] = [PLAIN_PAINT];
   let latestUncertainty: SheetUncertainty = { cells: {} };
+  /**
+   * The palette as the theme draws it: in the dark theme a light fill
+   * is shown as its dark equivalent (see `shownFill`), and the ink is
+   * chosen against what is shown, because `inkFor` is asked of the
+   * paint the cell holds. Done to the palette — a handful of entries —
+   * and not per cell, so a theme change is one repaint and no cell
+   * binds to the theme.
+   */
+  const shownPalette$ = combineLatest([
+    sheet.view.palette,
+    appearanceTheme(ctx).pipe(
+      map(theme => theme === darkTheme),
+      distinctUntilChanged()
+    )
+  ]).pipe(map(([palette, dark]) => ({ entries: shownPalette(palette.entries, dark) })));
 
   const paintOf = (row: number, column: number): CellPaint => {
     const id = latestFormats?.cells[row]?.[column] ?? 0;
@@ -470,7 +487,7 @@ export function Grid(
     }
   };
 
-  ctx.effect(sheet.view.palette, current => {
+  ctx.effect(shownPalette$, current => {
     latestPalette = current.entries;
     repaint();
   });
@@ -3913,7 +3930,7 @@ export function Grid(
     (current, _key, at) => cellIn(current, at.row, at.column),
     { initial: null }
   );
-  const comparePaintSource = combineLatest([sheet.view.compareFormats, sheet.view.palette]);
+  const comparePaintSource = combineLatest([sheet.view.compareFormats, shownPalette$]);
   const comparePaints = fanOut<
     [{ cells: Readonly<Record<string, Readonly<Record<string, number>>>> }, { entries: readonly CellPaint[] }],
     CellPaint,

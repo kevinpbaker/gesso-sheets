@@ -121,8 +121,11 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   example's forecast growth and loan rate are guesses.
 - **Light and dark.** The sheet follows the system's appearance, and
   View ▸ Theme overrides it, remembered in this browser. A cell's
-  fill is its author's colour in both, so text with no colour of its
-  own is written in whichever ink reads on that fill.
+  fill is its author's colour in light; in dark, a pale fill — a grey
+  header, a colour scale's pastels — is drawn as the dark shade of
+  the same hue, and a strong one like a navy title bar as it is.
+  Text with no colour of its own is written in whichever ink reads on
+  the fill as drawn.
 - **Keyboard.** Every menu, every dialog and the whole toolbar are
   reachable without a pointer, and the specs for the chrome contain no
   pointer event to prove it. Ctrl+/ opens the sheet of shortcuts.

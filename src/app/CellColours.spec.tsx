@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
-import type { UiKeyModifiers } from 'gesso-core';
+import { darkColors, type UiKeyModifiers } from 'gesso-core';
 
 import { colourName } from './colourNames';
 import { SheetApp } from './SheetApp';
@@ -140,6 +140,29 @@ describe('colouring a cell', () => {
     // And it is one of the recent colours from then on.
     await click('button', 'Text colour');
     expect(h.ui.getByRole('option', { name: 'recent #2e7d6b' })).toBeDefined();
+  });
+
+  /**
+   * A pale header on a dark sheet is drawn dark, in white ink, and is
+   * still pale in the document — the toolbar's bar says so.
+   */
+  it('draws a light fill darkened in the dark theme, and keeps the colour it was given', async () => {
+    await mount();
+    h.service.format({ fill: '#f1f3f4' });
+    await settle();
+    const cell = () => h.ui.getByRole('cell', { name: 'Hello' });
+    expect(cell().properties.get('backgroundColor')).toBe('#f1f3f4');
+
+    h.ui.fireEvent.focus(h.ui.getByRole('grid'));
+    await settle();
+    await press('F10');
+    await press('v');
+    await click('menuitemcheckbox', 'Theme: dark');
+
+    expect(cell().properties.get('backgroundColor')).toBe('#272c2e');
+    expect(cell().properties.get('color')).toBe(darkColors.text);
+    expect(h.document.formatAt(1, 1).paint.fill).toBe('#f1f3f4');
+    expect(bar('Fill colour')).toBe('#f1f3f4');
   });
 
   it('names the colour a cell has, in the tooltip', () => {
