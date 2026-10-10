@@ -18,7 +18,7 @@ import { Names } from './Names';
 import { evaluateArray, type WorkbookContext } from './Evaluator';
 import type { ScriptFunctions } from './ScriptFunctions';
 import { isArray, type ArrayValue } from './FunctionKit';
-import { nowSerial, VOLATILE, type FunctionContext } from './Functions';
+import { nowSerial, UNCERTAIN, VOLATILE, type FunctionContext } from './Functions';
 import { FormulaSyntaxError, parseFormula } from './Parser';
 import { Sheet } from './Sheet';
 import { Words } from './Words';
@@ -183,6 +183,31 @@ export class Workbook {
    * `RAND`, `RANDBETWEEN`, `NOW`, `TODAY`.
    */
   private readonly volatile = new Set<number>();
+
+  /**
+   * Formulas that state a guess — `NORMAL`, `UNIFORM`, `TRIANGULAR` —
+   * which a simulation draws afresh in every trial; see `resample`.
+   */
+  private readonly uncertain = new Set<number>();
+
+  /**
+   * Where a simulation's draws come from, or null outside one, when an
+   * uncertain formula is its likeliest value. Set on a fork, never on
+   * the workbook somebody is editing.
+   */
+  sampler: (() => number) | null = null;
+
+  /**
+   * How many edits the workbook has taken: a count that any change to
+   * what a cell holds, or to the shape of a sheet, moves on. A result
+   * worked out from the workbook — a simulation — is only true of it
+   * while this is what it was.
+   */
+  private edited = 0;
+
+  get edits(): number {
+    return this.edited;
+  }
 
   /**
    * Formulas whose precedents cannot be read off their own text.
@@ -510,12 +535,14 @@ export class Workbook {
    * time.
    */
   private rewireAll(): void {
+    this.edited++;
     this.graph.clear();
     // The edges from spilled cells went with the graph; every formula is
     // dirtied below and spills again.
     this.spills.clear();
     this.spilled.clear();
     this.volatile.clear();
+    this.uncertain.clear();
     this.dynamic.clear();
     this.subtotals.clear();
     this.redone.clear();
@@ -640,6 +667,7 @@ export class Workbook {
    * Returns how many formulas were rewritten, for the budget spec.
    */
   shift(sheet: number, shift: Shift): number {
+    this.edited++;
     const entry = this.sheets[sheet];
     if (entry === undefined) {
       return 0;
@@ -690,6 +718,7 @@ export class Workbook {
     this.spills.clear();
     this.spilled.clear();
     this.volatile.clear();
+    this.uncertain.clear();
     this.dynamic.clear();
     this.subtotals.clear();
     this.redone.clear();
@@ -885,11 +914,14 @@ export class Workbook {
     }
     let isVolatile = false;
     let isDynamic = false;
+    let isUncertain = false;
     for (const name of names) {
       isVolatile ||= VOLATILE.has(name);
+      isUncertain ||= UNCERTAIN.has(name);
       isDynamic ||= name === 'INDIRECT' || name === 'OFFSET';
     }
     setMembership(this.volatile, key, isVolatile);
+    setMembership(this.uncertain, key, isUncertain);
     setMembership(this.dynamic, key, isDynamic);
     setMembership(this.subtotals, key, names.has('SUBTOTAL'));
   }
@@ -914,6 +946,7 @@ export class Workbook {
 
   private forget(key: number): void {
     this.volatile.delete(key);
+    this.uncertain.delete(key);
     this.dynamic.delete(key);
     this.subtotals.delete(key);
     this.redone.delete(key);
@@ -927,6 +960,7 @@ export class Workbook {
    * needed recomputing because of *this* edit still needs it.
    */
   private markDependentsDirty(key: number): void {
+    this.edited++;
     for (const dependent of this.graph.closureOf([key])) {
       this.dirty.add(dependent);
     }
@@ -993,6 +1027,9 @@ export class Workbook {
     for (const key of this.volatile) {
       copy.volatile.add(key);
     }
+    for (const key of this.uncertain) {
+      copy.uncertain.add(key);
+    }
     for (const key of this.dynamic) {
       copy.dynamic.add(key);
     }
@@ -1016,6 +1053,42 @@ export class Workbook {
       copy.setCell(override.sheet, override.row, override.column, override.input, override.asText ?? false);
     }
     return copy;
+  }
+
+  // ---------------------------------------------------------------------
+  // Uncertainty
+  // ---------------------------------------------------------------------
+
+  /** The cells holding a guess, by key; see `UNCERTAIN`. */
+  get uncertainCells(): ReadonlySet<number> {
+    return this.uncertain;
+  }
+
+  /**
+   * Every cell a guess reaches: the guesses themselves and everything
+   * downstream of them, which are the cells a simulation has something
+   * to say about. Everything else comes out the same in every trial.
+   */
+  uncertainReach(): Set<number> {
+    const reach = this.graph.closureOf(this.uncertain);
+    for (const key of this.uncertain) {
+      reach.add(key);
+    }
+    return reach;
+  }
+
+  /**
+   * Marks every guess and everything it reaches to be worked out again:
+   * one trial, once `recalculate` has run. With a `sampler` set, each
+   * guess is drawn afresh; without one each comes back to its likeliest
+   * value.
+   */
+  resample(): void {
+    for (const key of this.uncertainReach()) {
+      this.dirty.add(key);
+    }
+    this.moment = null;
+    this.plan = null;
   }
 
   // ---------------------------------------------------------------------
@@ -1406,7 +1479,11 @@ export class Workbook {
   get functions(): FunctionContext {
     if (this.moment === null) {
       const at = this.clock();
-      this.moment = { now: () => at, random: () => this.dice() };
+      this.moment = {
+        now: () => at,
+        random: () => this.dice(),
+        sample: () => (this.sampler === null ? null : this.sampler())
+      };
     }
     return this.moment;
   }

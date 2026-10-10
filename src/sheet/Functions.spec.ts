@@ -187,7 +187,11 @@ table('maths', [
   ['PI()', '3.14159265358979'],
   // Fixed dice, so the answer can be asserted rather than described.
   ['RAND()', '0.5'],
-  ['RANDBETWEEN(1, 10)', '6']
+  ['RANDBETWEEN(1, 10)', '6'],
+  // A guess outside a simulation is its likeliest value; see Simulation.spec.ts.
+  ['NORMAL(10, 2)', '10'],
+  ['UNIFORM(2, 8)', '5'],
+  ['TRIANGULAR(1, 2, 6)', '2']
 ]);
 
 table('statistics', [

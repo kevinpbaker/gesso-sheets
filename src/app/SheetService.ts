@@ -61,12 +61,17 @@ import {
   type SheetScenarioCell,
   type SheetScenarios,
   type SheetCompare,
+  type SheetSimulation,
+  type SheetSpread,
+  type SheetUncertainty,
   type SheetScriptRun,
   type SheetValidationRule,
   type SheetWindow
 } from './SheetContract';
 import { DEFAULT_FORMAT, formatWith, withPlaces, type CellFormat } from '../sheet/Format';
 import type { Workbook } from '../sheet/Workbook';
+import { Simulation } from '../sheet/Simulation';
+import { keyOn } from '../sheet/A1';
 import type { Shift } from '../sheet/Shift';
 import { at, findMatches, replaceIn, stepBack, stepTo, type FindOptions } from './SheetFind';
 import { sortRect } from './SheetSort';
@@ -178,6 +183,11 @@ function baseName(fileName: string): string {
  * that nobody is free to serve. A `setViewport` arriving mid-recalc is
  * answered on the spot, ahead of the arithmetic.
  */
+/** How long one slice of a simulation may hold the thread. */
+const SIMULATION_SLICE_MS = 8;
+/** How often the histograms fill in while a simulation runs. */
+const SIMULATION_SHOWN_MS = 150;
+
 export class SheetService {
   readonly window: Observable<SheetWindow>;
   readonly sheets: Observable<SheetTabs>;
@@ -208,6 +218,8 @@ export class SheetService {
   readonly compare: Observable<SheetCompare>;
   readonly compareWindow: Observable<SheetWindow>;
   readonly compareFormats: Observable<SheetFormatWindow>;
+  readonly simulation: Observable<SheetSimulation>;
+  readonly uncertainty: Observable<SheetUncertainty>;
 
   /** Slices run, for a spec that wants to know the pump ran at all. */
   readonly stats = { slices: 0, publishes: 0, forks: 0 };
@@ -318,6 +330,26 @@ export class SheetService {
    */
   private compareFork: Workbook | null = null;
   private compareStale = false;
+  private readonly simulationSubject = new BehaviorSubject<SheetSimulation>({
+    state: 'idle',
+    done: 0,
+    trials: 0,
+    cells: 0,
+    guesses: 0,
+    on: 'Base'
+  });
+  private readonly uncertaintySubject = new BehaviorSubject<SheetUncertainty>({ cells: {} });
+  /**
+   * The simulation, running or run, and what it was run on: the workbook
+   * object and its edit count. A result is true of that workbook as it
+   * was, so any edit, or showing another version, puts it away.
+   */
+  private simulationRun: { simulation: Simulation; source: Workbook; edits: number; running: boolean } | null = null;
+  /** A run asked for while the recalculation was still going, started when it settles. */
+  private simulationAsked: number | null = null;
+  private simulations = 0;
+  /** When the histograms last went out during a run; see `simulateSlice`. */
+  private simulationShown = 0;
   private readonly scriptHost: ScriptHost | null;
   private scriptRuns = 0;
   private functionStressCells = 0;
@@ -433,7 +465,8 @@ export class SheetService {
       explain: null,
       spilledFrom: null,
       note: document.noteAt(document.selection.row, document.selection.column),
-      scenario: null
+      scenario: null,
+      spread: null
     });
     this.sheetsSubject = new BehaviorSubject<SheetTabs>(this.tabsNow());
     this.namesSubject = new BehaviorSubject<SheetNames>({ entries: [], formulas: [], refused: '' });
@@ -472,6 +505,8 @@ export class SheetService {
     this.compare = this.compareSubject;
     this.compareWindow = this.compareWindowSubject;
     this.compareFormats = this.compareFormatsSubject;
+    this.simulation = this.simulationSubject;
+    this.uncertainty = this.uncertaintySubject;
     const { rowCount, columnCount: columns } = this.geometrySubject.value;
     this.scriptHost =
       options.scripts === undefined
@@ -2907,6 +2942,10 @@ export class SheetService {
     this.compareFork = null;
     this.compareStale = false;
     this.compareSubject.next({ open: false, against: null, name: 'Base' });
+    this.simulationRun = null;
+    this.simulationAsked = null;
+    this.publishSimulation();
+    this.publishUncertainty();
     this.publishScenarios();
     this.publishCompareCells();
     this.defineFunctions();
@@ -3358,6 +3397,13 @@ export class SheetService {
   }
 
   private pump(): void {
+    // A simulation describes the workbook as it was when it ran.
+    if (!this.simulationHolds()) {
+      this.clearSimulation();
+    } else if (this.simulationRun === null) {
+      // How many guesses there are decides whether there is anything to run.
+      this.publishSimulation();
+    }
     // Every edit comes through here, and any edit can move a scenario —
     // or change how many cells one types, which the picker counts.
     if (this.document.scenario !== null) {
@@ -3410,6 +3456,11 @@ export class SheetService {
       // Which cells differ from the base is known now, so the editor's
       // line about the active cell can say so.
       this.publishEditor();
+      if (this.simulationAsked !== null) {
+        const trials = this.simulationAsked;
+        this.simulationAsked = null;
+        this.startSimulation(trials);
+      }
       this.reportFunctionStress();
       // A formula's new value is new text, and wrapped text may now
       // take more lines or fewer.
@@ -3564,6 +3615,9 @@ export class SheetService {
     this.windowSubject.next({ firstRow, lastRow, firstColumn, lastColumn, cells });
     this.publishNotes();
     this.publishCompareCells();
+    if (this.simulationRun !== null) {
+      this.publishUncertainty();
+    }
   }
 
   /**
@@ -3876,8 +3930,164 @@ export class SheetService {
       explain: this.explainAt(row, column),
       spilledFrom: anchor === null ? null : { ...anchor, input: this.document.sheet.input(anchor.row, anchor.column) },
       note: this.document.noteAt(row, column),
-      scenario: this.scenarioCell(row, column)
+      scenario: this.scenarioCell(row, column),
+      spread: this.spreadCell(row, column)
     });
+  }
+
+  /** The active cell's spread across the simulation, in the cell's own number format. */
+  private spreadCell(row: number, column: number): SheetSpread | null {
+    const run = this.simulationRun;
+    if (run === null) {
+      return null;
+    }
+    const spread = run.simulation.spreadOf(keyOn(this.document.active, row, column));
+    if (spread === null) {
+      return null;
+    }
+    const format = this.document.formats.formatAt(row, column).number;
+    return {
+      p10: formatWith(spread.p10, format),
+      p50: formatWith(spread.p50, format),
+      p90: formatWith(spread.p90, format),
+      mean: formatWith(spread.mean, format),
+      count: spread.count
+    };
+  }
+
+  // ---------------------------------------------------------------------
+  // Simulation
+  // ---------------------------------------------------------------------
+
+  /**
+   * Runs a Monte Carlo simulation of the version on screen.
+   *
+   * On this thread, in slices of a few milliseconds between which
+   * everything else gets its turn, as the recalculation does. A trial is
+   * a recalculation of what the guesses reach, which in the example is
+   * a few hundred cells and a fraction of a millisecond; see
+   * `Simulation`. Asked for while the workbook is still recalculating,
+   * it starts once that has settled, because a simulation is of an
+   * answer.
+   */
+  runSimulation(trials: number): void {
+    this.clearSimulation();
+    const wanted = Math.max(1, Math.min(Math.floor(trials), 100_000));
+    if (this.pumping) {
+      this.simulationAsked = wanted;
+      return;
+    }
+    this.startSimulation(wanted);
+  }
+
+  stopSimulation(): void {
+    const run = this.simulationRun;
+    if (run !== null && run.running) {
+      run.running = false;
+      this.publishSimulation();
+      return;
+    }
+    this.clearSimulation();
+  }
+
+  private startSimulation(trials: number): void {
+    const source = this.document.fork ?? this.document.book;
+    const simulation = new Simulation(source, trials, 1 + this.simulations++ * 7_919);
+    this.simulationRun = { simulation, source, edits: source.edits, running: true };
+    this.publishSimulation();
+    this.schedule(() => this.simulateSlice());
+  }
+
+  private simulateSlice(): void {
+    const run = this.simulationRun;
+    if (run === null || !run.running) {
+      return;
+    }
+    run.simulation.step(SIMULATION_SLICE_MS);
+    if (run.simulation.finished) {
+      run.running = false;
+    }
+    this.publishSimulation();
+    // The histograms and the percentiles a few times a second, and at
+    // the end, not after every slice. Each is a sort of every reached
+    // cell's samples here and a redraw of every one of those cells on
+    // the other side, and after every eight-millisecond slice that was
+    // most of the run's time and most of every frame's.
+    const now = Date.now();
+    if (!run.running || now - this.simulationShown >= SIMULATION_SHOWN_MS) {
+      this.simulationShown = now;
+      this.publishUncertainty();
+      this.publishEditor();
+    }
+    if (run.running) {
+      this.schedule(() => this.simulateSlice());
+    }
+  }
+
+  /** Puts a simulation away: an edit has made it a description of a workbook that is gone. */
+  private clearSimulation(): void {
+    this.simulationAsked = null;
+    if (this.simulationRun === null) {
+      return;
+    }
+    this.simulationRun = null;
+    this.publishSimulation();
+    this.publishUncertainty();
+    this.publishEditor();
+  }
+
+  /** Whether the simulation still describes the version on screen as it stands. */
+  private simulationHolds(): boolean {
+    const run = this.simulationRun;
+    if (run === null) {
+      return true;
+    }
+    const source = this.document.fork ?? this.document.book;
+    return run.source === source && source.edits === run.edits;
+  }
+
+  private publishSimulation(): void {
+    const run = this.simulationRun;
+    const guesses = this.document.book.uncertainCells.size;
+    const on = this.document.scenarios.find(entry => entry.id === this.document.scenario)?.name ?? 'Base';
+    this.simulationSubject.next(
+      run === null
+        ? { state: 'idle', done: 0, trials: 0, cells: 0, guesses, on }
+        : {
+            state: run.running ? 'running' : 'done',
+            done: run.simulation.done,
+            trials: run.simulation.trials,
+            cells: run.simulation.cells,
+            guesses,
+            on
+          }
+    );
+  }
+
+  /**
+   * The visible cells' histograms, as bar heights from 0 to 8 scaled to
+   * each cell's tallest bar. Only for cells the guesses reach, so a
+   * sheet the simulation does not touch publishes an empty object.
+   */
+  private publishUncertainty(): void {
+    const run = this.simulationRun;
+    const { firstRow, lastRow, firstColumn, lastColumn } = this.viewport;
+    const cells: Record<string, Record<string, number[]>> = {};
+    if (run !== null && lastRow >= firstRow && lastColumn >= firstColumn) {
+      const active = this.document.active;
+      const columns = this.columnsInView();
+      for (const row of this.rowsInView()) {
+        for (const column of columns) {
+          const spread = run.simulation.spreadOf(keyOn(active, row, column));
+          if (spread === null || spread.max === spread.min) {
+            continue;
+          }
+          const tallest = Math.max(...spread.bins);
+          (cells[row] ??= {})[column] = spread.bins.map(bin => Math.round((bin / tallest) * 8));
+        }
+      }
+    }
+    this.uncertaintySubject.next({ cells });
   }
 
   /** The active cell against the base, while a scenario is shown and the cell is one it typed or changed. */

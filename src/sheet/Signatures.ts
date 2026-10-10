@@ -100,6 +100,11 @@ export const SIGNATURES: Readonly<Record<string, Signature>> = {
   RANDBETWEEN: { args: ['low', 'high'], summary: 'A whole number in the range. Recalculates on every edit.' },
   SUMPRODUCT: { args: ['range', '…'], summary: 'The ranges multiplied cell by cell, then added.', repeats: true },
 
+  // Guesses: their likeliest value, until Data ▸ Run a simulation draws them
+  NORMAL: { args: ['mean', 'spread'], summary: 'About the mean, give or take the spread. The mean until simulated.' },
+  UNIFORM: { args: ['low', 'high'], summary: 'Anywhere from low to high, each as likely. The middle until simulated.' },
+  TRIANGULAR: { args: ['low', 'likeliest', 'high'], summary: 'Low to high, most often near the likeliest. The likeliest until simulated.' },
+
   // Statistics
   MEDIAN: { args: ['number', '…'], summary: 'The middle value.', repeats: true },
   MODE: { args: ['number', '…'], summary: 'The value that appears most often.', repeats: true },

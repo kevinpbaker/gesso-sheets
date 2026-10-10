@@ -437,6 +437,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         return !status.value.iterating;
       case 'stopIterating':
         return status.value.iterating;
+      case 'runSimulation':
+        return sheet.view.simulation.value.guesses > 0;
       case 'fillDown':
       case 'fillRight':
         // Always offered. Working out whether a fill would change
@@ -716,6 +718,9 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
       case 'scripts':
         scriptsOpen.value = true;
         return;
+      case 'runSimulation':
+        sheet.send.runSimulation(5_000);
+        break;
       case 'manageNames':
         namesOpen.value = true;
         return;

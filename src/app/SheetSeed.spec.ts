@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { SheetDocument } from './SheetDocument';
 import { SHEET, seed } from './SheetSeed';
+import { keyOn } from '../sheet/A1';
+import { Simulation } from '../sheet/Simulation';
 
 /** Where the seed puts things, as its own layout has them. */
 const TOTAL_ROW = 27;
@@ -195,6 +197,29 @@ describe('the seeded workbook', () => {
     // Its inputs reach the orders on Sales, through the prices.
     expect(optimistic.value(SHEET.sales, TOTAL_ROW, 6)).toBeGreaterThan(document.book.value(SHEET.sales, TOTAL_ROW, 6) as number);
     expect(nextYear(document.book)).toBe(base);
+  });
+
+  it('guesses the growth and the loan rate, and shows each at its likeliest', () => {
+    const document = seeded();
+    expect(document.book.uncertainCells.size).toBe(2);
+    expect(document.book.value(SHEET.forecast, 3, 1)).toBe(0.02);
+    expect(document.book.value(SHEET.forecast, 4, 5)).toBe(0.061);
+  });
+
+  it('simulates next year into a spread around the forecast, and leaves the forecast as it was', () => {
+    const document = seeded();
+    const nextYear = document.book.value(SHEET.forecast, 24, 1) as number;
+    const simulation = new Simulation(document.book, 2_000, 1);
+    while (!simulation.finished) {
+      simulation.step(1_000);
+    }
+    const spread = simulation.spreadOf(keyOn(SHEET.forecast, 24, 1))!;
+    expect(spread.count).toBe(2_000);
+    expect(spread.p10).toBeLessThan(nextYear);
+    expect(spread.p90).toBeGreaterThan(nextYear);
+    // The loan's payment moves with its rate and nothing else.
+    expect(simulation.spreadOf(keyOn(SHEET.forecast, 6, 5))!.p90).toBeGreaterThan(simulation.spreadOf(keyOn(SHEET.forecast, 6, 5))!.p10);
+    expect(document.book.value(SHEET.forecast, 24, 1)).toBe(nextYear);
   });
 
   it('calls a named LAMBDA down a column, and hands it to MAP', () => {

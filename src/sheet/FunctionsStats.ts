@@ -301,5 +301,8 @@ const NO_CONTEXT = {
   },
   random(): number {
     throw new Error('this function cannot ask for a random number');
+  },
+  sample(): number | null {
+    return null;
   }
 };

@@ -293,7 +293,9 @@ function forecast(document: SheetDocument): void {
   document.setCell(2, 0, 'Scenario');
   document.setCell(2, 1, 'Base');
   document.setCell(3, 0, 'Growth a month');
-  document.setCell(3, 1, '=XLOOKUP(B3,A7:A9,B7:B9)');
+  // A guess: the scenario's growth, give or take a point. It is the
+  // scenario's growth until Data ▸ Run a simulation draws it.
+  document.setCell(3, 1, '=NORMAL(XLOOKUP(B3,A7:A9,B7:B9),0.01)');
   document.setCell(4, 0, 'From an average of');
   document.setCell(4, 1, `=AVERAGE(Dashboard!B${MONTHS_HEAD + 2}:B${MONTHS_HEAD + 13})`);
 
@@ -321,7 +323,8 @@ function forecast(document: SheetDocument): void {
   document.setCell(3, 4, 'Borrowed');
   document.setCell(3, 5, '250000');
   document.setCell(4, 4, 'A year');
-  document.setCell(4, 5, '0.061');
+  // And the rate, likeliest 6.1%, somewhere between 5% and 8%.
+  document.setCell(4, 5, '=TRIANGULAR(0.05,0.061,0.08)');
   document.setCell(5, 4, 'Years');
   document.setCell(5, 5, '5');
   document.setCell(6, 4, 'A month, repaid');
@@ -352,6 +355,12 @@ function forecast(document: SheetDocument): void {
     'Pick Low, Base or High from the list: the growth, the twelve months and the chart all follow. The scenarios beside the tabs pick it too, with the prices and the loan rate.'
   );
   document.setNote(FORECAST_HEAD + 1, 1, 'One formula: ROUND(average × (1 + growth) ^ SEQUENCE(12)), spilling twelve months.');
+  document.setNote(
+    3,
+    1,
+    'A guess: NORMAL(growth, 0.01). Data ▸ Run a simulation draws it 5,000 times, and every month, next year and the loan show their spread.'
+  );
+  document.setNote(4, 5, 'A guess: TRIANGULAR(5%, 6.1%, 8%), the low, the likeliest and the high.');
 
   chart(document, 'area', 'Next year, month by month', range(`A${FORECAST_HEAD + 1}:B${FORECAST_HEAD + 13}`), chartsLeft(document, 6), 70, 440, 280);
 }

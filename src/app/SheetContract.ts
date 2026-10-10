@@ -203,6 +203,22 @@ export interface SheetEditor {
    * when the active cell does.
    */
   readonly scenario: SheetScenarioCell | null;
+  /**
+   * Where this cell's value fell across the last simulation, written
+   * out, while there is one and the guesses reach this cell; null
+   * otherwise. With the editor for the reason `explain` is.
+   */
+  readonly spread: SheetSpread | null;
+}
+
+/** A cell's spread across a simulation, as the strip beside the tabs reads it out. */
+export interface SheetSpread {
+  readonly p10: string;
+  readonly p50: string;
+  readonly p90: string;
+  readonly mean: string;
+  /** The trials in which the cell was a number. */
+  readonly count: number;
 }
 
 /** The active cell in a scenario, against the base. */
@@ -793,6 +809,31 @@ export interface SheetCompare {
   readonly name: string;
 }
 
+/**
+ * A Monte Carlo run: every guess in the workbook drawn afresh, trial
+ * after trial, and what the cells they reach came to; see `Simulation`.
+ */
+export interface SheetSimulation {
+  readonly state: 'idle' | 'running' | 'done';
+  readonly done: number;
+  readonly trials: number;
+  /** How many cells the guesses reach, on every sheet. */
+  readonly cells: number;
+  /** How many cells in the workbook are guesses: what the Run entry is offered for. */
+  readonly guesses: number;
+  /** The version it ran on: Base or a scenario's name. */
+  readonly on: string;
+}
+
+/**
+ * Each visible cell's histogram, while a simulation has one: sixteen
+ * bars, each a height from 0 to 8, drawn under the cell's figure. Whole
+ * numbers so a run that adds a few trials changes few of them.
+ */
+export interface SheetUncertainty {
+  readonly cells: Readonly<Record<string, Readonly<Record<string, readonly number[]>>>>;
+}
+
 export interface SheetScenario {
   readonly id: string;
   readonly name: string;
@@ -1232,6 +1273,10 @@ export interface SheetCommands {
    * null, a scenario by id — or closes it with `open` false.
    */
   setCompare(open: boolean, against: string | null): void;
+  /** Runs a simulation of the version on screen, drawing every guess `trials` times. */
+  runSimulation(trials: number): void;
+  /** Ends a run, keeping the trials it has; or clears a finished one. */
+  stopSimulation(): void;
 }
 
 /** What a border command draws. */
@@ -1376,6 +1421,9 @@ export interface SheetView {
   readonly compareWindow: SheetWindow;
   /** And their palette indices, into the grid's palette. */
   readonly compareFormats: SheetFormatWindow;
+  readonly simulation: SheetSimulation;
+  /** The visible cells' histograms; see `SheetUncertainty`. */
+  readonly uncertainty: SheetUncertainty;
 }
 
 /** What the controls read to draw themselves. */
@@ -1449,7 +1497,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
     merges: []
   },
   selection: { row: 0, column: 0, anchorRow: 0, anchorColumn: 0 },
-  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '', scenario: null },
+  editor: { row: 0, column: 0, input: '', explain: null, spilledFrom: null, note: '', scenario: null, spread: null },
   names: { entries: [], formulas: [], refused: '' },
   status: { pending: 0, evaluated: 0, canUndo: false, canRedo: false, undoLabel: '', redoLabel: '', iterating: false, showingFormulas: false },
   clipboard: { text: '', serial: 0, marked: null },
@@ -1473,5 +1521,7 @@ export const Sheet = channel<SheetView, SheetCommands>('sheet', {
   scenarios: { entries: [], shown: null },
   compare: { open: false, against: null, name: 'Base' },
   compareWindow: EMPTY_WINDOW,
-  compareFormats: EMPTY_FORMATS
+  compareFormats: EMPTY_FORMATS,
+  simulation: { state: 'idle', done: 0, trials: 0, cells: 0, guesses: 0, on: 'Base' },
+  uncertainty: { cells: {} }
 });

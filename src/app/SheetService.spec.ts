@@ -61,7 +61,7 @@ describe('SheetService', () => {
 
     service.setSelection(1, 1, 1, 1);
 
-    expect(latest<SheetEditor>(service.editor)).toEqual({ row: 1, column: 1, input: '=2*3', explain: null, spilledFrom: null, note: '', scenario: null });
+    expect(latest<SheetEditor>(service.editor)).toEqual({ row: 1, column: 1, input: '=2*3', explain: null, spilledFrom: null, note: '', scenario: null, spread: null });
     expect(latest<SheetWindow>(service.window)).toBe(windowBefore);
   });
 

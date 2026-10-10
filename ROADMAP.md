@@ -3236,6 +3236,105 @@ edit; `pnpm proof` unchanged with the pane closed.
 
 ---
 
+# Part nine — how sure
+
+A forecast is one number, and everybody reading it knows it is not
+going to be that number. What they want to know is how far off it could
+be, and a spreadsheet has never said. The tools that do — @RISK, Crystal
+Ball — are add-ins with their own windows. Here a guess is a formula,
+and the spread of everything it reaches is drawn in the cells.
+
+(Part eight is another session's: *a tool for every day*.)
+
+---
+
+### Phase 36 — Guesses, and a simulation of them — **done**
+
+`=NORMAL(mean, spread)`, `=UNIFORM(low, high)` and
+`=TRIANGULAR(low, likeliest, high)` state a guess. Outside a simulation
+each is its likeliest value — the mean, the middle, the likeliest — so a
+workbook with guesses in it shows, saves and recalculates exactly as it
+would with those numbers typed. *Data ▸ Run a simulation* recalculates
+the version on screen five thousand times with every guess drawn afresh,
+and each cell the guesses reach gets a histogram under its figure; the
+strip beside the tabs reads out the selected cell's P10, P50, P90 and
+mean.
+
+**On the application worker, not a pool of workers,** and that reverses
+what Part Seven expected, on a measurement. A trial is a recalculation of
+what the guesses reach and nothing else, on one fork: in the example 31
+cells and 0.074 ms, so five thousand trials are about 370 ms in Node and
+half a second in Chrome, scrolling or not. A pool would rebuild the workbook in
+each worker — 7.4 ms apiece, and script functions lost — and send the
+samples back, to save a fraction of a second. It runs in slices of
+8 ms between which everything else gets its turn, like the
+recalculation. A pool is worth building for a model whose trial reaches
+thousands of cells; `Simulation` is what each worker would run.
+
+**Exit:** the example's growth and loan rate as guesses, showing the
+figures they showed before; a simulation drawing a histogram in every
+cell they reach, on every sheet, and none elsewhere; the selected cell's
+percentiles; any edit putting the result away; `pnpm proof` unchanged.
+
+**Met.**
+
+- **The engine.** The function context gains `sample()`, null except in
+  a simulation. The workbook keeps its uncertain cells as it keeps its
+  volatile ones; they are not volatile, so an edit elsewhere leaves them
+  alone. `resample()` dirties them and their reach. `Simulation` forks
+  the workbook, gives the fork a seeded generator (Mulberry32), and runs
+  trials in time-boxed steps, keeping one `Float64Array` per reached
+  cell; a spread is a sort. It holds at most four million numbers and
+  cuts its trials to fit. `Simulation.spec.ts`: the likeliest values,
+  `#NUM!` for a spread that cannot be, a bell's tenth percentile 1.28
+  deviations out, the base untouched, the same seed the same answer,
+  steps bounded by time.
+- **The service.** A run is of the version on screen, a scenario's fork
+  or the base, started once the recalculation has settled. Histograms go
+  out on `uncertainty` for the visible cells, sixteen bars as heights
+  from 0 to 8, beside the window; the active cell's percentiles on the
+  editor, in its own number format. The workbook counts its edits, and a
+  run is put away the moment the workbook it ran on is not the one on
+  screen or has been edited. `Simulation.spec.ts` in `src/app`: progress
+  and completion, histograms only where the guesses reach, percentiles,
+  the first edit clearing it, Stop keeping the trials so far, waiting
+  for a recalculation, a scenario.
+- **The grid** draws the bars in the cell's own decoration pass, under
+  the figure, in the scenarios' violet at a quarter strength.
+- **What it costs, and what it cost first.** Timed in Chrome on a
+  production build, from the click to the strip saying it was done:
+  2.6 s with a median frame of 7.5 ms, against 2.3 ms for a frame at
+  rest. The trials were not the cost. After every 8 ms slice the service
+  sorted every reached cell's samples for its spread and sent a fresh
+  histogram for every visible cell, and the grid redrew all of them, a
+  hundred times a second. The histograms and percentiles now go out
+  every 150 ms and at the end, and the progress count every slice: the
+  same run took 0.51 s with a median frame of 2.4 ms, and 0.43 s and
+  2.7 ms with the sheet scrolling under it. `pnpm proof` passes
+  unchanged.
+- **The example.** Forecast's growth is
+  `NORMAL(XLOOKUP(B3,A7:A9,B7:B9), 0.01)` and the loan's rate
+  `TRIANGULAR(5%, 6.1%, 8%)`. Next year shows $441,810 as before; five
+  thousand trials put it between $405,969 and $481,417 nine years in
+  ten. The monthly payment's P50 is $4,869.06 against the sheet's
+  $4,844.83, because the rate leans high: a thing one number cannot say.
+- **Checked in Chrome**, headless: the menu entry, the cells filling in
+  while it ran, Stop, the percentiles for Next year and the payment.
+
+**Not done:**
+
+- **A pool of workers**, for models where a trial reaches thousands of
+  cells; see above.
+- **The chart draws the forecast, not its band.** A P10–P90 band behind
+  the area is the obvious next picture.
+- **The pane beside the grid draws no histograms.**
+- **Excel has no `NORMAL`.** An `.xlsx` carries the likeliest values,
+  and the formulas as written, which Excel shows as `#NAME?` if it
+  recalculates.
+- **Guesses are independent.** No correlation between two of them.
+
+---
+
 ## Working against a local Gesso
 
 This project installs Gesso from the sibling checkout rather than from

@@ -105,6 +105,7 @@ export type CommandId =
   | 'showReferences'
   | 'editNote'
   | 'scripts'
+  | 'runSimulation'
   | 'zoomIn'
   | 'zoomOut'
   | 'zoomReset'
@@ -474,6 +475,12 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    */
   scripts: { id: 'scripts', label: 'Scripts…' },
   /**
+   * Monte Carlo: every NORMAL, UNIFORM and TRIANGULAR drawn afresh,
+   * five thousand times, on the version on screen. Offered only when the
+   * workbook has a guess in it to draw.
+   */
+  runSimulation: { id: 'runSimulation', label: 'Run a simulation (5,000 trials)' },
+  /**
    * Every formula instead of its answer, for checking a sheet somebody
    * else wrote. Ctrl+` is Excel's key and Chrome's is nothing, so it is
    * the one key here that needs no Alt.
@@ -789,6 +796,7 @@ export const MENUS: readonly MenuDefinition[] = [
       'stopIterating',
       SEPARATOR,
       'scripts',
+      'runSimulation',
       SEPARATOR,
       'hideRows',
       'showRows',

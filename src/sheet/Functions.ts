@@ -9,6 +9,7 @@ import {
   type SheetFunction
 } from './FunctionKit';
 import { DAY_MS, serialOfDate } from './Dates';
+import { UNCERTAIN_FUNCTIONS } from './FunctionsUncertain';
 import { ARRAY_FUNCTIONS } from './FunctionsArray';
 import { CONDITIONAL_FUNCTIONS } from './FunctionsConditional';
 import { DATE_FUNCTIONS } from './FunctionsDate';
@@ -178,7 +179,8 @@ const TABLE: Record<string, SheetFunction> = {
   ...LOOKUP_FUNCTIONS,
   ...DATE_FUNCTIONS,
   ...FINANCE_FUNCTIONS,
-  ...ARRAY_FUNCTIONS
+  ...ARRAY_FUNCTIONS,
+  ...UNCERTAIN_FUNCTIONS
 };
 
 export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = TABLE;
@@ -200,6 +202,16 @@ export const FUNCTIONS: Readonly<Record<string, SheetFunction>> = TABLE;
  * exact where volatility would be a blunt instrument.
  */
 export const VOLATILE: ReadonlySet<string> = new Set(['RAND', 'RANDBETWEEN', 'NOW', 'TODAY']);
+
+/**
+ * The functions that state a guess: a value with a spread around it.
+ *
+ * Not volatile. In an ordinary recalculation each is its likeliest
+ * value and as fixed as a typed number, so a workbook with uncertainty
+ * in it reads, saves and recalculates as one without. A simulation is
+ * what draws them, every one at once for each trial; see `Simulation`.
+ */
+export const UNCERTAIN: ReadonlySet<string> = new Set(['NORMAL', 'UNIFORM', 'TRIANGULAR']);
 
 /** The names handled in the evaluator rather than by the table. */
 export const SPECIAL_FORMS: ReadonlySet<string> = new Set([
@@ -254,7 +266,7 @@ export function functionNames(): string[] {
 /** The default context: the real clock and real dice. */
 export function liveContext(): FunctionContext {
   const serial = nowSerial();
-  return { now: () => serial, random: () => Math.random() };
+  return { now: () => serial, random: () => Math.random(), sample: () => null };
 }
 
 /**

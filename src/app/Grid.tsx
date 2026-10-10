@@ -51,6 +51,7 @@ import * as dims from './dimensions';
 import type { CellEdge, CellPaint } from '../sheet/Format';
 import {
   cellIn,
+  type SheetUncertainty,
   cornerOf,
   isOneCell,
   PLAIN_PAINT,
@@ -291,6 +292,7 @@ export function Grid(
    */
   let latestFormats: { cells: Readonly<Record<string, Readonly<Record<string, number>>>> } | null = null;
   let latestPalette: readonly CellPaint[] = [PLAIN_PAINT];
+  let latestUncertainty: SheetUncertainty = { cells: {} };
 
   const paintOf = (row: number, column: number): CellPaint => {
     const id = latestFormats?.cells[row]?.[column] ?? 0;
@@ -314,15 +316,19 @@ export function Grid(
    * borders, so the comparison below is a pointer check that is true
    * for almost every cell on the screen and pushes nothing at all.
    */
+  /** Everything drawn in a cell's own paint pass: its histogram, under its borders and marks. */
+  const shapesFor = (row: number, column: number, paint: CellPaint): readonly DecorationShape[] => {
+    const box = shapeBox(row, column);
+    if (box === null) {
+      return NO_SHAPES;
+    }
+    const borders = bordersOf(paint, box.width, box.height, isFlagged(row, column), noteOf(row, column) !== '');
+    const bars = latestUncertainty.cells[row]?.[column];
+    return bars === undefined ? borders : [...histogramOf(bars, box.width, box.height), ...borders];
+  };
+
   const refreshShapes = (mounted: MountedCell): void => {
-    const box = shapeBox(mounted.row, mounted.column);
-    const next = box === null ? NO_SHAPES : bordersOf(
-      mounted.paint.value,
-      box.width,
-      box.height,
-      isFlagged(mounted.row, mounted.column),
-      noteOf(mounted.row, mounted.column) !== ''
-    );
+    const next = shapesFor(mounted.row, mounted.column, mounted.paint.value);
     if (next === NO_SHAPES && mounted.shapes.value === NO_SHAPES) {
       return;
     }
@@ -332,6 +338,23 @@ export function Grid(
   ctx.effect(sheet.view.formats, current => {
     latestFormats = current;
     repaint();
+  });
+
+  /**
+   * Where each visible cell's value fell across the last simulation,
+   * as bar heights from 0 to 8; see `SheetUncertainty`. Drawn under the
+   * cell's figure, among its decorations, so a cell with a spread costs
+   * sixteen rectangles in its own paint pass and a cell without one
+   * costs nothing.
+   */
+  ctx.effect(sheet.view.uncertainty, current => {
+    const before = latestUncertainty;
+    latestUncertainty = current;
+    for (const mounted of cells.values()) {
+      if (before.cells[mounted.row]?.[mounted.column] !== current.cells[mounted.row]?.[mounted.column]) {
+        refreshShapes(mounted);
+      }
+    }
   });
 
   /**
@@ -1748,16 +1771,7 @@ export function Grid(
     const value = values.for(key, { row, column });
     const standing = standings.for(key, { row, column });
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
-    const box = shapeBox(row, column);
-    const shapes = new BehaviorSubject<readonly DecorationShape[]>(
-      box === null ? NO_SHAPES : bordersOf(
-        paint.value,
-        box.width,
-        box.height,
-        isFlagged(row, column),
-        noteOf(row, column) !== ''
-      )
-    );
+    const shapes = new BehaviorSubject<readonly DecorationShape[]>(shapesFor(row, column, paint.value));
     const element = buildCell(row, column, value, standing, paint, shapes);
     cells.set(key, { row, column, element, value, standing, paint, shapes });
     return element;
@@ -4266,6 +4280,37 @@ const MARK_SIZE = 6;
 const NOTE_MARK = 5;
 
 const NO_SHAPES: DecorationShape[] = [];
+
+/** The violet of the scenarios, faint: a histogram is read through, not at. */
+const HISTOGRAM = 'rgba(124, 58, 237, 0.26)';
+
+/**
+ * A cell's histogram as rectangles: sixteen bars along the bottom of
+ * the cell, the tallest reaching a little under half its height, behind
+ * the figure. A bar of height zero is left out.
+ */
+function histogramOf(bars: readonly number[], width: number, height: number): DecorationShape[] {
+  const inset = 3;
+  const step = (width - inset * 2) / bars.length;
+  const reach = Math.max(4, height * 0.45);
+  const shapes: DecorationShape[] = [];
+  bars.forEach((bar, index) => {
+    if (bar <= 0) {
+      return;
+    }
+    const tall = (bar / 8) * reach;
+    shapes.push({
+      kind: 'fill',
+      x: inset + index * step,
+      y: height - 1 - tall,
+      width: Math.max(1, step - 1),
+      height: tall,
+      radius: 0,
+      color: HISTOGRAM
+    });
+  });
+  return shapes;
+}
 
 /** The corner above row 1, which selects the sheet. */
 const SELECT_ALL = 'Select all';

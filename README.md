@@ -113,6 +113,12 @@ A spreadsheet somebody would keep a budget in, not a demo of a grid.
   puts another version in a second pane that scrolls with the first,
   tinted where the two differ. A scenario is the workbook forked in the
   engine, so it recalculates only what its inputs reach.
+- **How sure.** Write a guess as a guess — `=NORMAL(0.02, 0.01)`,
+  `=UNIFORM(40, 60)`, `=TRIANGULAR(5%, 6.1%, 8%)` — and it is its
+  likeliest value until *Data ▸ Run a simulation* draws it five
+  thousand times. Every cell it reaches gets a histogram under its
+  figure, and the cell you are on reads out its P10, P50 and P90. The
+  example's forecast growth and loan rate are guesses.
 - **Light and dark.** The sheet follows the system's appearance, and
   View ▸ Theme overrides it, remembered in this browser. A cell's
   fill is its author's colour in both, so text with no colour of its

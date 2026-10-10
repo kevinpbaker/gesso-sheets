@@ -58,6 +58,14 @@ export interface FunctionContext {
   /** The serial — days since 1899-12-30 — for this recalculation. */
   now(): number;
   random(): number;
+  /**
+   * A uniform draw in [0, 1) while the workbook is running a
+   * simulation, and null the rest of the time; see `NORMAL`. Null is
+   * the answer every context gives that is not a simulation's, so an
+   * uncertain cell shows its likeliest value until somebody asks for
+   * the spread.
+   */
+  sample(): number | null;
 }
 
 /**

@@ -42,7 +42,9 @@ export function sheetChannel(service: SheetService): ServedChannel {
       scenarios: service.scenarios,
       compare: service.compare,
       compareWindow: service.compareWindow,
-      compareFormats: service.compareFormats
+      compareFormats: service.compareFormats,
+      simulation: service.simulation,
+      uncertainty: service.uncertainty
     },
     commands: {
       setViewport: (sheet, firstRow, lastRow, firstColumn, lastColumn) =>
@@ -149,6 +151,8 @@ export function sheetChannel(service: SheetService): ServedChannel {
       deleteScenario: id => service.deleteScenario(id),
       resetScenarioCells: () => service.resetScenarioCells(),
       setCompare: (open, against) => service.setCompare(open, against),
+      runSimulation: trials => service.runSimulation(trials),
+      stopSimulation: () => service.stopSimulation(),
       stopScript: () => service.stopScript(),
       setFunctionsOn: on => service.setFunctionsOn(on)
     }
