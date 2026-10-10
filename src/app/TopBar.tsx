@@ -482,13 +482,13 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     sheet.send.sortRange(single ? at.column : Math.min(cornerOf(at).column, at.anchorColumn), ascending, single);
   };
 
-  /** The View menu's settings, ticked as they stand when it opens. */
+  /**
+   * The theme in use, ticked when the View menu opens. Show formulas
+   * and Show references say Hide while they are on, which is their
+   * tick, so they have none.
+   */
   const checkedNow = (id: CommandId): boolean | undefined => {
     switch (id) {
-      case 'showFormulas':
-        return status.value.showingFormulas;
-      case 'showReferences':
-        return edit.referencesShown.value;
       case 'appearanceAuto':
         return appearance.value.value === 'auto';
       case 'appearanceLight':
