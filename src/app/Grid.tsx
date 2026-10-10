@@ -3,6 +3,7 @@ import { distinctUntilChanged, map } from 'rxjs/operators';
 
 import {
   Box,
+  boxShadow,
   Button,
   Column,
   contextMenu,
@@ -2524,21 +2525,6 @@ export function Grid(
   };
 
   /**
-   * The hint under the cell being typed into.
-   *
-   * Placed from the caret rather than from the cell's left edge, so a
-   * list of function names appears under the word it is completing
-   * rather than under the start of the formula. The caret's position
-   * is the engine's to know — it depends on the paragraph as it was
-   * laid out — and `EditingService` is where it is asked for.
-   *
-   * A child of the row, like the fill handle, so it travels with a
-   * scroll. It is deliberately not focusable and takes no pointer
-   * events: the keyboard stays in the cell, which is what makes
-   * typing through a list of suggestions feel like typing rather than
-   * like operating a menu.
-   */
-  /**
    * The error's explanation, under the cell that is showing it.
    *
    * Under the cell rather than in a panel, because a panel is
@@ -2554,28 +2540,28 @@ export function Grid(
   const explainPopup = (row: number, column: number): UiElement => {
     const current = explain.value;
     const blamed = current?.blame == null ? '' : ` Made in ${current.blame}.`;
+    const why = `${current?.code ?? ''} — ${current?.meaning ?? ''}${blamed}`;
+    // Measured here rather than left to the panel, for the reason
+    // `popupPanel` gives: under the row's bottom edge an unsized box is
+    // laid out zero tall. At most three lines, as the text is.
+    const line = measure.measure({ text: 'X', fontSize: 11, wrap: 'none' }).height;
+    const said = measure.measure({ text: why, fontSize: 11, wrap: 'word', maxWidth: EXPLAIN_WIDTH - 12 });
     return Box(
       {
-        key: 'explain',
-        position: 'absolute',
-        left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
-        top: heightNow(row),
-        zIndex: 4,
-        maxWidth: 320,
-        backgroundColor: 'surface',
+        ...popupPanel('explain', GUTTER_WIDTH + sheetWindow.offsetOf(column), heightNow(row), Math.ceil(Math.min(said.height, 3 * line)) + 2),
+        width: Math.ceil(said.width) + 12,
+        maxWidth: EXPLAIN_WIDTH,
         borderColor: 'danger',
-        borderWidth: 1,
         paddingLeft: 6,
         paddingRight: 6,
         paddingTop: 3,
         paddingBottom: 3,
-        pointerEvents: 'none',
         role: 'status',
         label: `${current?.code ?? ''} explained`
       },
       Text({
         key: 'why',
-        text: `${current?.code ?? ''} — ${current?.meaning ?? ''}${blamed}`,
+        text: why,
         fontSize: 11,
         color: 'text',
         textWrap: 'word',
@@ -2629,28 +2615,36 @@ export function Grid(
     sheetWindow.invalidate();
   };
 
+  /**
+   * The hint under the cell being typed into.
+   *
+   * Placed from the caret rather than from the cell's left edge, so a
+   * list of function names appears under the word it is completing
+   * rather than under the start of the formula. The caret's position
+   * is the engine's to know — it depends on the paragraph as it was
+   * laid out — and `EditingService` is where it is asked for.
+   *
+   * A child of the row, like the fill handle, so it travels with a
+   * scroll. It is deliberately not focusable and takes no pointer
+   * events: the keyboard stays in the cell, which is what makes
+   * typing through a list of suggestions feel like typing rather than
+   * like operating a menu.
+   */
   const hintPopup = (row: number, column: number): UiElement => {
     const current = hint.value;
     const caret = editing.caretRectOf(editorNode);
     const left = GUTTER_WIDTH + sheetWindow.offsetOf(column) + (caret?.x ?? 0);
-    const common = {
-      key: 'hint',
-      position: 'absolute' as const,
-      left,
-      top: heightNow(row),
-      zIndex: 4,
-      backgroundColor: 'surface',
-      borderColor: 'border',
-      borderWidth: 1,
-      paddingTop: 2,
-      paddingBottom: 2,
-      pointerEvents: 'none' as const
-    };
 
     if (current?.kind === 'signature') {
       const marked = markedArgument(current.signature, current.argument);
-      return Box(
-        { ...common, paddingLeft: 6, paddingRight: 6, role: 'status', label: `${current.name} signature` },
+      return Column(
+        {
+          ...popupPanel('hint', left, heightNow(row), 2 * POPUP_LINE),
+          paddingLeft: 6,
+          paddingRight: 6,
+          role: 'status',
+          label: `${current.name} signature`
+        },
         Text({
           key: 'sig',
           // The argument being filled in is the only one in the theme's
@@ -2666,15 +2660,17 @@ export function Grid(
             { text: ')' }
           ],
           fontSize: 11,
+          height: POPUP_LINE,
+          verticalAlign: 'middle',
           color: 'textMuted',
           textWrap: 'none'
         }),
-        Text({ key: 'summary', text: current.signature.summary, fontSize: 11, color: 'textMuted', textWrap: 'none' })
+        Text({ key: 'summary', text: current.signature.summary, fontSize: 11, height: POPUP_LINE, verticalAlign: 'middle', color: 'textMuted', textWrap: 'none' })
       );
     }
 
     if (current?.kind !== 'completions') {
-      return Box({ ...common, width: 0, height: 0 });
+      return Box({ key: 'hint', position: 'absolute', left, top: heightNow(row), width: 0, height: 0, pointerEvents: 'none' });
     }
 
     /**
@@ -2682,26 +2678,7 @@ export function Grid(
      * that covers the sheet somebody is reading to decide what to
      * type.
      */
-    const shown = current.names.slice(0, 8);
-    const picked = Math.min(chosen.value, shown.length - 1);
-    return Box(
-      { ...common, role: 'listbox', label: 'Functions' },
-      ...shown.map((name, at) =>
-        Text({
-          key: name,
-          text: name,
-          role: 'option',
-          label: name,
-          states: at === picked ? ['selected'] : [],
-          fontSize: 12,
-          paddingLeft: 6,
-          paddingRight: 12,
-          color: 'text',
-          backgroundColor: at === picked ? 'selectionBackground' : undefined,
-          textWrap: 'none'
-        })
-      )
-    );
+    return listPopup('hint', 'Functions', left, heightNow(row), current.names.slice(0, 8), chosen.value);
   };
 
   /**
@@ -2711,42 +2688,8 @@ export function Grid(
    * row that holds the open cell, so it travels with a scroll and
    * needs nothing kept in step.
    */
-  const choicePopup = (row: number, column: number): UiElement => {
-    const shown = choices.value.slice(0, 8);
-    const picked = Math.min(choice.value, shown.length - 1);
-    return Box(
-      {
-        key: 'choices',
-        position: 'absolute',
-        left: GUTTER_WIDTH + sheetWindow.offsetOf(column),
-        top: heightNow(row),
-        zIndex: 4,
-        backgroundColor: 'surface',
-        borderColor: 'border',
-        borderWidth: 1,
-        paddingTop: 2,
-        paddingBottom: 2,
-        pointerEvents: 'none',
-        role: 'listbox',
-        label: 'Allowed values'
-      },
-      ...shown.map((value, at) =>
-        Text({
-          key: value,
-          text: value,
-          role: 'option',
-          label: value,
-          states: at === picked ? ['selected'] : [],
-          fontSize: 12,
-          paddingLeft: 6,
-          paddingRight: 12,
-          color: 'text',
-          backgroundColor: at === picked ? 'selectionBackground' : undefined,
-          textWrap: 'none'
-        })
-      )
-    );
-  };
+  const choicePopup = (row: number, column: number): UiElement =>
+    listPopup('choices', 'Allowed values', GUTTER_WIDTH + sheetWindow.offsetOf(column), heightNow(row), choices.value.slice(0, 8), choice.value);
 
   /** How many rows the sheet has, for the anchor search to bound itself. */
   const rowCount = internalState(0);
@@ -4323,6 +4266,82 @@ const SELECT_ALL = 'Select all';
  * family and everywhere.
  */
 const OUTLINE = 2;
+
+/** How wide an error's explanation may grow before it wraps. */
+const EXPLAIN_WIDTH = 320;
+/** How tall one name in a list hanging off the open cell is. */
+const POPUP_ROW = 20;
+/** How tall one line of a signature hint is. */
+const POPUP_LINE = 16;
+/** What a popup adds round its lines: two pixels of padding, top and bottom. A border is painted inside the box and takes no room. */
+const POPUP_FRAME = 4;
+
+/**
+ * The panel a popup under the open cell is drawn on.
+ *
+ * **The height is written out, and it has to be.** A popup hangs off
+ * the row that holds the open cell, starting at that row's bottom
+ * edge, and the engine measures an absolute box against the room its
+ * containing block has left below its `top` — which, for a box that
+ * starts at the block's bottom edge, is none. Measured under a
+ * maximum height of zero, the panel had no area to paint its
+ * background, border or shadow in, and a `Box` stacks its children
+ * rather than laying them out, so every name in the list and both
+ * lines of a signature were drawn over one another in the same place,
+ * bare on the gridlines. An explicit height is the box's own (the
+ * engine's fix for charts in the same position), so the lines are
+ * given fixed heights and the panel is their sum.
+ */
+function popupPanel(key: string, left: number, top: number, content: number) {
+  return {
+    key,
+    position: 'absolute' as const,
+    left,
+    top: top + 1,
+    height: content + POPUP_FRAME,
+    zIndex: 4,
+    backgroundColor: 'surface',
+    borderColor: 'controlBorder',
+    borderWidth: 1,
+    borderRadius: 4,
+    boxShadows: [boxShadow(0, 2, 8, 0, 'shadow')],
+    paddingTop: 2,
+    paddingBottom: 2,
+    pointerEvents: 'none' as const
+  };
+}
+
+/**
+ * A listbox under the open cell: function names as a formula is
+ * typed, or the values a validated cell allows.
+ *
+ * Not focusable and taking no pointer events — the keyboard stays in
+ * the cell, and the chosen row is a band of the selection colour
+ * that moves as the arrows do.
+ */
+function listPopup(key: string, label: string, left: number, top: number, shown: readonly string[], chosen: number): UiElement {
+  const picked = Math.min(chosen, shown.length - 1);
+  return Column(
+    { ...popupPanel(key, left, top, shown.length * POPUP_ROW), role: 'listbox', label },
+    ...shown.map((name, at) =>
+      Text({
+        key: name,
+        text: name,
+        role: 'option',
+        label: name,
+        states: at === picked ? ['selected'] : [],
+        fontSize: 12,
+        height: POPUP_ROW,
+        verticalAlign: 'middle',
+        paddingLeft: 8,
+        paddingRight: 16,
+        color: at === picked ? 'selectionForeground' : 'text',
+        backgroundColor: at === picked ? 'selectionBackground' : undefined,
+        textWrap: 'none'
+      })
+    )
+  );
+}
 
 
 function sameWidths(a: readonly number[], b: readonly number[]): boolean {

@@ -1713,6 +1713,33 @@ describe('suggesting a function while it is typed', () => {
   });
 
   /**
+   * The list is a panel with its names one under another.
+   *
+   * It hangs off the bottom edge of the open cell's row, where the
+   * engine left an absolute box with no room below its top and so
+   * measured it zero tall: no background, no border, and every name
+   * drawn in the same place, so `=SUMI` read as one word, SUMIFS, bare
+   * on the gridlines. Six names of twenty pixels, and two of padding
+   * above and below.
+   */
+  it('lays the names out one under another, on a panel that holds them all', async () => {
+    await typing('=SU');
+    const list = withRole('listbox').find(node => node.properties.get('label') === 'Functions')!;
+    const box = h.ui.getLayout(list);
+    expect(box.height).toBe(6 * 20 + 4);
+    expect(withRole('option').map(node => Math.round(h.ui.getLayout(node).y - box.y))).toEqual([2, 22, 42, 62, 82, 102]);
+  });
+
+  /** The signature and its summary are two lines, not one drawn over the other. */
+  it('puts the summary under the signature rather than on top of it', async () => {
+    await typing('=ROUND(');
+    const signature = withRole('status').find(node => node.properties.get('label') === 'ROUND signature')!;
+    const box = h.ui.getLayout(signature);
+    expect(box.height).toBe(2 * 16 + 4);
+    expect([signature.firstChild!, signature.lastChild!].map(node => Math.round(h.ui.getLayout(node).y - box.y))).toEqual([2, 18]);
+  });
+
+  /**
    * A choice is an index, and an index into a list that has been
    * replaced points at something nobody picked.
    */
