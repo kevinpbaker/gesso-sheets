@@ -75,7 +75,7 @@ async function mount(): Promise<Harness> {
   return h;
 }
 
-const EMPTY = { files: [], saved: null, recent: [], error: null } as const;
+const EMPTY = { files: [], directory: null, saved: null, recent: [], error: null } as const;
 
 async function answer(result: ShellFileResult): Promise<void> {
   const last = h!.asked[h!.asked.length - 1];
@@ -177,7 +177,7 @@ describe('the File menu', () => {
     await mount();
     await menu('f', 'Open recent…');
     expect(h!.asked[0].request).toEqual({ op: 'recent' });
-    await answer({ ...EMPTY, outcome: 'ok', recent: [{ handle: 3, name: 'Budget.gsheet', used: 1 }] });
+    await answer({ ...EMPTY, outcome: 'ok', recent: [{ handle: 3, name: 'Budget.gsheet', kind: 'file', used: 1 }] });
 
     h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Budget.gsheet' }));
     await settle();
