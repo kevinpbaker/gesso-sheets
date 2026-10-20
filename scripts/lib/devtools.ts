@@ -147,6 +147,23 @@ export class DevTools {
     }
   }
 
+  /**
+   * One step of a drag with the first button held: the press, a move,
+   * or the release. A drag is these in order, a frame or so apart, as a
+   * hand makes them.
+   */
+  async drag(type: 'mousePressed' | 'mouseMoved' | 'mouseReleased', x: number, y: number): Promise<void> {
+    await this.send('Input.dispatchMouseEvent', {
+      type,
+      x,
+      y,
+      button: 'left',
+      buttons: type === 'mouseReleased' ? 0 : 1,
+      clickCount: type === 'mouseMoved' ? 0 : 1,
+      pointerType: 'mouse'
+    });
+  }
+
   /** The second button, pressed and released: what opens a context menu. */
   async rightClick(x: number, y: number): Promise<void> {
     for (const type of ['mousePressed', 'mouseReleased'] as const) {

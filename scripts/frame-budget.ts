@@ -36,6 +36,19 @@ const CELLS = 200_000;
 const NOTCHES = 150;
 
 /**
+ * Pointer moves in the thumb drag, four pixels and a frame apart.
+ *
+ * The wheel runs never caught what a thumb costs. A notch brings in four
+ * rows; on a sheet this long the thumb sits at its minimum size, one
+ * pixel of it is about fourteen rows, and every move of a drag replaces
+ * the whole window — every cell built and every cell torn down, on
+ * every frame. The wheel runs passed at a few milliseconds a frame
+ * while a drag drew at thirty-odd frames a second. Held to the same
+ * budgets as a wheel, because a person dragging the thumb is scrolling.
+ */
+const THUMB_MOVES = 90;
+
+/**
  * The budgets.
  *
  * `frameMs` is the render worker's own work per frame, not the gap
@@ -213,6 +226,11 @@ async function main(): Promise<void> {
     // A scroll with nothing else going on
     // --------------------------------------------------------------
     const idle = report('scrolling an idle sheet', await scrollRun(devtools, 'scrolling an idle sheet'), failures);
+
+    // --------------------------------------------------------------
+    // Dragging the scrollbar's thumb
+    // --------------------------------------------------------------
+    report('dragging the scrollbar thumb', await thumbRun(devtools), failures, THUMB_MOVES, 'thumb moves');
 
     // --------------------------------------------------------------
     // The same scroll, over the top of 200,000 recalculating cells
@@ -809,6 +827,43 @@ async function scrollRun(devtools: DevTools, what: string, notches = NOTCHES): P
   return devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
 }
 
+/**
+ * Drags the vertical thumb down the track and returns the frames drawn,
+ * then goes back to the top for the runs after it.
+ *
+ * Ctrl+Home first, because the wheel runs leave the sheet wherever they
+ * stopped and the thumb with it. At the top, the thumb hangs at the top
+ * of the grid's right edge, under the column letters: a scrollbar is
+ * hit before the content it is drawn over, so the press takes it.
+ */
+async function thumbRun(devtools: DevTools): Promise<ProofFrame[]> {
+  console.log('  dragging the scrollbar thumb…');
+  const grid = await devtools.evaluate<{ left: number; right: number; top: number }>(
+    `(() => {
+       const box = document.querySelector('[role="grid"]').getBoundingClientRect();
+       return { left: box.left, right: box.right, top: box.top };
+     })()`
+  );
+  await devtools.click(grid.left + 300, grid.top + 200);
+  await devtools.press('Home', 36, 2);
+  await sleep(300);
+  await devtools.evaluate('globalThis.gessosheetProof.reset()');
+  const x = grid.right - 5;
+  let y = grid.top + 12;
+  await devtools.drag('mousePressed', x, y);
+  for (let move = 0; move < THUMB_MOVES; move++) {
+    y += 4;
+    await devtools.drag('mouseMoved', x, y);
+    await sleep(16);
+  }
+  await devtools.drag('mouseReleased', x, y);
+  await sleep(200);
+  const frames = await devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
+  await devtools.press('Home', 36, 2);
+  await sleep(300);
+  return frames;
+}
+
 /** What the status line says the application thread has ever evaluated. */
 function evaluatedIn(status: string): number {
   const match = /([\d,]+) evaluated/.exec(status);
@@ -821,9 +876,15 @@ interface Stats {
   readonly measured: number;
 }
 
-function report(what: string, frames: readonly ProofFrame[], failures: string[]): Stats {
-  if (frames.length < NOTCHES / 4) {
-    failures.push(`${what}: only ${frames.length} frames for ${NOTCHES} wheel notches — the scroll did not happen`);
+function report(
+  what: string,
+  frames: readonly ProofFrame[],
+  failures: string[],
+  inputs = NOTCHES,
+  unit = 'wheel notches'
+): Stats {
+  if (frames.length < inputs / 4) {
+    failures.push(`${what}: only ${frames.length} frames for ${inputs} ${unit} — the scroll did not happen`);
     return { median: 0, worst: 0, measured: 0 };
   }
   const durations = frames.map(frame => frame.durationMs).sort((a, b) => a - b);
