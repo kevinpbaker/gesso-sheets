@@ -115,8 +115,26 @@ type Standing = 0 | 1 | 2;
  * back out of the key was the only reason the key had a shape.
  */
 interface MountedCell {
-  readonly row: number;
-  readonly column: number;
+  /**
+   * The cell it shows. Fixed for a cell kept by what it shows; moved,
+   * by `repoint`, for one kept by its place on screen.
+   */
+  row: number;
+  column: number;
+  /**
+   * The row slot it is kept in, or undefined for a cell kept by the cell
+   * it shows: a frozen row's, a merge's, and every cell of the compare
+   * pane. See `cell`.
+   */
+  readonly slot: number | undefined;
+  /**
+   * Where a click on it lands, read when the click happens rather than
+   * captured when the cell was built, so a cell moved to another row
+   * selects the row it shows now.
+   */
+  readonly at: { row: number; column: number };
+  /** Its own height for a cell kept by slot; a row's for one kept by what it shows. */
+  readonly height: BehaviorSubject<number> | null;
   readonly element: UiElement;
   readonly value: FanCell<string | null, { row: number; column: number }>;
   readonly standing: FanCell<Standing, { row: number; column: number }>;
@@ -665,6 +683,17 @@ export function Grid(
         moved.add(row);
       }
     }
+    // A cell kept by slot holds its own height, for whichever row it
+    // shows; the subjects above are only for cells kept by row.
+    for (const mounted of cells.values()) {
+      if (mounted.height !== null) {
+        const next = heightNow(mounted.row);
+        if (next !== mounted.height.value) {
+          mounted.height.next(next);
+          moved.add(mounted.row);
+        }
+      }
+    }
     if (moved.size === 0) {
       return;
     }
@@ -1143,13 +1172,17 @@ export function Grid(
   });
 
   const buildCell = (
-    row: number,
-    column: number,
+    at: { readonly row: number; readonly column: number },
     value: Observable<string | null>,
     state: Observable<Standing>,
     paint: Observable<CellPaint>,
-    shapes: Observable<readonly DecorationShape[]>
+    shapes: Observable<readonly DecorationShape[]>,
+    slotHeight: Observable<number> | null
   ): UiElement => {
+    // Read once, at build time: a cell kept by slot is only ever moved to
+    // another row in its own column, and never into or out of a merge
+    // (see `cell`), so nothing below changes when it is.
+    const { row, column } = at;
     /**
      * A frozen column's cells are stuck at their own offset.
      *
@@ -1239,7 +1272,7 @@ export function Grid(
         ? 0
         : anchors && spanRows > 1
           ? heightOf(row).pipe(map(height => (height === 0 ? 0 : height * spanRows)))
-          : heightOf(row),
+          : (slotHeight ?? heightOf(row)),
       flexShrink: 0,
       // A covered cell has no room for padding either, or a row of
       // them adds twelve pixels each to the width of the row. One
@@ -1274,7 +1307,7 @@ export function Grid(
       // does while a rectangle is being picked out.
       selectable: false,
       role: 'cell',
-      onClick: (event: UiPointerEvent) => selectByPointer(row, column, event.modifiers.shift)
+      onClick: (event: UiPointerEvent) => selectByPointer(at.row, at.column, event.modifiers.shift)
     });
   };
 
@@ -1795,25 +1828,77 @@ export function Grid(
     paintIfLit();
   };
 
-  const cell = (row: number, column: number): UiElement => {
+  /**
+   * The cell on screen at `row` and `column`.
+   *
+   * **Kept by its place on screen, where it can be.** The window mounts
+   * each scrolled row in a slot (`recycleRows`), and a cell is kept by
+   * that slot and its column, not by the cell it shows. A row arriving
+   * in a slot gets the cells a row leaving it left behind, moved to show
+   * the new row by `repoint`: their elements are the same objects, so
+   * the reconciler passes over their nodes and their bindings stay
+   * connected, and what the move costs is the values they push. Kept by
+   * cell, a scrollbar drag replaced the whole window every frame — about
+   * nine hundred cells and five thousand bindings built, and as many
+   * torn down — and drew at a 20 ms median.
+   *
+   * A frozen row has no slot, and a cell in a merge is shaped by the
+   * merge when it is built; both are kept by the cell they show, as
+   * every cell used to be. Keys of the two kinds never meet: `s` marks
+   * a slot's.
+   */
+  const cell = (row: number, column: number, slot?: number): UiElement => {
     if (openAt !== null && openAt.row === row && openAt.column === column) {
       return editorCell(row, column);
     }
-    const key = `${row}:${column}`;
+    const kept = slot !== undefined && mergeAt(row, column) === null;
+    const key = kept ? `s${slot}:${column}` : `${row}:${column}`;
     const mounted = cells.get(key);
     if (mounted !== undefined) {
+      if (mounted.row !== row) {
+        repoint(key, mounted, row);
+      }
       return mounted.element;
     }
     // Seeded from what the window and the selection say *now*, because
     // a cell is built during the frame that reveals it and the feeds
     // above have already run for this one.
-    const value = values.for(key, { row, column });
-    const standing = standings.for(key, { row, column });
+    const at = { row, column };
+    const value = values.for(key, at);
+    const standing = standings.for(key, at);
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(shapesFor(row, column, paint.value));
-    const element = buildCell(row, column, value, standing, paint, shapes);
-    cells.set(key, { row, column, element, value, standing, paint, shapes });
+    const height = kept ? new BehaviorSubject(heightNow(row)) : null;
+    const element = buildCell(at, value, standing, paint, shapes, height);
+    cells.set(key, { row, column, slot: kept ? slot : undefined, at, height, element, value, standing, paint, shapes });
     return element;
+  };
+
+  /**
+   * Moves a cell kept by slot to show another row of its column.
+   *
+   * Everything a cell shows that depends on its row is pushed in here,
+   * through the subjects it was built on: its value and its standing in
+   * the selection through the fan-outs, which read the new row and push
+   * only what differs; its paint, its borders and marks, and its height.
+   * On a sheet nobody has formatted most of that is a pointer comparison
+   * that pushes nothing.
+   */
+  const repoint = (key: string, mounted: MountedCell, row: number): void => {
+    mounted.row = row;
+    mounted.at.row = row;
+    const at = { row, column: mounted.column };
+    values.move(key, at);
+    standings.move(key, at);
+    const paint = paintOf(row, mounted.column);
+    if (paint !== mounted.paint.value) {
+      mounted.paint.next(paint);
+    }
+    refreshShapes(mounted);
+    const height = heightNow(row);
+    if (mounted.height !== null && height !== mounted.height.value) {
+      mounted.height.next(height);
+    }
   };
 
   /**
@@ -2863,16 +2948,16 @@ export function Grid(
     );
   };
 
-  const renderRow = (row: number, firstColumn: number, lastColumn: number): UiElement => {
+  const renderRow = (row: number, firstColumn: number, lastColumn: number, slot?: number): UiElement => {
     const line: UiElement[] = [rowHeader(row), ...chartsOn(row)];
     // The frozen columns first, which is the order the window's own
     // leading spacer is placed against: everything that stays put,
     // then the gap, then the columns that scrolled into view.
     for (let column = 0; column < frozen.value.columns; column++) {
-      line.push(cell(row, column));
+      line.push(cell(row, column, slot));
     }
     for (let column = firstColumn; column <= lastColumn; column++) {
-      line.push(cell(row, column));
+      line.push(cell(row, column, slot));
     }
     const corner = cornerAt !== null && cornerAt.row === row;
     const finger = touching.value;
@@ -3245,6 +3330,8 @@ export function Grid(
       // lookahead is the application worker's; see PHASE0.md §3.
       rowOverscan: 2,
       columnOverscan: 1,
+      // Rows in slots, so a jump reuses the cells on screen; see `cell`.
+      recycleRows: true,
       role: 'grid',
       label: 'Sheet',
       focusable: true,
@@ -3758,6 +3845,24 @@ export function Grid(
    * the same trick opening a cell uses, at the same cost, and at the
    * pace a person moves a selection rather than per frame.
    */
+  /**
+   * Drops the cell showing `which` from the cache, kept by slot or by
+   * cell, so the next build of its row makes it again.
+   *
+   * A cell kept by slot is found by what it shows. This runs when a
+   * selection moves or an edit opens, at a person's pace, and walks the
+   * window's cells once.
+   */
+  const forget = (which: { row: number; column: number }): void => {
+    for (const [key, mounted] of cells) {
+      if (mounted.row === which.row && mounted.column === which.column) {
+        cells.delete(key);
+        values.release(key);
+        standings.release(key);
+      }
+    }
+  };
+
   let cornerBefore: { row: number; column: number } | null = null;
   let touchedBefore = false;
   // While a handle is being dragged the handles stay put: moving one
@@ -3778,9 +3883,7 @@ export function Grid(
     touchedBefore = touching.value;
     for (const which of [cornerBefore, next]) {
       if (which !== null) {
-        cells.delete(`${which.row}:${which.column}`);
-        values.release(`${which.row}:${which.column}`);
-        standings.release(`${which.row}:${which.column}`);
+        forget(which);
       }
     }
     cornerBefore = next;
@@ -3796,9 +3899,7 @@ export function Grid(
     }
     for (const which of [openBefore, next]) {
       if (which !== null) {
-        cells.delete(`${which.row}:${which.column}`);
-        values.release(`${which.row}:${which.column}`);
-        standings.release(`${which.row}:${which.column}`);
+        forget(which);
       }
     }
     openBefore = next;
@@ -3900,7 +4001,14 @@ export function Grid(
   ctx.effect(sheetWindow.range$, range => {
     const pane = frozen.value;
     for (const [key, mounted] of cells) {
-      const rowShows = mounted.row < pane.rows || (mounted.row >= range.firstRow && mounted.row <= range.lastRow);
+      // A cell kept by slot is not judged by the row it showed last: its
+      // slot is about to be given another row, and dropping it here is
+      // what the slot is for keeping. It goes with its column, and with
+      // everything else on a freeze or a merge.
+      const rowShows =
+        mounted.slot !== undefined ||
+        mounted.row < pane.rows ||
+        (mounted.row >= range.firstRow && mounted.row <= range.lastRow);
       const columnShows =
         mounted.column < pane.columns ||
         (mounted.column >= range.firstColumn && mounted.column <= range.lastColumn);
