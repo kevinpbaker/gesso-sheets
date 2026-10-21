@@ -3483,6 +3483,7 @@ export function Grid(
         selected: charts.value.selected === chart.id,
         rowOffset: offset,
         drag: chartDrag,
+        scrollX,
         on: chartHandlers,
         dark: chartsDark
       })

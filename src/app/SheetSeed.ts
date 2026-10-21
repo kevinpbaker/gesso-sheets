@@ -606,29 +606,29 @@ const GLANCES: readonly { label: string; formula: string; number: NumberFormat }
  * Copied rather than imported: that file is a component in the render
  * worker, and this one runs in the application worker.
  */
-const TAB_BLUE = '#4285f4';
-const TAB_ORANGE = '#fa7b17';
-const TAB_GREEN = '#34a853';
-const TAB_PURPLE = '#a142f4';
-const TAB_RED = '#ea4335';
+export const TAB_BLUE = '#4285f4';
+export const TAB_ORANGE = '#fa7b17';
+export const TAB_GREEN = '#34a853';
+export const TAB_PURPLE = '#a142f4';
+export const TAB_RED = '#ea4335';
 
-const BANNER_FILL = '#1f3a5f';
-const HEADING_FILL = '#eef2f7';
+export const BANNER_FILL = '#1f3a5f';
+export const HEADING_FILL = '#eef2f7';
 const TILE_FILL = '#f4f7fb';
-const NOTE = '#5a6b7d';
-const BELOW = '#b3261e';
-const GOOD = '#1e7b34';
-const HELD_FILL = '#ffe8cc';
-const INPUT_FILL = '#fff8d6';
+export const NOTE = '#5a6b7d';
+export const BELOW = '#b3261e';
+export const GOOD = '#1e7b34';
+export const HELD_FILL = '#ffe8cc';
+export const INPUT_FILL = '#fff8d6';
 
-const MONEY: NumberFormat = { kind: 'currency', places: 2, symbol: '$' };
-const WHOLE_MONEY: NumberFormat = { kind: 'currency', places: 0, symbol: '$' };
-const COUNTED: NumberFormat = { kind: 'number', places: 0, thousands: true };
-const SHARE: NumberFormat = { kind: 'percent', places: 1 };
-const DAY: NumberFormat = { kind: 'date', pattern: 'dmy' };
+export const MONEY: NumberFormat = { kind: 'currency', places: 2, symbol: '$' };
+export const WHOLE_MONEY: NumberFormat = { kind: 'currency', places: 0, symbol: '$' };
+export const COUNTED: NumberFormat = { kind: 'number', places: 0, thousands: true };
+export const SHARE: NumberFormat = { kind: 'percent', places: 1 };
+export const DAY: NumberFormat = { kind: 'date', pattern: 'dmy' };
 
-const RULED_BELOW: CellBorders = { ...NO_BORDERS, bottom: { width: 2, color: '' } };
-const RULED_ABOVE: CellBorders = { ...NO_BORDERS, top: { width: 2, color: '' } };
+export const RULED_BELOW: CellBorders = { ...NO_BORDERS, bottom: { width: 2, color: '' } };
+export const RULED_ABOVE: CellBorders = { ...NO_BORDERS, top: { width: 2, color: '' } };
 const BOXED: CellBorders = {
   top: { width: 1, color: '#c9d3df' },
   right: { width: 1, color: '#c9d3df' },
@@ -637,17 +637,17 @@ const BOXED: CellBorders = {
 };
 
 /** A three-colour scale, pale enough to read black text through. */
-const SCALE = { from: '#fde2e2', middle: '#fff4cc', to: '#d9efdc' };
+export const SCALE = { from: '#fde2e2', middle: '#fff4cc', to: '#d9efdc' };
 
-function cell(number: NumberFormat, over: Partial<CellPaint> = {}): CellFormat {
+export function cell(number: NumberFormat, over: Partial<CellPaint> = {}): CellFormat {
   return { number, paint: { ...PLAIN, ...over } };
 }
 
-function heading(): CellFormat {
+export function heading(): CellFormat {
   return cell(GENERAL, { bold: true, fill: HEADING_FILL, align: 'center', borders: RULED_BELOW });
 }
 
-function banner(size: number): CellFormat {
+export function banner(size: number): CellFormat {
   return cell(GENERAL, { bold: true, fontSize: size, color: '#ffffff', fill: BANNER_FILL, align: 'center' });
 }
 
@@ -836,12 +836,12 @@ function salesRules(document: SheetDocument): void {
 // -------------------------------------------------------------------
 
 /** Where the charts start: past the columns the sheet uses, and a little more. */
-function chartsLeft(document: SheetDocument, columns: number): number {
+export function chartsLeft(document: SheetDocument, columns: number): number {
   const used = document.columnWidths.slice(0, columns).reduce((sum, width) => sum + width, 0);
   return GUTTER_WIDTH + used + 24;
 }
 
-function chart(
+export function chart(
   document: SheetDocument,
   kind: ChartKind,
   title: string,
@@ -866,7 +866,7 @@ function chart(
  * is. The window's width is the sum of these, and a chart past the last
  * one would be laid out in a row too narrow to hold it, at no width.
  */
-function setWidths(document: SheetDocument, wanted: readonly number[]): void {
+export function setWidths(document: SheetDocument, wanted: readonly number[]): void {
   const all = [...document.columnWidths];
   const length = Math.max(all.length, wanted.length, document.book.extent?.columns ?? 0);
   for (let column = 0; column < length; column++) {
@@ -875,7 +875,7 @@ function setWidths(document: SheetDocument, wanted: readonly number[]): void {
   document.columnWidths = all;
 }
 
-function range(address: string): RangeRef {
+export function range(address: string): RangeRef {
   const parsed = parseAddress(address);
   if (parsed === null) {
     throw new Error(`The seed cannot parse the address ${address}.`);

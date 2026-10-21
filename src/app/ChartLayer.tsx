@@ -1,3 +1,6 @@
+import type { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
 import { Box, Paint, type PaintBox, type PaintSurface, type UiElement, type UiPointerEvent } from 'gesso-core';
 
 import { MIN_CHART_HEIGHT, MIN_CHART_WIDTH } from '../sheet/Chart';
@@ -68,6 +71,8 @@ export interface ChartElementProps {
   readonly rowOffset: number;
   /** The live rectangle while this chart is being dragged, or null. */
   readonly drag: ChartDrag | null;
+  /** How far the sheet is scrolled sideways, which is where the gutter covers. */
+  readonly scrollX: Observable<number>;
   readonly on: ChartCallbacks;
   /** Whether the theme is dark, which the picture is made for; see `ChartInk`. */
   readonly dark: boolean;
@@ -83,7 +88,7 @@ export interface ChartElementProps {
  * it ended up, not where it passed through.
  */
 export function chartElement(props: ChartElementProps): UiElement {
-  const { chart, data, selected, rowOffset, drag, on, dark } = props;
+  const { chart, data, selected, rowOffset, drag, scrollX, on, dark } = props;
   const live = drag !== null && drag.id === chart.id ? drag : null;
   const x = live?.x ?? chart.x;
   const y = live?.y ?? chart.y;
@@ -97,22 +102,34 @@ export function chartElement(props: ChartElementProps): UiElement {
     }
   }
 
+  // The row's own coordinates start at its left edge, which is the
+  // gutter — the same arithmetic the fill handle does.
+  const left = GUTTER_WIDTH + x;
+  // The handles hang outside the chart, and the clip has to leave
+  // room for them.
+  const pad = selected ? HANDLE / 2 : 0;
+  /**
+   * Where the clip starts: the chart's own left edge, or the gutter's
+   * right edge once a sideways scroll has slid the chart under it.
+   *
+   * The row numbers are drawn inside each row, and a chart is lifted
+   * over every row it reaches down across — so a gutter can't be put
+   * over a chart by zIndex, only by the chart not drawing there. The
+   * column labels need nothing: the header row is lifted higher.
+   */
+  const clip = (scroll: number): number => Math.max(left - pad, GUTTER_WIDTH + scroll);
+
   // `Paint` rather than `Box`: it is a Box the application draws into,
   // and children stack over whatever it drew — which is what makes the
   // handles children of the chart rather than a layer beside it.
-  return Paint(
+  const picture = Paint(
     {
-      key: `chart-${chart.id}`,
+      key: 'picture',
       position: 'absolute',
-      // The row's own coordinates start at its left edge, which is the
-      // gutter — the same arithmetic the fill handle does.
-      left: GUTTER_WIDTH + x,
-      top: y - rowOffset,
+      left: scrollX.pipe(map(scroll => left - clip(scroll))),
+      top: pad,
       width,
       height,
-      // Over the cells and under the chrome. A menu opened across a
-      // chart has to cover it.
-      zIndex: 5,
       cursor: 'grab',
       // `image` with a label, which is what a chart is to a screen
       // reader: a picture with a sentence describing it.
@@ -157,6 +174,23 @@ export function chartElement(props: ChartElementProps): UiElement {
       }
     },
     ...children
+  );
+  // Only the box moves on a scroll; the picture's `inputs` are
+  // unchanged, so nothing is repainted.
+  return Box(
+    {
+      key: `chart-${chart.id}`,
+      position: 'absolute',
+      left: scrollX.pipe(map(clip)),
+      top: y - rowOffset - pad,
+      width: scrollX.pipe(map(scroll => Math.max(0, left + width + pad - clip(scroll)))),
+      height: height + pad * 2,
+      overflow: 'hidden',
+      // Over the cells and under the chrome. A menu opened across a
+      // chart has to cover it.
+      zIndex: 5
+    },
+    picture
   );
 }
 

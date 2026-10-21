@@ -107,6 +107,38 @@ describe('opening documents', () => {
     expect(reload.cell(2, 2)).toBe('in the new one');
   });
 
+  it('starts a new one from a template, named for it, and a blank from one nobody knows', async () => {
+    const library = new InMemorySheetLibrary();
+    const one = tab(library);
+    // Constructed by hand, as `tab` takes no templates.
+    const service = new SheetService(new SheetDocument(), {
+      schedule: run => run(),
+      library,
+      templates: { budget: { name: 'Monthly budget', build: document => document.setCell(0, 0, 'from the template') } },
+      rowCount: 100,
+      columnCount: 10
+    });
+    one.service.openDocument('');
+    await one.service.settled;
+
+    service.openDocument('new', 'budget');
+    await service.settled;
+    const made = latest(service.documentView);
+    expect(made.name).toBe('Monthly budget');
+    expect(made.id).not.toBe(FIRST_DOCUMENT);
+    expect(service.snapshot().sheets[0].cells).toContainEqual({ row: 0, column: 0, input: 'from the template' });
+
+    service.openDocument('new', 'constructor');
+    await service.settled;
+    expect(latest(service.documentView).name).toBe('Untitled');
+    expect(service.snapshot().sheets[0].cells).toEqual([]);
+
+    // A template is only for a new one: an id that exists opens as it is.
+    service.openDocument(made.id, 'budget');
+    await service.settled;
+    expect(latest(service.documentView).id).toBe(made.id);
+  });
+
   it('opens one by id, and leaves the other as it was', async () => {
     const library = new InMemorySheetLibrary();
     const one = tab(library);

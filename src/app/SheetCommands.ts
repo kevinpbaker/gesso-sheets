@@ -247,7 +247,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * browser window half the time and a blank workbook the other half
    * would be worse than a menu item.
    */
-  newDocument: { id: 'newDocument', label: 'New' },
+  newDocument: { id: 'newDocument', label: 'New…' },
   /**
    * Phase 38's four. *All workbooks* is the home screen; *Rename* puts
    * the keyboard in the name at the top; *Keep saving to this file* is

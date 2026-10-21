@@ -7,6 +7,7 @@ import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
 import type { PrintJob } from './SheetPrint';
 import { SheetService } from './SheetService';
+import { TEMPLATE_BUILDS } from './SheetTemplates';
 import { spawnScriptWorker } from '../script/browserWorker';
 
 /**
@@ -37,6 +38,7 @@ const service = new SheetService(new SheetDocument(), {
   library,
   seed,
   seedName: 'Northwind Trading',
+  templates: TEMPLATE_BUILDS,
   scripts: spawnScriptWorker,
   printer: printWindow()
 });

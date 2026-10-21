@@ -965,8 +965,10 @@ export interface SheetCommands {
    * Shows a document: `''` for the last one used, `'new'` for a blank
    * one, or an id from the route. Opening the one already open does
    * nothing, so the render worker sends this on every route change.
+   * `template` is what a `'new'` one starts from, by its id in
+   * `Templates.ts`; `''` is nothing.
    */
-  openDocument(id: string): void;
+  openDocument(id: string, template: string): void;
   /** Opens what a file held — a workbook as a document, a CSV as a sheet. */
   openFile(fileName: string, text: string, handle: number | null): void;
   /**

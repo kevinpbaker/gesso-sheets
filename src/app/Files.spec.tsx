@@ -8,6 +8,7 @@ import { SheetApp } from './SheetApp';
 import { SheetDocument } from './SheetDocument';
 import { InMemorySheetLibrary } from './SheetLibrary';
 import { sheetChannel } from './sheetChannel';
+import { TEMPLATE_BUILDS } from './SheetTemplates';
 import { SheetService } from './SheetService';
 import type { PrintJob } from './SheetPrint';
 
@@ -54,6 +55,7 @@ async function mount(): Promise<Harness> {
     library,
     rowCount: 200,
     columnCount: 20,
+    templates: TEMPLATE_BUILDS,
     printer: job => printed.push(job)
   });
   service.openDocument('');
@@ -107,7 +109,7 @@ describe('the File menu', () => {
     expect(h!.ui.queryByRole('menuitem')).toBeNull();
     h!.ui.fireEvent.click(h!.ui.getByText('File'));
     await h!.ui.settle();
-    for (const name of ['New', 'Open…', 'Open recent…', 'Save', 'Save as…', 'Download sheet as CSV']) {
+    for (const name of ['New…', 'Open…', 'Open recent…', 'Save', 'Save as…', 'Download sheet as CSV']) {
       expect(h!.ui.getByRole('menuitem', { name })).toBeDefined();
     }
   });
@@ -216,4 +218,46 @@ describe('the File menu', () => {
     await settle();
     expect(h!.ui.getByText('The print window was blocked. Allow pop-ups for this site, then print again.')).toBeDefined();
   });
+
+  it('asks what a new workbook starts from, and opens the choice here', async () => {
+    await mount();
+    const first = latest(h!.service.documentView).id;
+    await menu('f', 'New…');
+    expect(h!.ui.getByText('New workbook')).toBeDefined();
+    for (const name of ['Blank workbook', 'Monthly budget', 'Invoice', 'Northwind Trading', 'Paying off a loan']) {
+      expect(h!.ui.getByRole('button', { name })).toBeDefined();
+    }
+
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Monthly budget' }));
+    await settle();
+    const budget = latest(h!.service.documentView);
+    expect(budget.id).not.toBe(first);
+    expect(budget.name).toBe('Monthly budget');
+    expect(h!.service.snapshot().sheets[0].name).toBe('Budget');
+    expect(h!.ui.queryByText('New workbook')).toBeNull();
+
+    await menu('f', 'New…');
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Blank workbook' }));
+    await settle();
+    const blank = latest(h!.service.documentView);
+    expect(blank.id).not.toBe(budget.id);
+    expect(blank.name).toBe('Untitled');
+    expect(h!.service.snapshot().sheets[0].cells).toEqual([]);
+  });
+
+  it('opens nothing when the choice is cancelled', async () => {
+    await mount();
+    const first = latest(h!.service.documentView).id;
+    await menu('f', 'New…');
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Cancel' }));
+    await settle();
+    expect(latest(h!.service.documentView).id).toBe(first);
+    expect(h!.ui.queryByText('New workbook')).toBeNull();
+  });
 });
+
+function latest<T>(source: { subscribe(next: (value: T) => void): { unsubscribe(): void } }): T {
+  let value!: T;
+  source.subscribe(next => (value = next)).unsubscribe();
+  return value;
+}

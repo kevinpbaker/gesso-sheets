@@ -27,7 +27,8 @@ import type { SheetCommands, SheetView } from './SheetContract';
  * ## A tab is a document
  *
  * The route names it: `/d/<id>`. `/` means "whichever was used last",
- * and `/d/new` a blank one, and in both cases the url is replaced with
+ * `/d/new` a blank one and `/new/<template>` one started from a
+ * template in `Templates.ts`, and in each case the url is replaced with
  * the real id as soon as the application worker says what it opened —
  * so a reload reopens that document, and not the last-used one or
  * another blank. Opening a file *pushes* instead, so Back is the
@@ -53,8 +54,8 @@ export const CSV: ShellFileType = {
 };
 
 export interface FileActions {
-  /** A blank document, in a tab of its own. */
-  newDocument(): void;
+  /** A new document, here: blank, or from a template's id. */
+  newDocument(template?: string): void;
   /** An open picker: a workbook opens as the document here, a CSV as a sheet. */
   open(): void;
   /** A workbook from the library, by id, in this tab. */
@@ -90,11 +91,12 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
   ctx.effect(router.match, match => {
     if (match === null || match.path === '/proof') {
       if (match?.path === '/proof') {
-        sheet.send.openDocument('');
+        sheet.send.openDocument('', '');
       }
       return;
     }
-    sheet.send.openDocument(match.params.id ?? '');
+    const template = match.params.template;
+    sheet.send.openDocument(template === undefined ? (match.params.id ?? '') : 'new', template ?? '');
   });
 
   // And the url brought into line with what opened.
@@ -162,7 +164,8 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
 
   return {
     /**
-     * A blank workbook, here, with Back to return to this one.
+     * A new workbook, here, with Back to return to this one: blank, or
+     * started from a template in `Templates.ts`.
      *
      * In this tab rather than a new one, which is what it did until
      * Phase 38: a new tab is a second application worker starting from
@@ -172,13 +175,13 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
      * Asked of the application worker directly, and the url follows
      * what opens, pushed so Back returns: the path a file takes.
      */
-    newDocument: () => {
+    newDocument: template => {
       push = true;
-      sheet.send.openDocument('new');
+      sheet.send.openDocument('new', template ?? '');
     },
     openDocument: id => {
       push = true;
-      sheet.send.openDocument(id);
+      sheet.send.openDocument(id, '');
     },
     open: () => void shell.openFiles({ accept: [WORKBOOK, XLSX, CSV], multiple: true }).then(deliver),
     reopen: handle => void shell.reopenFile(handle).then(deliver),
