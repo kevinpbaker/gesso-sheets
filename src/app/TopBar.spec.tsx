@@ -36,13 +36,13 @@ interface Harness {
   service: SheetService;
 }
 
-async function mount(fill?: (document: SheetDocument) => void): Promise<Harness> {
+async function mount(fill?: (document: SheetDocument) => void, height = 420): Promise<Harness> {
   const document = new SheetDocument();
   fill?.(document);
   document.sheet.recalculate();
   const service = new SheetService(document, { rowCount: 200, columnCount: 20 });
   const served = serveForTest([sheetChannel(service)]);
-  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 900, height: 420 });
+  const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 900, height });
   await ui.settle();
   await served.settle();
   await ui.settle();
@@ -183,8 +183,16 @@ describe('the top bar from the keyboard', () => {
      * bottom of the Data menu was drawn outside its own background.
      * Every menu is checked, because which one overflows depends on
      * nothing more than how long somebody's label is.
+     *
+     * In a window tall enough for the longest menu. A panel longer than
+     * its window stops at the edge and scrolls (Gesso 0.6), so in the
+     * usual 420 the Format menu's last rows are below its frame on
+     * purpose, and this would be measuring the scroll, not the panel.
      */
     it('draws every command inside its own panel', async () => {
+      h.ui.unmount();
+      h.served.dispose();
+      h = await mount(undefined, 1200);
       for (const menu of MENUS) {
         await press('F10');
         await press(menu.mnemonic);

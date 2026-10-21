@@ -25,6 +25,8 @@ interface Harness {
   service: SheetService;
   /** Every file request the shell has been sent, answered by `answer`. */
   asked: { id: number; request: ShellFileRequest }[];
+  /** Every url the shell has been asked to open in a tab of its own. */
+  opened: string[];
 }
 
 let h: Harness | undefined;
@@ -51,17 +53,20 @@ async function mount(): Promise<Harness> {
   const served = serveForTest([sheetChannel(service)]);
   const ui = renderTest(createComponent(SheetApp), { channels: served.registry, width: 1400, height: 600 });
   const asked: Harness['asked'] = [];
+  const opened: string[] = [];
   ui.runtime.onShellRequest((request: ShellRequest) => {
     if (request.type === 'file') {
       asked.push({ id: request.id, request: request.request });
+    } else if (request.type === 'openUrl') {
+      opened.push(request.url);
     }
   });
-  h = { ui, served, service, asked };
+  h = { ui, served, service, asked, opened };
   await settle();
   return h;
 }
 
-const EMPTY = { files: [], saved: null, recent: [], error: null } as const;
+const EMPTY = { files: [], directory: null, saved: null, recent: [], error: null } as const;
 
 async function answer(result: ShellFileResult): Promise<void> {
   const last = h!.asked[h!.asked.length - 1];
@@ -93,7 +98,7 @@ describe('the File menu', () => {
     expect(h!.ui.queryByRole('menuitem')).toBeNull();
     h!.ui.fireEvent.click(h!.ui.getByText('File'));
     await h!.ui.settle();
-    for (const name of ['New', 'Open…', 'Open recent…', 'Save', 'Save as…', 'Download sheet as CSV']) {
+    for (const name of ['New…', 'Open…', 'Open recent…', 'Save', 'Save as…', 'Download sheet as CSV']) {
       expect(h!.ui.getByRole('menuitem', { name })).toBeDefined();
     }
   });
@@ -163,11 +168,40 @@ describe('the File menu', () => {
     await mount();
     await menu('f', 'Open recent…');
     expect(h!.asked[0].request).toEqual({ op: 'recent' });
-    await answer({ ...EMPTY, outcome: 'ok', recent: [{ handle: 3, name: 'Budget.gsheet', used: 1 }] });
+    await answer({ ...EMPTY, outcome: 'ok', recent: [{ handle: 3, name: 'Budget.gsheet', kind: 'file', used: 1 }] });
 
     h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Budget.gsheet' }));
     await settle();
     expect(h!.asked[1].request).toEqual({ op: 'reopen', handle: 3 });
     expect(h!.ui.queryByRole('form', { name: 'Recent files' })).toBeNull();
+  });
+
+  it('asks what a new workbook starts from, and opens the choice in a tab of its own', async () => {
+    await mount();
+    await menu('f', 'New…');
+    expect(h!.ui.getByText('New workbook')).toBeDefined();
+    for (const name of ['Blank workbook', 'Monthly budget', 'Invoice', 'Northwind Trading']) {
+      expect(h!.ui.getByRole('button', { name })).toBeDefined();
+    }
+    expect(h!.opened).toEqual([]);
+
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Monthly budget' }));
+    await settle();
+    expect(h!.opened).toEqual(['/new/budget']);
+    expect(h!.ui.queryByText('New workbook')).toBeNull();
+
+    await menu('f', 'New…');
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Blank workbook' }));
+    await settle();
+    expect(h!.opened).toEqual(['/new/budget', '/d/new']);
+  });
+
+  it('opens nothing when the choice is cancelled', async () => {
+    await mount();
+    await menu('f', 'New…');
+    h!.ui.fireEvent.click(h!.ui.getByRole('button', { name: 'Cancel' }));
+    await settle();
+    expect(h!.opened).toEqual([]);
+    expect(h!.ui.queryByText('New workbook')).toBeNull();
   });
 });
