@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import type { UiNode } from 'gesso-core';
 import { createComponent } from 'gesso-framework';
 import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'gesso-testing';
 import 'gesso-testing/matchers';
@@ -33,6 +34,30 @@ interface Harness {
   served: ServedForTest;
   service: SheetService;
   document: SheetDocument;
+}
+
+/**
+ * The row a cell is in. A cell is not the row's own child: the row holds
+ * its cells as a list of its own, and a frozen one inside the frozen
+ * strip, so the row is found by its role.
+ */
+function rowOf(cell: UiNode): UiNode | null {
+  for (let at = cell.parent; at !== null; at = at.parent) {
+    if (at.properties.get('role') === 'row') {
+      return at;
+    }
+  }
+  return null;
+}
+
+/** The frozen strip a cell is stuck in, between it and its row, or null when it scrolls. */
+function stripOf(cell: UiNode): UiNode | null {
+  for (let at = cell.parent; at !== null && at.properties.get('role') !== 'row'; at = at.parent) {
+    if (at.properties.get('position') === 'sticky') {
+      return at;
+    }
+  }
+  return null;
 }
 
 const bold: CellFormat = { number: GENERAL, paint: { ...PLAIN, bold: true, fill: '#eef2f7' } };
@@ -266,26 +291,18 @@ describe('the borders a cell draws', () => {
     });
     const anchor = h.ui.getByRole('cell', { name: 'anchor' });
     const grid = h.ui.getLayout(h.ui.getByRole('grid'));
+    // The covered cells are not drawn at all — there is no node for one
+    // to put a box round — so the only cell in the merge is its anchor.
+    const left = grid.x + GUTTER_WIDTH + COLUMN_WIDTH;
+    const top = grid.y + HEADER_HEIGHT + ROW_HEIGHT;
     const inside = h.ui.getAllByRole('cell').filter(cell => {
-      if (cell === anchor) {
-        return false;
-      }
       const box = h.ui.getLayout(cell);
-      const left = grid.x + GUTTER_WIDTH + COLUMN_WIDTH;
-      const top = grid.y + HEADER_HEIGHT + ROW_HEIGHT;
-      // The covered cells come to nothing on one axis: no width in the
-      // anchor's row, where they sit just past its span, and no height
-      // in the row under it.
-      const inRows = box.y >= top && box.y < top + 2 * ROW_HEIGHT;
-      const inColumns = box.x >= left && box.x <= left + 3 * COLUMN_WIDTH;
-      return inRows && inColumns && (box.width === 0 || box.height === 0);
+      return box.y >= top && box.y < top + 2 * ROW_HEIGHT && box.x >= left && box.x < left + 3 * COLUMN_WIDTH;
     });
-    // Two covered cells beside the anchor, and three in the row under it.
-    expect(inside.length).toBeGreaterThanOrEqual(5);
-    for (const cell of inside) {
-      expect(cell.decorations ?? []).toHaveLength(0);
-      expect(cell.properties.get('borderWidth')).toBe(0);
-    }
+    expect(inside).toEqual([anchor]);
+    // And the anchor is opaque, so the grid lines its rows draw under
+    // the columns it spans are covered up.
+    expect(anchor.properties.get('backgroundColor')).not.toBe('transparent');
   });
 
   /**
@@ -389,14 +406,14 @@ describe('a hidden row', () => {
    */
   it('clips what it is hiding, so nothing paints over the row below', async () => {
     h = await mount(d => d.setCell(1, 0, 'hidden'));
-    const rowOf = (text: string) => h.ui.getByRole('cell', { name: text }).parent;
-    expect(rowOf('hidden')?.properties.get('overflow')).toBeUndefined();
+    const rowHolding = (text: string) => rowOf(h.ui.getByRole('cell', { name: text }));
+    expect(rowHolding('hidden')?.properties.get('overflow')).toBeUndefined();
 
     h.service.hideRows(1, 1);
     await h.served.settle();
     await h.ui.settle();
 
-    expect(rowOf('hidden')?.properties.get('overflow')).toBe('hidden');
+    expect(rowHolding('hidden')?.properties.get('overflow')).toBe('hidden');
   });
 
   /** Only the hidden rows: clipping every row would cut the fill handle off. */
@@ -409,7 +426,7 @@ describe('a hidden row', () => {
     await h.served.settle();
     await h.ui.settle();
 
-    expect(h.ui.getByRole('cell', { name: 'kept' }).parent?.properties.get('overflow')).toBeUndefined();
+    expect(rowOf(h.ui.getByRole('cell', { name: 'kept' }))?.properties.get('overflow')).toBeUndefined();
   });
 
   it('comes back when it is shown again', async () => {
@@ -502,7 +519,7 @@ describe('a frozen pane', () => {
     await h.served.settle();
     await h.ui.settle();
 
-    const row = h.ui.getByRole('cell', { name: 'r1' }).parent;
+    const row = rowOf(h.ui.getByRole('cell', { name: 'r1' }));
     expect(row?.properties.get('position')).toBe('sticky');
     expect(row?.properties.get('top')).toBe(HEADER_HEIGHT + ROW_HEIGHT);
   });
@@ -513,7 +530,7 @@ describe('a frozen pane', () => {
     await h.served.settle();
     await h.ui.settle();
 
-    expect(h.ui.getByRole('cell', { name: 'r5' }).parent?.properties.get('position')).toBeUndefined();
+    expect(rowOf(h.ui.getByRole('cell', { name: 'r5' }))?.properties.get('position')).not.toBe('sticky');
   });
 
   it('sticks the frozen column at its own offset', async () => {
@@ -522,9 +539,11 @@ describe('a frozen pane', () => {
     await h.served.settle();
     await h.ui.settle();
 
+    // The strip is what is stuck, one gutter along, and the cell sits
+    // at the strip's own edge.
     const cell = h.ui.getByRole('cell', { name: 'r3' });
-    expect(cell.properties.get('position')).toBe('sticky');
-    expect(cell.properties.get('left')).toBe(GUTTER_WIDTH);
+    expect(stripOf(cell)?.properties.get('left')).toBe(GUTTER_WIDTH);
+    expect(cell.properties.get('left')).toBe(0);
   });
 
   /** Each cell appears once: frozen, or in the window, never both. */
@@ -542,12 +561,12 @@ describe('a frozen pane', () => {
     h.service.freeze(2, 1);
     await h.served.settle();
     await h.ui.settle();
-    expect(h.ui.getByRole('cell', { name: 'r0' }).properties.get('position')).toBe('sticky');
+    expect(stripOf(h.ui.getByRole('cell', { name: 'r0' }))).not.toBeNull();
 
     h.service.freeze(0, 0);
     await h.served.settle();
     await h.ui.settle();
-    expect(h.ui.getByRole('cell', { name: 'r0' }).properties.get('position')).toBeUndefined();
+    expect(stripOf(h.ui.getByRole('cell', { name: 'r0' }))).toBeNull();
   });
 
   /**

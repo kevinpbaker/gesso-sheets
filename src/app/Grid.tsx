@@ -23,6 +23,7 @@ import {
   type UiPasteEvent,
   type UiModifier,
   type UiPointerEvent,
+  type UiChild,
   type UiTextSpan,
   type UiTextChangeEvent,
   type SheetRange,
@@ -103,13 +104,21 @@ import type { SheetEditing } from './SheetEditing';
  *   - **A cell with no value yet looks like a cell waiting.** A band
  *     covers a scroll and cannot cover a jump, so this still happens
  *     on a fling; what it must not look like is an empty sheet.
+ *   - **A cell that holds nothing is not a node.** Most of a sheet is
+ *     empty, and an empty cell is a box with a grid line round it: the
+ *     row draws the lines for all of its columns in its own paint pass
+ *     (see `gridLines`), and the selection's wash is a rectangle or two
+ *     per row over the top (see `washFor`). What gets a node is a cell
+ *     with something to show — a value, a format, a note, a rule's mark,
+ *     a merge — and the active cell, which carries the ring and is what
+ *     a screen reader is told the cursor is on. Counted in Chrome on the
+ *     proof's Sales sheet scrolled past its orders, this took the cells
+ *     on screen from 722 to 14 — the frozen headings and the active one
+ *     — and the thumb drag's median frame from about 4.7ms to 2.6ms.
  */
 
-/** Where a cell stands in the selection: outside it, in it, or the one. */
-type Standing = 0 | 1 | 2;
-
 /**
- * A cell on screen: the element, and the two subjects that feed it.
+ * A cell on screen: the element, and the subjects that feed it.
  *
  * The row and column are kept beside them because the feeds walk this
  * map every time the window or the selection moves, and parsing them
@@ -138,9 +147,22 @@ interface MountedCell {
   readonly height: BehaviorSubject<number> | null;
   readonly element: UiElement;
   readonly value: FanCell<string | null, { row: number; column: number }>;
-  readonly standing: FanCell<Standing, { row: number; column: number }>;
   /**
-   * How the cell is painted, pushed in like the other two.
+   * Whether it was built as the active cell, with the ring. Decided when
+   * it is built, like being stuck or merged: there is one active cell, it
+   * moves at a person's pace, and a cell that stops being it is built
+   * again rather than every cell binding to whether it is.
+   */
+  readonly active: boolean;
+  /**
+   * The row line that holds it now, so a line that lets go of a cell
+   * does not release one another line has since taken up. Only a merge's
+   * anchor, kept by the cell it shows, can move between lines: its row
+   * scrolls away from one slot and comes back in another.
+   */
+  owner: string;
+  /**
+   * How the cell is painted, pushed in like the value.
    *
    * A third subject rather than a pipe off the channel, on the rule
    * this file has followed since Phase 0: a cell subscribes to its
@@ -162,7 +184,15 @@ interface MountedCell {
   readonly shapes: BehaviorSubject<readonly DecorationShape[]>;
 }
 
-const SELECTED_WASH = 'selectionBackground';
+/**
+ * The selection's wash, laid over the cells rather than painted into
+ * them, so it is see-through: the theme's `selectionBackground` over the
+ * theme's own background, and a tint over a fill, as a spreadsheet draws
+ * a range. One per theme because a decoration-free box cannot name a
+ * palette entry with an alpha; the two are the theme's opaque wash
+ * worked back to the blue it is made of.
+ */
+const SELECTED_WASH = { light: 'rgba(59, 130, 246, 0.16)', dark: 'rgba(59, 130, 246, 0.33)' } as const;
 const GRID_LINE = 'border';
 
 /**
@@ -280,6 +310,12 @@ export function Grid(
    * migration did, and the reason `fanOut` grew a datum. Measured three
    * times against the hand-rolled version it replaced: the same
    * numbers, to the tenth of a millisecond.
+   *
+   * **The selection no longer reaches the cells at all.** It had a
+   * fan-out of its own, a standing per cell that chose its wash and its
+   * ring; with empty cells drawn by their row there is no cell to wash,
+   * so the wash is laid over the rows (`washFor`) and the ring is the
+   * active cell's own border, a cell built for being active.
    */
   let latestWindow: SheetWindow | null = null;
   let latestSelection: SheetSelection | null = null;
@@ -296,18 +332,31 @@ export function Grid(
     { initial: null }
   );
 
-  const standings = fanOut<SheetSelection, Standing, At>(
-    selection$,
-    (selection, _key, at) => standingOf(selection, at.row, at.column),
-    { initial: 0 }
-  );
+  /**
+   * Whether the window exists yet, and so whether the rows can be asked
+   * which cells they hold. The effects below run once as they are
+   * registered, which is before the window — and before most of what a
+   * row is built from — has been made.
+   */
+  let ready = false;
+  /** The active cell, as a merge's anchor where it is in one; worked out when first asked. */
+  let activeAt: { row: number; column: number } | null = null;
 
+  // After the fan-out, which has already pushed the new values into the
+  // cells there are: what is left is which cells there should be.
   ctx.effect(window$, current => {
     latestWindow = current;
+    if (ready) {
+      refreshLines();
+    }
   });
 
   ctx.effect(selection$, selection => {
     latestSelection = selection;
+    activeAt = null;
+    if (ready) {
+      refreshLines();
+    }
   });
 
   /**
@@ -354,6 +403,11 @@ export function Grid(
         mounted.paint.next(next);
       }
       refreshShapes(mounted);
+    }
+    // A cell given a format, a note or a rule's mark has something to
+    // show, and one that lost the last of them may have nothing left.
+    if (ready) {
+      refreshLines();
     }
   };
 
@@ -402,6 +456,9 @@ export function Grid(
       if (before.cells[mounted.row]?.[mounted.column] !== current.cells[mounted.row]?.[mounted.column]) {
         refreshShapes(mounted);
       }
+    }
+    if (ready) {
+      refreshLines();
     }
   });
 
@@ -659,11 +716,13 @@ export function Grid(
    * columns ask, and there are a handful of those.
    */
   const columnLeft = (column: number): number => {
-    let left = 0;
-    for (let at = 0; at < column; at++) {
-      left += widths.value[at] ?? COLUMN_WIDTH;
+    // Every cell with a node asks, now that a cell is placed by its own
+    // `left`, so the sum is kept per set of widths rather than walked.
+    const starts = prefixOf(widths.value);
+    if (column < starts.length) {
+      return starts[column];
     }
-    return left;
+    return starts[starts.length - 1] + (column - starts.length + 1) * COLUMN_WIDTH;
   };
 
   const rowHeights = new Map<number, BehaviorSubject<number>>();
@@ -727,6 +786,30 @@ export function Grid(
     }
     return width;
   };
+  /**
+   * Where each column starts, as a subject per column, for the same
+   * reason as its width.
+   *
+   * A cell is placed in its row by its own `left` rather than by the
+   * cells before it, because the cells before it are mostly not there:
+   * an empty cell has no node to push the next one along. So a column
+   * that is dragged wider moves every cell to its right, which is the
+   * cells with nodes in the columns after it and nothing else. Two per
+   * column, because a frozen column's cell is placed inside the frozen
+   * strip and the rest inside the row, which starts a gutter earlier.
+   */
+  const columnLefts = new Map<string, { readonly column: number; readonly from: number; readonly left: BehaviorSubject<number> }>();
+  const leftOf = (column: number, stuck: boolean): Observable<number> => {
+    const key = `${stuck ? 'f' : 's'}${column}`;
+    let entry = columnLefts.get(key);
+    if (entry === undefined) {
+      const from = stuck ? 0 : GUTTER_WIDTH;
+      entry = { column, from, left: new BehaviorSubject(columnLeft(column) + from) };
+      columnLefts.set(key, entry);
+    }
+    return entry.left;
+  };
+
   ctx.effect(widths, all => {
     const moved = new Set<number>();
     for (const [column, width] of columnWidths) {
@@ -734,6 +817,13 @@ export function Grid(
       if (next !== width.value) {
         width.next(next);
         moved.add(column);
+      }
+    }
+    const starts = prefixOf(all);
+    for (const { column, from, left } of columnLefts.values()) {
+      const next = (starts[column] ?? columnLeft(column)) + from;
+      if (next !== left.value) {
+        left.next(next);
       }
     }
     if (moved.size === 0) {
@@ -1175,22 +1265,24 @@ export function Grid(
   const buildCell = (
     at: { readonly row: number; readonly column: number },
     value: Observable<string | null>,
-    state: Observable<Standing>,
     paint: Observable<CellPaint>,
     shapes: Observable<readonly DecorationShape[]>,
-    slotHeight: Observable<number> | null
+    slotHeight: Observable<number> | null,
+    active: boolean
   ): UiElement => {
     // Read once, at build time: a cell kept by slot is only ever moved to
     // another row in its own column, and never into or out of a merge
     // (see `cell`), so nothing below changes when it is.
     const { row, column } = at;
     /**
-     * A frozen column's cells are stuck at their own offset.
+     * A frozen column's cells live in the row's frozen strip.
      *
-     * The same `position: 'sticky'` the gutter has always used, one
-     * column further along. Read once, at build time, because the
-     * cells are rebuilt when the pane moves — see the effect that
-     * empties `cells` on a freeze.
+     * The strip is what is stuck — `position: 'sticky'`, one gutter along,
+     * the way the gutter has always been — and the cells in it are placed
+     * against it, so a frozen cell is measured from the strip's edge and
+     * not from the row's. Read once, at build time, because the cells are
+     * rebuilt when the pane moves — see the effect that empties `cells` on
+     * a freeze.
      */
     const stuck = column < frozen.value.columns;
     /**
@@ -1199,22 +1291,30 @@ export function Grid(
      * The anchor is as wide as the columns it covers and as tall as
      * the rows, and it overflows its own row downwards to reach them
      * — rows are not merged, only cells are, so there is nothing else
-     * for a vertical merge to be. The cells it covers are given no
-     * width and no height at all, which keeps every other cell in the
-     * row at the offset the window put it and is the only version
-     * that does not need the window to know about merges.
+     * for a vertical merge to be. The cells it covers have no node at
+     * all (see `needsNode`), and the anchor is opaque, so the grid lines
+     * the rows draw under it are covered up.
      */
     const merge = mergeAt(row, column);
     const anchors = merge !== null && merge.firstRow === row && merge.firstColumn === column;
-    const covered = merge !== null && !anchors;
     const spanWidth = merge === null ? null : columnLeft(merge.lastColumn + 1) - columnLeft(merge.firstColumn);
     const spanRows = merge === null ? 1 : merge.lastRow - merge.firstRow + 1;
 
     return Text({
       key: column,
-      position: stuck ? 'sticky' : undefined,
-      left: stuck ? GUTTER_WIDTH + columnLeft(column) : undefined,
-      zIndex: stuck ? 1 : anchors && spanRows > 1 ? 1 : undefined,
+      /**
+       * Placed by its own offset, and not by the cells before it.
+       *
+       * A row used to be a `Row` of every cell in its window, each pushing
+       * the next along. Most of those were empty and are not there any
+       * more, so a cell says where it is: absolute, against the row (or
+       * the frozen strip), at the column's start. `leftOf` is a subject
+       * per column, moved by a resize.
+       */
+      position: 'absolute',
+      left: leftOf(column, stuck),
+      top: 0,
+      zIndex: anchors && spanRows > 1 ? 1 : undefined,
       /**
        * Borders follow the paint *and* the column's width, because a
        * right edge is drawn at the far side of a cell and a drag
@@ -1227,60 +1327,37 @@ export function Grid(
       // rule rather than left blank, so a gap on a fling reads as
       // "not here yet" instead of as the end of the sheet.
       // With no colour of its own, the ink follows the fill the cell is
-      // showing: the theme's own where there is none, or where the
-      // selection's wash is drawn over it. See `inkFor`.
-      color: combineLatest([value, paint, state]).pipe(
-        map(([text, how, where]) =>
-          text === null ? 'placeholder' : how.color !== '' ? how.color : where === 1 ? 'text' : inkFor(how.fill)
-        )
+      // showing: the theme's own where there is none. See `inkFor`. The
+      // selection's wash is laid over the top and changes neither.
+      color: combineLatest([value, paint]).pipe(
+        map(([text, how]) => (text === null ? 'placeholder' : how.color !== '' ? how.color : inkFor(how.fill)))
       ),
       /**
-       * A fill wins everywhere except inside a selected range.
+       * See-through, unless it has a fill or anchors a merge.
        *
-       * The active cell keeps its fill — the ring is what marks it,
-       * and washing it out would hide the colour somebody is in the
-       * middle of choosing. The rest of a multi-cell selection takes
-       * the wash, because a rectangle you cannot see is not a
-       * selection.
+       * The grid lines are the row's, drawn under its cells, so a cell
+       * with nothing behind its text lets them show and needs to paint
+       * nothing of its own. A merge's anchor is opaque because the lines
+       * of the columns and rows it covers run under it.
        */
-      backgroundColor: combineLatest([state, paint]).pipe(
-        map(([where, how]) => (where === 1 ? SELECTED_WASH : how.fill === '' ? 'background' : how.fill))
-      ),
-      borderColor: state.pipe(map(where => (where === 2 ? 'primary' : GRID_LINE))),
-      // A covered cell draws no grid line: it is inside the merge, and
-      // a box of no width with a border is still a line down it.
-      borderWidth: covered ? 0 : state.pipe(map(where => (where === 2 ? 2 : 1))),
+      backgroundColor: paint.pipe(map(how => (how.fill !== '' ? how.fill : anchors ? 'background' : 'transparent'))),
       /**
-       * A covered cell gives up its width only to the anchor's own row.
-       *
-       * The anchor takes the whole span across the row it is in, so the
-       * cells beside it there must come to nothing or the row is twice
-       * as wide as it should be. A row *below* the anchor has no anchor
-       * in it — the anchor reaches down into it by overflowing — so the
-       * cells it covers there still have to hold their columns open.
-       * Zeroed, they dragged every column after them one place left,
-       * which is invisible until there is something in those columns
-       * to see move. Found by reading the boxes in a browser.
+       * The ring, on the active cell. It is the cell's own border, so it
+       * is clipped and covered with the cell — by the gutter and the
+       * frozen strip, which a ring drawn by the row would paint over.
+       * Every other cell draws the grid line it sits on, which is where
+       * the row draws it too, for a fill that would otherwise cover it.
        */
-      width: covered
-        ? merge !== null && row === merge.firstRow
-          ? 0
-          : widthOf(column)
-        : anchors && spanWidth !== null
-          ? spanWidth
-          : widthOf(column),
-      height: covered
-        ? 0
-        : anchors && spanRows > 1
+      borderColor: active ? 'primary' : GRID_LINE,
+      borderWidth: active ? 2 : 1,
+      width: anchors && spanWidth !== null ? spanWidth : widthOf(column),
+      height:
+        anchors && spanRows > 1
           ? heightOf(row).pipe(map(height => (height === 0 ? 0 : height * spanRows)))
           : (slotHeight ?? heightOf(row)),
       flexShrink: 0,
-      // A covered cell has no room for padding either, or a row of
-      // them adds twelve pixels each to the width of the row. One
-      // below the anchor keeps its width but still draws nothing, so
-      // padding it would only push against a zero height.
-      paddingLeft: covered ? 0 : CELL_PADDING,
-      paddingRight: covered ? 0 : CELL_PADDING,
+      paddingLeft: CELL_PADDING,
+      paddingRight: CELL_PADDING,
       fontSize: paint.pipe(map(how => (how.fontSize === 0 ? CELL_FONT_SIZE : how.fontSize * zoom))),
       ...(fonts ? { fontFamily: paint.pipe(map(how => fontStack(how.fontFamily))) } : {}),
       /**
@@ -1308,6 +1385,12 @@ export function Grid(
       // does while a rectangle is being picked out.
       selectable: false,
       role: 'cell',
+      // The active cell is the grid's active descendant, which is how a
+      // screen reader hears which cell the keyboard is on: the grid keeps
+      // focus, and a cell never takes it. See `activeCell$`.
+      // Declared on every cell, so a cell that stops being the active one
+      // hands its node back: a ref left out is a ref the builder keeps.
+      ref: active ? activeRef() : undefined,
       onClick: (event: UiPointerEvent) => selectByPointer(at.row, at.column, event.modifiers.shift)
     });
   };
@@ -1830,7 +1913,7 @@ export function Grid(
   };
 
   /**
-   * The cell on screen at `row` and `column`.
+   * The cell on screen at `row` and `column`, for a cell that has a node.
    *
    * **Kept by its place on screen, where it can be.** The window mounts
    * each scrolled row in a slot (`recycleRows`), and a cell is kept by
@@ -1847,50 +1930,67 @@ export function Grid(
    * merge when it is built; both are kept by the cell they show, as
    * every cell used to be. Keys of the two kinds never meet: `s` marks
    * a slot's.
+   *
+   * Which cells get here at all is `needsNode`'s question, asked by the
+   * row's line; `owner` is that line, so it knows what it holds.
    */
-  const cell = (row: number, column: number, slot?: number): UiElement => {
+  const keyOf = (row: number, column: number, slot: number | undefined): string =>
+    slot !== undefined && mergeAt(row, column) === null ? `s${slot}:${column}` : `${row}:${column}`;
+
+  const cell = (row: number, column: number, slot: number | undefined, owner: string): UiElement => {
     if (openAt !== null && openAt.row === row && openAt.column === column) {
       return editorCell(row, column);
     }
-    const kept = slot !== undefined && mergeAt(row, column) === null;
-    const key = kept ? `s${slot}:${column}` : `${row}:${column}`;
-    const mounted = cells.get(key);
+    const key = keyOf(row, column, slot);
+    const active = isActive(row, column);
+    let mounted = cells.get(key);
+    // The ring is built in, so a cell that became or stopped being the
+    // active one is made again rather than moved.
+    if (mounted !== undefined && mounted.active !== active) {
+      release(key);
+      mounted = undefined;
+    }
     if (mounted !== undefined) {
+      mounted.owner = owner;
       if (mounted.row !== row) {
         repoint(key, mounted, row);
       }
       return mounted.element;
     }
-    // Seeded from what the window and the selection say *now*, because
-    // a cell is built during the frame that reveals it and the feeds
-    // above have already run for this one.
+    // Seeded from what the window says *now*, because a cell is built
+    // during the frame that reveals it and the feed above has already
+    // run for this one.
+    const kept = key.startsWith('s');
     const at = { row, column };
     const value = values.for(key, at);
-    const standing = standings.for(key, at);
     const paint = new BehaviorSubject<CellPaint>(paintOf(row, column));
     const shapes = new BehaviorSubject<readonly DecorationShape[]>(shapesFor(row, column, paint.value));
     const height = kept ? new BehaviorSubject(heightNow(row)) : null;
-    const element = buildCell(at, value, standing, paint, shapes, height);
-    cells.set(key, { row, column, slot: kept ? slot : undefined, at, height, element, value, standing, paint, shapes });
+    const element = buildCell(at, value, paint, shapes, height, active);
+    cells.set(key, { row, column, slot: kept ? slot : undefined, at, height, element, value, active, owner, paint, shapes });
     return element;
+  };
+
+  /** Lets a cell go: out of the cache, and off the window's feed. */
+  const release = (key: string): void => {
+    cells.delete(key);
+    values.release(key);
   };
 
   /**
    * Moves a cell kept by slot to show another row of its column.
    *
    * Everything a cell shows that depends on its row is pushed in here,
-   * through the subjects it was built on: its value and its standing in
-   * the selection through the fan-outs, which read the new row and push
-   * only what differs; its paint, its borders and marks, and its height.
-   * On a sheet nobody has formatted most of that is a pointer comparison
-   * that pushes nothing.
+   * through the subjects it was built on: its value through the
+   * fan-out, which reads the new row and pushes only what differs; its
+   * paint, its borders and marks, and its height. On a sheet nobody has
+   * formatted most of that is a pointer comparison that pushes nothing.
    */
   const repoint = (key: string, mounted: MountedCell, row: number): void => {
     mounted.row = row;
     mounted.at.row = row;
     const at = { row, column: mounted.column };
     values.move(key, at);
-    standings.move(key, at);
     const paint = paintOf(row, mounted.column);
     if (paint !== mounted.paint.value) {
       mounted.paint.next(paint);
@@ -1902,6 +2002,414 @@ export function Grid(
     }
   };
 
+  /** Whether a cell is the one the selection is on — a merge's anchor, when it is in one. */
+  const isActive = (row: number, column: number): boolean => {
+    if (latestSelection === null) {
+      return false;
+    }
+    activeAt ??= anchorOf(latestSelection.row, latestSelection.column);
+    return activeAt.row === row && activeAt.column === column;
+  };
+
+  /**
+   * Whether a cell has to be a node.
+   *
+   * **Most of a sheet is empty, and an empty cell is drawn by its row.**
+   * The row paints the grid lines of every column it holds (`gridLines`)
+   * and the selection is laid over the rows (`washFor`), so a cell with
+   * nothing in it, nothing on it and nothing round it has nothing left
+   * to draw. Everything else is a node: a value, any format — a fill or
+   * a border shows with nothing typed, and a font would the moment
+   * something is — a note, a rule's mark, a spread from the simulation,
+   * a merge's anchor, and the active cell, whose ring is its border and
+   * which is what a screen reader is told the keyboard is on. A cell a
+   * merge covers never is: the anchor is drawn over it.
+   *
+   * A row the window has not sent yet keeps whatever its slot holds.
+   * Rows reach a slot a frame before their values reach the window, and
+   * a slot that let its cells go when it was handed an unknown row would
+   * build them all again a frame later: a thumb dragged through a full
+   * sheet did exactly that, every frame. Kept, they show the new row's
+   * nothing-yet until it arrives, as every cell did before.
+   */
+  const needsNode = (row: number, column: number, key: string): boolean => {
+    const merge = mergeAt(row, column);
+    if (merge !== null) {
+      return merge.firstRow === row && merge.firstColumn === column;
+    }
+    if (isActive(row, column)) {
+      return true;
+    }
+    const value = latestWindow === null ? null : cellIn(latestWindow, row, column);
+    if (value === null) {
+      return cells.has(key);
+    }
+    return (
+      value !== '' ||
+      paintOf(row, column) !== PLAIN_PAINT ||
+      noteOf(row, column) !== '' ||
+      isFlagged(row, column) ||
+      latestUncertainty.cells[row]?.[column] !== undefined
+    );
+  };
+
+  /**
+   * What a mounted row holds, kept per slot like its cells.
+   *
+   * A row's cells are a stream of its own rather than children written
+   * into the row, so a cell that gains a value — the window arriving a
+   * frame after its row did, a format, a note — is one row's list pushed
+   * again, and not every row on the screen built again to find it. The
+   * window rebuilds a row when its columns or its slot's row change, and
+   * `fillLine` runs then too; between those, `refreshLines` asks every
+   * mounted row whether its list is still right and pushes the ones that
+   * are not.
+   *
+   * It is also what lets a cell go. A cell leaves when its line stops
+   * holding it — a column scrolled away, a value cleared — and not when
+   * the scrolling range stops covering it, which was the old test and
+   * which a frozen cell always failed: the range starts past the bands,
+   * so every frozen cell was released while it was still on screen and
+   * drew empty. A frozen cell is in its row's line like any other.
+   */
+  interface RowLine {
+    readonly key: string;
+    readonly slot: number | undefined;
+    /** The row it holds now. */
+    row: number;
+    /** The cells with nodes in the scrolled columns, and the wash over them. */
+    readonly cells: BehaviorSubject<readonly UiElement[]>;
+    /** The same for the frozen columns, inside the strip. */
+    readonly stuck: BehaviorSubject<readonly UiElement[]>;
+    /** The keys of the cells it holds, so the ones it stops holding are let go. */
+    keys: ReadonlySet<string>;
+    /** The grid lines under the scrolled columns, and under the frozen ones. */
+    readonly lines: BehaviorSubject<readonly DecorationShape[]>;
+    readonly stripLines: BehaviorSubject<readonly DecorationShape[]>;
+    /**
+     * The row's modifiers: its lines, and the reference outlines of the
+     * row it holds. Hoisted, for the reason `RowOutline` gives — a fresh
+     * list in a render body re-attaches — and rebuilt when the row it
+     * holds changes, since the outlines are kept by row.
+     */
+    readonly drawn: UiModifier<unknown>;
+    modifiers: readonly UiModifier<unknown>[];
+    readonly stripModifiers: readonly UiModifier<unknown>[];
+    /** The wash last laid over it, by where it went, so the same wash is the same elements. */
+    washed: string;
+    wash: { readonly cells: readonly UiElement[]; readonly stuck: readonly UiElement[] };
+  }
+
+  const NO_WASH = { cells: [] as readonly UiElement[], stuck: [] as readonly UiElement[] };
+  const rowLines = new Map<string, RowLine>();
+  /** Which line each mounted row is in, written as the window builds it. */
+  const lineOfRow = new Map<number, RowLine>();
+
+  const lineFor = (row: number, slot: number | undefined): RowLine => {
+    const key = slot === undefined ? `r${row}` : `s${slot}`;
+    let line = rowLines.get(key);
+    if (line === undefined) {
+      const lines = new BehaviorSubject<readonly DecorationShape[]>(NO_SHAPES);
+      const stripLines = new BehaviorSubject<readonly DecorationShape[]>(NO_SHAPES);
+      const drawn = decorated(lines) as UiModifier<unknown>;
+      line = {
+        key,
+        slot,
+        row: -1,
+        cells: new BehaviorSubject<readonly UiElement[]>([]),
+        stuck: new BehaviorSubject<readonly UiElement[]>([]),
+        keys: new Set<string>(),
+        lines,
+        stripLines,
+        drawn,
+        modifiers: [drawn],
+        stripModifiers: [decorated(stripLines) as UiModifier<unknown>],
+        washed: '',
+        wash: NO_WASH
+      };
+      rowLines.set(key, line);
+    }
+    if (line.row !== row) {
+      // The row it held has gone, so the map forgets it: it would
+      // otherwise hold every row ever scrolled past.
+      if (lineOfRow.get(line.row) === line) {
+        lineOfRow.delete(line.row);
+      }
+      line.row = row;
+      line.modifiers = [line.drawn, ...outlineFor(row).modifiers];
+    }
+    lineOfRow.set(row, line);
+    return line;
+  };
+
+  /**
+   * Works out what a row holds, and pushes what changed.
+   *
+   * Pushes nothing when the list comes out the same elements in the same
+   * order, which on a scroll through an empty sheet is every row: no
+   * cells, no wash, and the lines of a row as tall as the last one.
+   */
+  const fillLine = (line: RowLine, firstColumn: number, lastColumn: number): void => {
+    const { row, slot, key: owner } = line;
+    const keys = new Set<string>();
+    const take = (column: number, into: UiElement[]): void => {
+      const key = keyOf(row, column, slot);
+      if (openAt !== null && openAt.row === row && openAt.column === column) {
+        into.push(cell(row, column, slot, owner));
+      } else if (needsNode(row, column, key)) {
+        into.push(cell(row, column, slot, owner));
+        keys.add(key);
+      }
+    };
+    const stuck: UiElement[] = [];
+    const shown: UiElement[] = [];
+    const pane = frozen.value.columns;
+    for (let column = 0; column < pane; column++) {
+      take(column, stuck);
+    }
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      take(column, shown);
+    }
+    for (const key of line.keys) {
+      if (!keys.has(key) && cells.get(key)?.owner === owner) {
+        release(key);
+      }
+    }
+    line.keys = keys;
+    const wash = washFor(line, firstColumn, lastColumn);
+    stuck.push(...wash.stuck);
+    shown.push(...wash.cells);
+    if (!sameElements(stuck, line.stuck.value)) {
+      line.stuck.next(stuck);
+    }
+    if (!sameElements(shown, line.cells.value)) {
+      line.cells.next(shown);
+    }
+    const height = heightNow(row);
+    const lines = gridLines(height, firstColumn, lastColumn);
+    if (lines !== line.lines.value) {
+      line.lines.next(lines);
+    }
+    const stripLines = pane === 0 ? NO_SHAPES : gridLines(height, 0, pane - 1, 0);
+    if (stripLines !== line.stripLines.value) {
+      line.stripLines.next(stripLines);
+    }
+  };
+
+  /**
+   * Asks every mounted row whether it still holds the right cells.
+   *
+   * Run when something that decides it moved without the window building
+   * its rows again: the window's values, the formats and the palette, the
+   * notes and the rules' marks, a spread, the selection. Forty-odd rows of
+   * twenty-odd lookups, almost all of which miss.
+   */
+  const refreshLines = (): void => {
+    const range = sheetWindow.range$.value;
+    const visit = (row: number): void => {
+      const line = lineOfRow.get(row);
+      if (line !== undefined && line.row === row) {
+        fillLine(line, range.firstColumn, range.lastColumn);
+      }
+    };
+    for (let row = 0; row < frozen.value.rows; row++) {
+      visit(row);
+    }
+    for (let row = range.firstRow; row <= range.lastRow; row++) {
+      visit(row);
+    }
+  };
+
+  /**
+   * The grid lines of a row, as rectangles in the row's own paint pass.
+   *
+   * What every cell used to draw for itself with a one-pixel border, and
+   * the reason an empty cell no longer needs to exist: the same two lines
+   * between each pair of columns — one at the right of each cell, one at
+   * the left of the next — and one along the top and the foot. Drawn
+   * before the row's children, so a cell with a fill covers them as it
+   * always did, and a merge's anchor hides the ones inside it.
+   *
+   * The same array for every row of the same height with the same
+   * columns, so a scroll through a sheet of default rows pushes nothing:
+   * the comparison in `fillLine` is a pointer check. Built again when the
+   * widths or the columns move, which rebuilds the rows anyway.
+   */
+  let linesFor: { widths: readonly number[]; firstColumn: number; lastColumn: number; from: number; byHeight: Map<number, readonly DecorationShape[]> }[] = [];
+  const gridLines = (height: number, firstColumn: number, lastColumn: number, from = GUTTER_WIDTH): readonly DecorationShape[] => {
+    if (height === 0 || lastColumn < firstColumn) {
+      return NO_SHAPES;
+    }
+    const all = widths.value;
+    let set = linesFor.find(each => each.firstColumn === firstColumn && each.lastColumn === lastColumn && each.from === from);
+    if (set === undefined || set.widths !== all) {
+      // One set for the scrolled columns and one for the frozen strip;
+      // anything else is a window that has moved on.
+      linesFor = linesFor.filter(each => each.widths === all && each.from !== from);
+      set = { widths: all, firstColumn, lastColumn, from, byHeight: new Map() };
+      linesFor.push(set);
+    }
+    let shapes = set.byHeight.get(height);
+    if (shapes !== undefined) {
+      return shapes;
+    }
+    const starts = prefixOf(all);
+    const xOf = (column: number): number => from + (starts[column] ?? columnLeft(column));
+    const left = xOf(firstColumn);
+    const right = xOf(lastColumn + 1);
+    const built: DecorationShape[] = [];
+    const line = (x: number, y: number, width: number, tall: number): void => {
+      built.push({ kind: 'fill', x, y, width, height: tall, radius: 0, color: GRID_LINE });
+    };
+    line(left, 0, right - left, 1);
+    line(left, height - 1, right - left, 1);
+    // A pixel at each side of each column, and the two that meet at a
+    // boundary drawn as one rectangle two pixels wide.
+    let edgeX = -1;
+    let edgeWidth = 0;
+    for (let column = firstColumn; column <= lastColumn; column++) {
+      const width = all[column] ?? COLUMN_WIDTH;
+      if (width <= 0) {
+        continue;
+      }
+      const x = xOf(column);
+      for (const at of [x, x + width - 1]) {
+        if (edgeWidth > 0 && edgeX + edgeWidth === at) {
+          edgeWidth += 1;
+          continue;
+        }
+        if (edgeWidth > 0) {
+          line(edgeX, 0, edgeWidth, height);
+        }
+        edgeX = at;
+        edgeWidth = 1;
+      }
+    }
+    if (edgeWidth > 0) {
+      line(edgeX, 0, edgeWidth, height);
+    }
+    shapes = built;
+    set.byHeight.set(height, shapes);
+    return shapes;
+  };
+
+  /**
+   * The selection's wash over one row: a see-through rectangle across
+   * the selected columns, on top of the cells.
+   *
+   * **Laid over the cells rather than painted into them.** Each cell
+   * used to take a standing in the selection and choose its background
+   * from it, which put the selection's fan-out on every cell and needed
+   * every selected cell to exist. Now the selection is drawn by the rows
+   * it crosses: up to two rectangles each — the active cell is left out,
+   * it keeps its own fill and carries the ring — and none at all for a
+   * selection of one cell, which is nearly every selection there is.
+   *
+   * Boxes, not the row's decorations, because of what has to cover it.
+   * The gutter and the frozen strip are stuck over the scrolled cells,
+   * and a decoration on the row paints after every child of the row,
+   * stuck ones included, so a wash scrolled under the gutter would be
+   * drawn over the row numbers. A box sits in the row's paint order,
+   * above the cells and under the strips. The frozen columns' part is a
+   * box in the strip, placed from the strip's edge.
+   */
+  let washColour: string = SELECTED_WASH.light;
+  const washFor = (line: RowLine, firstColumn: number, lastColumn: number): RowLine['wash'] => {
+    const held = latestSelection;
+    const row = line.row;
+    const height = heightNow(row);
+    if (held === null || height === 0) {
+      return clearWash(line);
+    }
+    const corner = cornerOf(held);
+    const top = Math.min(corner.row, held.anchorRow);
+    const bottom = Math.max(corner.row, held.anchorRow);
+    const first = Math.min(corner.column, held.anchorColumn);
+    const last = Math.max(corner.column, held.anchorColumn);
+    if (row < top || row > bottom) {
+      return clearWash(line);
+    }
+    activeAt ??= anchorOf(held.row, held.column);
+    const merge = mergeAt(activeAt.row, activeAt.column);
+    const own = merge ?? { firstRow: activeAt.row, lastRow: activeAt.row, firstColumn: activeAt.column, lastColumn: activeAt.column };
+    if (own.firstRow <= top && own.lastRow >= bottom && own.firstColumn <= first && own.lastColumn >= last) {
+      // One cell, or one merge: the ring says it all.
+      return clearWash(line);
+    }
+    const spans: [number, number][] =
+      row >= own.firstRow && row <= own.lastRow
+        ? [
+            [first, Math.min(last, own.firstColumn - 1)],
+            [Math.max(first, own.lastColumn + 1), last]
+          ]
+        : [[first, last]];
+    const pane = frozen.value.columns;
+    const pieces: { stuck: boolean; left: number; width: number }[] = [];
+    for (const [from, to] of spans) {
+      // The frozen part, in the strip.
+      const a = from;
+      const b = Math.min(to, pane - 1);
+      if (b >= a) {
+        pieces.push({ stuck: true, left: columnLeft(a), width: columnLeft(b + 1) - columnLeft(a) });
+      }
+      // And the scrolled part, as far as the window goes either way.
+      const c = Math.max(from, pane, firstColumn);
+      const d = Math.min(to, lastColumn);
+      if (d >= c) {
+        pieces.push({ stuck: false, left: GUTTER_WIDTH + columnLeft(c), width: columnLeft(d + 1) - columnLeft(c) });
+      }
+    }
+    const said = `${washColour}|${height}|${pieces.map(piece => `${piece.stuck ? 'f' : 's'}${piece.left}+${piece.width}`).join(',')}`;
+    if (said === line.washed) {
+      return line.wash;
+    }
+    const box = (piece: { left: number; width: number }, index: number): UiElement =>
+      Box({
+        key: `wash-${index}`,
+        position: 'absolute',
+        left: piece.left,
+        top: 0,
+        width: piece.width,
+        height,
+        // Over the cells, and over a merge that reaches down out of its
+        // row, which is lifted by the same amount and comes before it.
+        zIndex: 1,
+        backgroundColor: washColour,
+        pointerEvents: 'none'
+      });
+    line.washed = said;
+    line.wash = {
+      cells: pieces.filter(piece => !piece.stuck).map(box),
+      stuck: pieces.filter(piece => piece.stuck).map(box)
+    };
+    return line.wash;
+  };
+  const clearWash = (line: RowLine): RowLine['wash'] => {
+    line.washed = '';
+    line.wash = NO_WASH;
+    return NO_WASH;
+  };
+
+  /**
+   * The active cell's node, as the grid's active descendant.
+   *
+   * Each active cell is given its own ref, so the one that lets go of its
+   * node clears the descendant only if it was still the one named: a new
+   * active cell can be handed its node before the old one hands its back.
+   */
+  const activeCell$ = new BehaviorSubject<UiNode | null>(null);
+  const activeRef = (): ((node: UiNode | null) => void) => {
+    let mine: UiNode | null = null;
+    return node => {
+      if (node !== null) {
+        mine = node;
+        activeCell$.next(node);
+      } else if (activeCell$.value === mine) {
+        activeCell$.next(null);
+      }
+    };
+  };
+
   /**
    * The cell being typed into.
    *
@@ -1911,10 +2419,20 @@ export function Grid(
    * *is* the editor cannot drift away from the cell it is editing when
    * the sheet scrolls or a column is dragged.
    *
-   * Not memoised. There is one of these at a time and its life is the
-   * edit.
+   * Kept for the edit, and only for the edit: there is one of these at
+   * a time, it is let go when a cell opens or closes, and in between its
+   * row's list asks for it every time something else in the row moved.
+   * Built again each time, every recalculation that republished the
+   * window would hand the field a new element.
    */
+  let editorBuilt: { readonly row: number; readonly column: number; readonly element: UiElement } | null = null;
   const editorCell = (row: number, column: number): UiElement => {
+    if (editorBuilt === null || editorBuilt.row !== row || editorBuilt.column !== column) {
+      editorBuilt = { row, column, element: buildEditor(row, column) };
+    }
+    return editorBuilt.element;
+  };
+  const buildEditor = (row: number, column: number): UiElement => {
     // The open cell is always a merge's anchor — `anchorOf` moves the
     // selection there before anything can open it — so this needs the
     // anchor's arithmetic and not the covered case.
@@ -1924,6 +2442,10 @@ export function Grid(
 
     return EditableText({
       key: column,
+      // Placed by its column, as every cell is; see `buildCell`.
+      position: 'absolute',
+      left: leftOf(column, column < frozen.value.columns),
+      top: 0,
       ref: node => {
         editorNode = node;
         if (node === null) {
@@ -2004,13 +2526,10 @@ export function Grid(
       /**
        * The editor is the merged cell, not the cell under its corner.
        *
-       * This is a cell in the row like any other, so its width is what
-       * holds the columns after it in place. Built from `widthOf`
-       * alone, opening a merge collapsed the anchor to one column and
-       * slid the rest of the row left by the difference — which on
-       * screen looks exactly like the merge coming apart to show the
-       * original cells underneath it. Same arithmetic as `buildCell`
-       * above, and for the same reason.
+       * Built from `widthOf` alone, opening a merge collapsed the
+       * anchor to one column — which on screen looks exactly like the
+       * merge coming apart to show the original cells underneath it.
+       * Same arithmetic as `buildCell` above, and for the same reason.
        */
       width: spanWidth ?? widthOf(column),
       // A tall editor reaches down out of its own row, as the anchor
@@ -2132,10 +2651,12 @@ export function Grid(
         // Held at the left edge while the sheet scrolls sideways. Its
         // vertical travel is its row's, which it gets for free by being
         // inside it. Sticky positions it, so the grip is placed
-        // against it rather than against the layout root.
+        // against it rather than against the layout root. Over the
+        // cells, the wash over them and a merge reaching down from the
+        // row above, which are all lifted to one.
         position: 'sticky',
         left: 0,
-        zIndex: 1,
+        zIndex: 2,
         backgroundColor: 'surface',
         borderColor: GRID_LINE,
         borderWidth: 1,
@@ -2635,6 +3156,25 @@ export function Grid(
    * column rather than as nothing — which is what dragging into the
    * gutter should do.
    */
+  /**
+   * Whether a click landed on a cell that has no node — on its row, with
+   * nothing of the row's own in between.
+   *
+   * The first node with a role on the way up decides: a cell's own click
+   * has already been handled, and a chart, a handle, a popup or a header
+   * is not a cell however much of the sheet it covers. The frozen strip
+   * has no role, so an empty frozen cell is found through it.
+   */
+  const onEmptyCell = (target: UiNode | null): boolean => {
+    for (let at: UiNode | null = target; at !== null && at !== gridNode; at = at.parent) {
+      const role = at.properties.get('role');
+      if (role !== undefined && role !== null) {
+        return role === 'row' && at.properties.get('posInSet') !== undefined;
+      }
+    }
+    return false;
+  };
+
   const cellUnder = (event: UiPointerEvent): { row: number; column: number } | null => {
     const box = viewport.value;
     if (box.width === 0) {
@@ -2949,17 +3489,48 @@ export function Grid(
     );
   };
 
+  /**
+   * The frozen columns of one row, as one stuck strip.
+   *
+   * The frozen cells used to be stuck one by one, each a sticky node in
+   * the row's flow. With empty cells gone there is nothing in the flow to
+   * put a stuck cell after, and an empty frozen cell still has to cover
+   * the scrolled cells passing under it — so the strip is what is stuck,
+   * opaque, drawing the frozen columns' grid lines, and the frozen cells
+   * with nodes are placed in it as the scrolled ones are in the row.
+   */
+  const frozenStrip = (row: number, line: RowLine): UiElement =>
+    Box(
+      {
+        key: 'frozen',
+        position: 'sticky',
+        left: GUTTER_WIDTH,
+        zIndex: 2,
+        width: columnLeft(frozen.value.columns),
+        height: heightNow(row),
+        flexShrink: 0,
+        backgroundColor: 'background',
+        modifiers: line.stripModifiers
+      },
+      line.stuck
+    );
+
   const renderRow = (row: number, firstColumn: number, lastColumn: number, slot?: number): UiElement => {
-    const line: UiElement[] = [rowHeader(row), ...chartsOn(row)];
-    // The frozen columns first, which is the order the window's own
-    // leading spacer is placed against: everything that stays put,
-    // then the gap, then the columns that scrolled into view.
-    for (let column = 0; column < frozen.value.columns; column++) {
-      line.push(cell(row, column, slot));
+    const held = lineFor(row, slot);
+    fillLine(held, firstColumn, lastColumn);
+    /**
+     * In-flow, the gutter, then the frozen strip, and nothing else.
+     *
+     * The window puts its leading spacer after the gutter and as many
+     * children again as there are frozen columns (see `withLead`); with
+     * the strip second, the spacer lands after it whatever the count,
+     * and since the cells are absolute it pushes nothing along.
+     */
+    const line: UiChild[] = [rowHeader(row)];
+    if (frozen.value.columns > 0) {
+      line.push(frozenStrip(row, held));
     }
-    for (let column = firstColumn; column <= lastColumn; column++) {
-      line.push(cell(row, column, slot));
-    }
+    line.push(held.cells, ...chartsOn(row));
     const corner = cornerAt !== null && cornerAt.row === row;
     const finger = touching.value;
     if (corner && cornerAt !== null) {
@@ -3055,11 +3626,12 @@ export function Grid(
       {
         role: 'row',
         posInSet: row + 1,
-        // Four coloured rectangles in the row's own paint pass when a
-        // formula being typed names something on this row, and an
-        // empty array the rest of the time.
-        modifiers: outlineFor(row).modifiers,
-        position: stuck ? 'sticky' : corner || start || ranging || spans || hinting || explaining ? 'relative' : undefined,
+        // The grid lines under the cells, and four coloured rectangles
+        // over them when a formula being typed names something on this
+        // row; see `RowLine`.
+        modifiers: held.modifiers,
+        // Positioned always, now that every cell is placed against it.
+        position: stuck ? 'sticky' : 'relative',
         top: stuck ? HEADER_HEIGHT + rowTop(row) : undefined,
         // A finger's handles reach over the rows around theirs, so their
         // rows are lifted over them.
@@ -3342,6 +3914,19 @@ export function Grid(
       role: 'grid',
       label: 'Sheet',
       focusable: true,
+      /**
+       * The cell the keyboard is on, for a screen reader.
+       *
+       * The grid keeps focus and moves a selection inside itself, so
+       * without this a reader hears the grid and nothing as the arrows
+       * move. The active cell always has a node — it carries the ring —
+       * so there is always something to name. The cells with nothing in
+       * them are not in the tree at all: there is no node to put there,
+       * and a grid of empty cells read out one by one is noise. A row
+       * says which row it is (`posInSet`), and the formula bar and the
+       * name box say where the cursor is.
+       */
+      activeDescendant: activeCell$,
       ref: node => {
         gridNode = node;
         gridNode$.next(node);
@@ -3380,11 +3965,20 @@ export function Grid(
       ],
       onKeyDown: onKey,
       // A press on a column's letter, a row's number or the corner. A
-      // press on a cell is the cell's own click, and this lets it be.
+      // press on a cell with a node is the cell's own click, and this
+      // lets it be; one on a cell without — most of them — lands on its
+      // row, and is worked out from where it was.
       onClick: (event: UiPointerEvent) => {
         const hit = headerOfNode(event.target);
         if (hit !== null) {
           clickHeader(hit, event.modifiers.shift);
+          return;
+        }
+        if (onEmptyCell(event.target)) {
+          const at = cellUnder(event);
+          if (at !== null) {
+            selectByPointer(at.row, at.column, event.modifiers.shift);
+          }
         }
       },
       // Sweeping a selection out with the pointer.
@@ -3572,13 +4166,28 @@ export function Grid(
     throw new Error('LazySheet did not hand back its window.');
   }
   const sheetWindow = window;
+  ready = true;
   // The charts' theme, once there is a window to rebuild; see `chartsDark`.
+  // The selection's wash is drawn for it as well; see `SELECTED_WASH`.
   ctx.effect(dark$, dark => {
+    washColour = dark ? SELECTED_WASH.dark : SELECTED_WASH.light;
     if (dark !== chartsDark) {
       chartsDark = dark;
       sheetWindow.invalidate();
     }
   });
+
+  /**
+   * Lets every cell and every row line go, for a change that decides how
+   * a cell is built — the pane, a merge — so that each is built again.
+   */
+  const forgetAll = (): void => {
+    cells.clear();
+    values.releaseAll();
+    rowLines.clear();
+    lineOfRow.clear();
+    editorBuilt = null;
+  };
   // A note that appears or goes under the selection changes what the
   // row draws beside it; see `notePopup`.
   ctx.effect(sheet.view.notes, () => sheetWindow.invalidate());
@@ -3603,9 +4212,7 @@ export function Grid(
    * that changes once a session.
    */
   ctx.effect(frozen, pane => {
-    cells.clear();
-    values.releaseAll();
-    standings.releaseAll();
+    forgetAll();
     sheetWindow.setFrozen(pane.rows, pane.columns);
   });
 
@@ -3646,9 +4253,8 @@ export function Grid(
       merges.value = geometry.merges;
       // A merge changes which cells are drawn and how wide, and that
       // is decided when a cell is built.
-      cells.clear();
-    values.releaseAll();
-    standings.releaseAll();
+      forgetAll();
+      activeAt = null;
       sheetWindow.invalidate();
     }
   });
@@ -3870,37 +4476,19 @@ export function Grid(
    * what a cell *is* rather than what it says.
    *
    * A `Text` cannot become an `EditableText` by having a property
-   * written, so the two cells involved are dropped from the cache and
-   * the window is asked to rebuild its rows from what is left. That
-   * costs a rebuild of the row elements — a few hundred plain objects,
-   * with every cell but these two still cached — and it happens twice
-   * per cell edited rather than per frame.
-   */
-  /**
-   * The fill handle moves with the selection, and a cell cannot grow
-   * one by having a property written, so the two cells involved are
-   * dropped from the cache and the rows rebuilt from what is left —
-   * the same trick opening a cell uses, at the same cost, and at the
-   * pace a person moves a selection rather than per frame.
-   */
-  /**
-   * Drops the cell showing `which` from the cache, kept by slot or by
-   * cell, so the next build of its row makes it again.
+   * written, so the open cell's row hands the editor out in its place
+   * (see `fillLine`) and lets the cell it was showing go; closing it
+   * builds the cell again. The rows are rebuilt as well, for the hints
+   * and the lists that hang off the open cell's row, at the pace of a
+   * cell being edited rather than per frame.
    *
-   * A cell kept by slot is found by what it shows. This runs when a
-   * selection moves or an edit opens, at a person's pace, and walks the
-   * window's cells once.
+   * The fill handle moves with the selection in the same way: it is a
+   * child of the row holding the selection's corner, so moving the
+   * corner rebuilds the rows. The cells themselves are not touched —
+   * the handle hangs off the row, not off a cell — and the active cell
+   * looks after itself, built again by its row when it stops or starts
+   * being the one with the ring.
    */
-  const forget = (which: { row: number; column: number }): void => {
-    for (const [key, mounted] of cells) {
-      if (mounted.row === which.row && mounted.column === which.column) {
-        cells.delete(key);
-        values.release(key);
-        standings.release(key);
-      }
-    }
-  };
-
   let cornerBefore: { row: number; column: number } | null = null;
   let touchedBefore = false;
   // While a handle is being dragged the handles stay put: moving one
@@ -3919,11 +4507,6 @@ export function Grid(
       return;
     }
     touchedBefore = touching.value;
-    for (const which of [cornerBefore, next]) {
-      if (which !== null) {
-        forget(which);
-      }
-    }
     cornerBefore = next;
     cornerAt = next;
     sheetWindow.invalidate();
@@ -3935,13 +4518,9 @@ export function Grid(
     if (sameCell(next, openBefore)) {
       return;
     }
-    for (const which of [openBefore, next]) {
-      if (which !== null) {
-        forget(which);
-      }
-    }
     openBefore = next;
     openAt = next;
+    editorBuilt = null;
     // A new edit places its caret once; see the editor's `ref`.
     caretPlaced = false;
     typed = null;
@@ -4013,52 +4592,6 @@ export function Grid(
       // else has the keyboard — the first grid takes nothing from anyone.
       if (_inputs.rebuilt.value === true && gridNode !== null && focus.focused.value === null) {
         focus.focus(gridNode);
-      }
-    }
-  });
-
-  /**
-   * Cells that scrolled away, so their bindings go with them.
-   *
-   * **A frozen cell never scrolls away, and judging one by the
-   * scrolling range says it always has.** `range$` is the range that
-   * moves, and once a pane is frozen it *starts after the bands* —
-   * rows 3 onwards and columns 1 onwards for a corner of three by one
-   * — so every cell in a band fails this test on the first emission
-   * after the freeze. It was then deleted from the cache and released
-   * from both fan-outs while its element stayed mounted and on
-   * screen, bound to a subject nothing would ever push to again: the
-   * band drew at the right place, at the right size, in the right
-   * colours, and empty.
-   *
-   * The application worker has always sent these cells — `rowsInView`
-   * and `columnsInView` add the bands to the window for exactly this
-   * reason — so the data was arriving and being thrown away on
-   * receipt.
-   *
-   * Per axis, because the two are independent: a frozen row scrolled
-   * sideways really does lose its right-hand cells, and a frozen
-   * column scrolled down really does lose its lower ones. What it
-   * cannot lose is the band itself.
-   */
-  ctx.effect(sheetWindow.range$, range => {
-    const pane = frozen.value;
-    for (const [key, mounted] of cells) {
-      // A cell kept by slot is not judged by the row it showed last: its
-      // slot is about to be given another row, and dropping it here is
-      // what the slot is for keeping. It goes with its column, and with
-      // everything else on a freeze or a merge.
-      const rowShows =
-        mounted.slot !== undefined ||
-        mounted.row < pane.rows ||
-        (mounted.row >= range.firstRow && mounted.row <= range.lastRow);
-      const columnShows =
-        mounted.column < pane.columns ||
-        (mounted.column >= range.firstColumn && mounted.column <= range.lastColumn);
-      if (!rowShows || !columnShows) {
-        cells.delete(key);
-        values.release(key);
-        standings.release(key);
       }
     }
   });
@@ -4387,6 +4920,42 @@ export function Grid(
   );
 }
 
+/**
+ * Where each column starts, from the widths: one more entry than there
+ * are columns, the last being where the last column ends. Kept per array,
+ * and the widths are replaced rather than changed, so it is summed once
+ * per set of widths however many cells ask.
+ */
+const prefixes = new WeakMap<readonly number[], readonly number[]>();
+function prefixOf(widths: readonly number[]): readonly number[] {
+  let starts = prefixes.get(widths);
+  if (starts === undefined) {
+    const built = new Array<number>(widths.length + 1);
+    let running = 0;
+    for (let column = 0; column < widths.length; column++) {
+      built[column] = running;
+      running += widths[column];
+    }
+    built[widths.length] = running;
+    starts = built;
+    prefixes.set(widths, starts);
+  }
+  return starts;
+}
+
+/** Whether two lists hold the same elements in the same order. */
+function sameElements(a: readonly UiElement[], b: readonly UiElement[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  for (let at = 0; at < a.length; at++) {
+    if (a[at] !== b[at]) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function sameCell(a: { row: number; column: number } | null, b: { row: number; column: number } | null): boolean {
   if (a === null || b === null) {
     return a === b;
@@ -4411,30 +4980,6 @@ function bring(offset: number, start: number, extent: number, viewport: number, 
   }
   return offset;
 }
-
-/**
- * Where a cell stands in the selection, as one cheap number.
- *
- * A function of the selection rather than a pipe off it, so the feed
- * that walks the mounted cells can ask about each one without a
- * subscription in between.
- */
-function standingOf(selection: SheetSelection, row: number, column: number): Standing {
-  if (selection.row === row && selection.column === column) {
-    return 2;
-  }
-  return inRange(selection, row, column) ? 1 : 0;
-}
-
-/** Whether the selection rectangle covers a cell. */
-function inRange(selection: SheetSelection, row: number, column: number): boolean {
-  const firstRow = Math.min(cornerOf(selection).row, selection.anchorRow);
-  const lastRow = Math.max(cornerOf(selection).row, selection.anchorRow);
-  const firstColumn = Math.min(cornerOf(selection).column, selection.anchorColumn);
-  const lastColumn = Math.max(cornerOf(selection).column, selection.anchorColumn);
-  return row >= firstRow && row <= lastRow && column >= firstColumn && column <= lastColumn;
-}
-
 
 /** How the grid draws each place `guessOf` can answer. */
 const AUTO_ALIGN: Readonly<Record<Place, 'right' | 'center' | 'start'>> = { end: 'right', center: 'center', start: 'start' };

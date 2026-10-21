@@ -891,12 +891,15 @@ function report(
   const median = durations[Math.floor(durations.length / 2)];
   const worst = durations.at(-1) ?? 0;
   const measured = Math.max(...frames.map(frame => frame.measured));
+  // The most nodes one frame had to process — every cell a jump repoints
+  // is one — reported beside the budgets rather than held to one.
+  const nodes = Math.max(...frames.map(frame => frame.nodes));
   const latencies = frames.map(frame => frame.inputLatencyMs).filter((ms): ms is number => ms !== null);
   const latency = latencies.length === 0 ? null : latencies.sort((a, b) => a - b).at(Math.floor(latencies.length * 0.95));
 
   console.log(
     `    ${frames.length} frames · median ${median.toFixed(2)}ms · worst ${worst.toFixed(2)}ms · ` +
-      `most re-measured ${measured} · p95 input latency ${latency === null ? 'n/a' : `${latency.toFixed(1)}ms`}`
+      `most re-measured ${measured} · busiest frame ${nodes} nodes · p95 input latency ${latency === null ? 'n/a' : `${latency.toFixed(1)}ms`}`
   );
 
   check(failures, `${what}: median frame ${median.toFixed(2)}ms`, median <= BUDGET.frameMs, BUDGET.frameMs);

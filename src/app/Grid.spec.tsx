@@ -5,6 +5,7 @@ import { renderTest, serveForTest, type Rendered, type ServedForTest } from 'ges
 import 'gesso-testing/matchers';
 import { createComponent } from 'gesso-framework';
 
+import { GENERAL, PLAIN } from '../sheet/Format';
 import { formulaSpans } from './FormulaColours';
 import { COLUMN_WIDTH, GUTTER_WIDTH, HEADER_HEIGHT, MIN_COLUMN_WIDTH, ROW_HEIGHT } from './dimensions';
 import { SheetApp } from './SheetApp';
@@ -43,6 +44,16 @@ import { SheetService } from './SheetService';
  * because the numbers are the claims.
  */
 const VIEWPORT = { width: 700, height: 395 };
+
+/**
+ * What a row draws over its cells: the outlines, the marquee, a chart's
+ * ranges. A row also draws the grid lines of its empty cells, under them,
+ * which every row has and which are not what these specs are about.
+ */
+function overCells(node: { decorations?: unknown } | undefined): readonly { x: number; width: number; color: string; after?: string }[] {
+  const shapes = (node?.decorations ?? []) as readonly { x: number; width: number; color: string; after?: string }[];
+  return shapes.filter(shape => shape.after === 'children');
+}
 
 interface Harness {
   ui: Rendered;
@@ -944,7 +955,7 @@ describe('showing the references of the selected cell', () => {
 
   const colours = (row: number): string[] => {
     const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
-    const shapes = (found?.decorations ?? []) as readonly { color: string }[];
+    const shapes = overCells(found);
     return [...new Set(shapes.map(shape => shape.color))];
   };
 
@@ -1034,7 +1045,7 @@ describe('outlining the cells a selected chart reads', () => {
 
   const colours = (row: number): string[] => {
     const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
-    const shapes = (found?.decorations ?? []) as readonly { color: string }[];
+    const shapes = overCells(found);
     return [...new Set(shapes.map(shape => shape.color))].sort();
   };
 
@@ -1112,8 +1123,7 @@ describe('outlining the cells a formula names', () => {
   });
 
   /** The decoration rectangles a row carries, which is what is painted. */
-  const decorationsOf = (node: { decorations?: unknown }) =>
-    (node.decorations ?? []) as readonly { x: number; width: number; color: string }[];
+  const decorationsOf = (node: { decorations?: unknown }) => overCells(node);
 
   function shapesOn(row: number): readonly { x: number; width: number; color: string }[] {
     const found = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
@@ -1363,7 +1373,7 @@ describe('picking a reference by clicking', () => {
     await typing(8, 0, '=');
     await clickCell(1, 1);
     const row = h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === 2);
-    expect((row?.decorations ?? []).length).toBe(4);
+    expect(overCells(row)).toHaveLength(4);
   });
 });
 
@@ -1993,5 +2003,156 @@ describe('a click after a wheel scroll', () => {
     await click('c46');
     expect(h.document.selection.row).toBe(45);
     expect(rows()).toEqual(before);
+  });
+});
+
+/**
+ * A cell that holds nothing is not a node.
+ *
+ * Most of a sheet is empty, and every empty cell used to be a text node
+ * with a dozen bindings, so scrolling through nothing cost what scrolling
+ * through a full sheet did. Now the row draws the grid lines of its empty
+ * cells and the selection is laid over the rows, and a node is made only
+ * for a cell with something to show — and for the active cell, which
+ * carries the ring and is what a screen reader is told the keyboard is on.
+ */
+describe('cells that hold nothing', () => {
+  let h: Harness;
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  async function settle(): Promise<void> {
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function select(row: number, column: number, anchorRow = row, anchorColumn = column): Promise<void> {
+    h.service.setSelection(row, column, anchorRow, anchorColumn);
+    await settle();
+  }
+
+  const rowNode = (row: number) => h.ui.getAllByRole('row').find(node => node.properties.get('posInSet') === row + 1);
+
+  /** The see-through boxes the selection is laid over a row with. */
+  const washOn = (row: number) => {
+    const found = rowNode(row);
+    return h.ui
+      .allNodes()
+      .filter(node => node.id.includes(':wash-'))
+      .filter(node => {
+        for (let at = node.parent; at !== null; at = at.parent) {
+          if (at === found) {
+            return true;
+          }
+        }
+        return false;
+      });
+  };
+
+  it('makes a node for a value, a format and a note, and for the active cell', async () => {
+    h = await mount(document => {
+      document.setCell(0, 0, 'typed');
+      document.setFormat(2, 2, { number: GENERAL, paint: { ...PLAIN, fill: '#fde68a' } });
+      document.setNote(4, 1, 'said');
+    });
+    await select(6, 3);
+
+    const cells = h.ui.getAllByRole('cell');
+    // A1's value, C3's fill, B5's note, and D7 because the cursor is on it:
+    // four, out of the couple of hundred on the screen.
+    expect(cells).toHaveLength(4);
+    expect(h.ui.getByRole('cell', { name: 'typed' })).toBeDefined();
+  });
+
+  it('gives a cell a node when something is typed into it, and takes it away when it is cleared', async () => {
+    h = await mount();
+    await select(0, 0);
+    expect(h.ui.queryByRole('cell', { name: 'later' })).toBeNull();
+
+    h.service.setCell(3, 2, 'later');
+    await settle();
+    expect(h.ui.getByRole('cell', { name: 'later' })).toBeDefined();
+    const before = h.ui.getAllByRole('cell').length;
+
+    h.service.setCell(3, 2, '');
+    await settle();
+    expect(h.ui.queryByRole('cell', { name: 'later' })).toBeNull();
+    expect(h.ui.getAllByRole('cell')).toHaveLength(before - 1);
+  });
+
+  it('draws the grid lines of its empty cells under them, from the column widths', async () => {
+    h = await mount();
+    await select(0, 0);
+    const shapes = ((rowNode(5)?.decorations ?? []) as readonly { x: number; y: number; width: number; height: number; after?: string }[]).filter(
+      shape => shape.after === undefined
+    );
+    // Along the top and the foot of the row,
+    expect(shapes.some(shape => shape.y === 0 && shape.height === 1 && shape.width > COLUMN_WIDTH)).toBe(true);
+    expect(shapes.some(shape => shape.y === ROW_HEIGHT - 1 && shape.height === 1)).toBe(true);
+    // and two pixels down each boundary between columns: the right edge
+    // of one cell and the left edge of the next, as each cell drew its own.
+    expect(shapes.some(shape => shape.x === GUTTER_WIDTH + COLUMN_WIDTH - 1 && shape.width === 2 && shape.height === ROW_HEIGHT)).toBe(true);
+  });
+
+  it('selects an empty cell from where the click landed', async () => {
+    h = await mount();
+    await select(0, 0);
+    const grid = h.ui.getVisibleBox(h.ui.getByRole('grid'));
+    const row = rowNode(4);
+    if (row === undefined) {
+      throw new Error('row 5 is not on screen');
+    }
+    const y = h.ui.getVisibleBox(row).y + 4;
+    h.ui.fireEvent.pointerDown(grid.x + GUTTER_WIDTH + 3 * COLUMN_WIDTH + 4, y, { buttons: 1 });
+    h.ui.fireEvent.pointerUp(grid.x + GUTTER_WIDTH + 3 * COLUMN_WIDTH + 4, y);
+    await settle();
+
+    expect(h.document.selection.row).toBe(4);
+    expect(h.document.selection.column).toBe(3);
+  });
+
+  it('rings the active cell and names it to a screen reader as the grid’s active descendant', async () => {
+    h = await mount();
+    await select(4, 3);
+    const grid = h.ui.getByRole('grid');
+    const active = grid.properties.get('activeDescendant') as { properties: Map<string, unknown> } | undefined;
+    expect(active?.properties.get('role')).toBe('cell');
+    expect(active?.properties.get('borderColor')).toBe('primary');
+    expect(active?.properties.get('borderWidth')).toBe(2);
+
+    // And it goes with the cursor: the cell it leaves had nothing in it,
+    // so it is not a node any more.
+    await select(6, 1);
+    expect(grid.properties.get('activeDescendant')).not.toBe(active);
+    expect(h.ui.getAllByRole('cell')).toHaveLength(1);
+  });
+
+  it('lays the selection over the rows it crosses, leaving the active cell out', async () => {
+    h = await mount();
+    await select(1, 1, 3, 3);
+
+    const box = (node: Parameters<Rendered['getLayout']>[0]) => h.ui.getLayout(node);
+    const grid = h.ui.getLayout(h.ui.getByRole('grid'));
+    // The active cell's row: the wash starts past it.
+    const first = washOn(1);
+    expect(first).toHaveLength(1);
+    expect(box(first[0]).x).toBe(grid.x + GUTTER_WIDTH + 2 * COLUMN_WIDTH);
+    expect(box(first[0]).width).toBe(2 * COLUMN_WIDTH);
+    // The rows under it, across all three columns.
+    for (const row of [2, 3]) {
+      const wash = washOn(row);
+      expect(wash).toHaveLength(1);
+      expect(box(wash[0]).x).toBe(grid.x + GUTTER_WIDTH + COLUMN_WIDTH);
+      expect(box(wash[0]).width).toBe(3 * COLUMN_WIDTH);
+    }
+    expect(washOn(4)).toHaveLength(0);
+
+    // A selection of one cell is the ring and nothing else.
+    await select(2, 2);
+    expect([1, 2, 3].flatMap(row => washOn(row))).toHaveLength(0);
   });
 });
