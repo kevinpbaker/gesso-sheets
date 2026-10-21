@@ -10,6 +10,7 @@ import {
   LazySheet,
   percent,
   Row,
+  scrollPosition,
   Text,
   type DecorationShape,
   type UiElement,
@@ -2860,6 +2861,7 @@ export function Grid(
         selected: charts.value.selected === chart.id,
         rowOffset: offset,
         drag: chartDrag,
+        scrollX,
         on: chartHandlers
       })
     );
@@ -3222,7 +3224,13 @@ export function Grid(
       label: 'Sheet',
       focusable: true,
       ref: node => (gridNode = node),
-      modifiers: [viewport.modifier, contextMenu({ onOpen: at => onContext(at) })],
+      modifiers: [
+        viewport.modifier,
+        contextMenu({ onOpen: at => onContext(at) }),
+        // A wheel scrolls the container without writing `scrollX` back,
+        // and a chart clips itself at the gutter from it.
+        scrollPosition({ onChange: offset => (scrollX.value = offset.x) })
+      ],
       onKeyDown: onKey,
       // A press on a column's letter, a row's number or the corner. A
       // press on a cell is the cell's own click, and this lets it be.
