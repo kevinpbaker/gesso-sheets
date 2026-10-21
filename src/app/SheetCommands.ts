@@ -238,7 +238,7 @@ export const COMMANDS: Readonly<Record<CommandId, Command>> = {
    * browser window half the time and a blank workbook the other half
    * would be worse than a menu item.
    */
-  newDocument: { id: 'newDocument', label: 'New' },
+  newDocument: { id: 'newDocument', label: 'New…' },
   openFile: { id: 'openFile', label: 'Open…', accelerator: { key: 'o', ctrl: true } },
   openRecent: { id: 'openRecent', label: 'Open recent…' },
   saveDocument: { id: 'saveDocument', label: 'Save', accelerator: { key: 's', ctrl: true } },

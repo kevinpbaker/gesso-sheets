@@ -40,9 +40,15 @@ export const SHEET = route({ path: '/', component: SheetScreen });
  * so the screen itself does not change between them.
  */
 export const DOCUMENT = route({ path: '/d/:id', component: SheetScreen });
+/**
+ * A new document from a template, by its id in `Templates.ts` — what
+ * File ▸ New opens a tab at. The url is replaced with the document's
+ * own as soon as it exists, as `/d/new` is.
+ */
+export const FROM_TEMPLATE = route({ path: '/new/:template', component: SheetScreen });
 export const PROOF = route({ path: PROOF_PATH, component: ProofScreen });
 
-export const ROUTES = [SHEET, DOCUMENT, PROOF];
+export const ROUTES = [SHEET, DOCUMENT, FROM_TEMPLATE, PROOF];
 
 /**
  * The application's root, which is an outlet and a background.

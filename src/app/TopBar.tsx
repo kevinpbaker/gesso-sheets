@@ -42,6 +42,7 @@ import type { SheetEditing } from './SheetEditing';
 import { keyAction } from './SheetKeys';
 import { colourName } from './colourNames';
 import { NamesDialog } from './NamesDialog';
+import { NewDialog } from './NewDialog';
 import { NoteDialog } from './NoteDialog';
 import { ScriptDialog } from './ScriptDialog';
 import { PasteHint, Shortcuts } from './Shortcuts';
@@ -348,6 +349,12 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
     scriptsOpen.value = false;
     edit.focusSheet();
   };
+  /** Whether File ▸ New is open. */
+  const newOpen = internalState(false);
+  const closeNew = (): void => {
+    newOpen.value = false;
+    edit.focusSheet();
+  };
 
   let nameBoxNode: UiNode | null = null;
   let findFieldNode: UiNode | null = null;
@@ -579,8 +586,8 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
         askFor('name');
         return;
       case 'newDocument':
-        files.newDocument();
-        break;
+        newOpen.value = true;
+        return;
       case 'openFile':
         files.open();
         break;
@@ -952,6 +959,10 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
    * with the thing the person cannot see.
    */
   edit.provideDismiss(() => {
+    if (newOpen.value) {
+      closeNew();
+      return true;
+    }
     if (noteOpen.value) {
       closeNote();
       return true;
@@ -1396,6 +1407,14 @@ export function TopBar(inputs: Inputs<TopBarProps>, ctx: ComponentContext) {
             </row>
           </column>
         }
+      />
+      <NewDialog
+        open={newOpen}
+        onPick={(template: string | undefined) => {
+          closeNew();
+          files.newDocument(template);
+        }}
+        onClose={closeNew}
       />
       <NamesDialog
         open={namesOpen}

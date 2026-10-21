@@ -115,6 +115,12 @@ const defaultSchedule: Schedule = run => {
   setTimeout(run, 0);
 };
 
+/** A workbook to start from: what it is called, and how to write it. */
+export interface SheetTemplateBuild {
+  readonly name: string;
+  readonly build: (document: SheetDocument) => void;
+}
+
 export interface SheetServiceOptions {
   /** Cells evaluated per slice before the thread is handed back. */
   readonly budget?: number;
@@ -131,6 +137,11 @@ export interface SheetServiceOptions {
   readonly library?: SheetLibrary;
   /** What the very first document starts with, before anybody types. */
   readonly seed?: (document: SheetDocument) => void;
+  /**
+   * What a new document can start from instead of nothing, by the id
+   * File ▸ New offers it under; see `Templates.ts`.
+   */
+  readonly templates?: Readonly<Record<string, SheetTemplateBuild>>;
   /** The clock a document's `used` is read from. */
   readonly now?: () => number;
   /**
@@ -256,6 +267,7 @@ export class SheetService {
   private opening: Promise<void> = Promise.resolve();
   private readonly library: SheetLibrary | undefined;
   private readonly seed: ((document: SheetDocument) => void) | undefined;
+  private readonly templates: Readonly<Record<string, SheetTemplateBuild>>;
   private readonly now: () => number;
   private downloadSerial = 0;
   private readonly statsSubject = new BehaviorSubject<SheetStats>(NO_STATS);
@@ -376,6 +388,7 @@ export class SheetService {
     this.document = document;
     this.library = options.library;
     this.seed = options.seed;
+    this.templates = options.templates ?? {};
     this.now = options.now ?? Date.now;
     this.budget = options.budget ?? 2_000;
     this.schedule = options.schedule ?? defaultSchedule;
@@ -2597,14 +2610,17 @@ export class SheetService {
    * know falls back to the last used rather than to nothing: a url
    * from another browser is somebody's mistake, and the sheet is the
    * right thing to show them. The very first document of all starts
-   * from the seed; every document after it starts empty.
+   * from the seed; every document after it starts empty, unless it is
+   * `'new'` with a `template`, which it starts from and is named for.
+   * A template nobody knows is a blank, as an id nobody knows is the
+   * last used.
    *
    * Opening the document already open does nothing, which is what
    * lets the render worker send this whenever its route changes
    * without caring whether the change was its own.
    */
-  openDocument(id: string): void {
-    this.enqueue(() => this.open(id));
+  openDocument(id: string, template = ''): void {
+    this.enqueue(() => this.open(id, template));
   }
 
   /**
@@ -2755,7 +2771,7 @@ export class SheetService {
     });
   }
 
-  private async open(id: string): Promise<void> {
+  private async open(id: string, template: string): Promise<void> {
     const library = this.library;
     if (library === undefined || (id !== 'new' && id !== '' && id === this.entry?.id)) {
       return;
@@ -2776,9 +2792,11 @@ export class SheetService {
       return;
     }
     const first = found === undefined && id !== 'new' && entries.length === 0;
+    // An own key only: a template called `constructor` is not one.
+    const from = id === 'new' && Object.hasOwn(this.templates, template) ? this.templates[template] : undefined;
     const entry: DocumentEntry = found ?? {
       id: first ? FIRST_DOCUMENT : library.newId(),
-      name: 'Untitled',
+      name: from?.name ?? 'Untitled',
       used: this.now(),
       file: null
     };
@@ -2794,7 +2812,7 @@ export class SheetService {
       this.report(`${entry.name} could not be read, so it was left as it was. Reload to try again.`);
       return;
     }
-    await this.swapTo({ ...entry, used: this.now() }, stored, first ? this.seed : undefined);
+    await this.swapTo({ ...entry, used: this.now() }, stored, first ? this.seed : from?.build);
     this.edited = false;
     this.publishDocument();
     if (this.elsewhere) {

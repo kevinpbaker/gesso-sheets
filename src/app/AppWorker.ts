@@ -6,6 +6,7 @@ import { SheetDocument } from './SheetDocument';
 import { sheetChannel } from './sheetChannel';
 import { seed } from './SheetSeed';
 import { SheetService } from './SheetService';
+import { TEMPLATE_BUILDS } from './SheetTemplates';
 import { spawnScriptWorker } from '../script/browserWorker';
 
 /**
@@ -32,7 +33,12 @@ import { spawnScriptWorker } from '../script/browserWorker';
  * neither worker.
  */
 const library = new OpfsSheetLibrary(COLUMN_COUNT);
-const service = new SheetService(new SheetDocument(), { library, seed, scripts: spawnScriptWorker });
+const service = new SheetService(new SheetDocument(), {
+  library,
+  seed,
+  templates: TEMPLATE_BUILDS,
+  scripts: spawnScriptWorker
+});
 
 serveChannels([sheetChannel(service)]);
 
