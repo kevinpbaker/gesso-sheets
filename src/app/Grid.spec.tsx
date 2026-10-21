@@ -1931,3 +1931,67 @@ describe('explaining an error under the cell', () => {
     expect(explanation()).toEqual([]);
   });
 });
+
+/**
+ * A click after the wheel has moved the sheet selects the cell and
+ * leaves the sheet where it is.
+ *
+ * The grid keeps its own copy of where it is scrolled, bound into the
+ * window, and brings a new selection into view against that copy. The
+ * wheel, a trackpad and the scrollbar move the window without telling
+ * it, so the copy said wherever the sheet had last been brought to:
+ * scrolled down by hand, a click on a cell in plain view moved the
+ * sheet, and scrolled back up, a click put the cell at the top.
+ */
+describe('a click after a wheel scroll', () => {
+  let h: Harness;
+
+  // Column C holds its own row number, so a cell can be clicked by name.
+  beforeEach(async () => {
+    h = await mount(document => {
+      for (let row = 0; row < 200; row++) {
+        document.setCell(row, 2, `c${row + 1}`);
+      }
+    });
+  });
+
+  afterEach(() => {
+    h?.ui.unmount();
+    h?.served.dispose();
+  });
+
+  const rows = (): string[] =>
+    h.ui.getAllByRole('rowheader').map(node => String(node.getProperty('label') ?? ''));
+
+  async function wheel(deltaY: number): Promise<void> {
+    h.ui.fireEvent.wheel({ x: 300, y: 200, deltaY });
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  async function click(name: string): Promise<void> {
+    h.ui.fireEvent.click(h.ui.getByRole('cell', { name }));
+    await h.ui.settle();
+    await h.served.settle();
+    await h.ui.settle();
+  }
+
+  it('selects a cell in view without moving the sheet', async () => {
+    await wheel(ROW_HEIGHT * 100);
+    const before = rows();
+    await click('c104');
+    expect(h.document.selection.row).toBe(103);
+    expect(rows()).toEqual(before);
+  });
+
+  it('does not put a cell at the top after scrolling down and back up', async () => {
+    await wheel(ROW_HEIGHT * 100);
+    await click('c104');
+    await wheel(-ROW_HEIGHT * 60);
+    const before = rows();
+    await click('c46');
+    expect(h.document.selection.row).toBe(45);
+    expect(rows()).toEqual(before);
+  });
+});

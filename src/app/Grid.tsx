@@ -14,6 +14,7 @@ import {
   LazySheet,
   percent,
   Row,
+  scrollPosition,
   Text,
   type DecorationShape,
   type UiElement,
@@ -3242,7 +3243,13 @@ export function Grid(
     widths.value = next;
   };
 
-  /** Written only when the selection needs bringing into view. */
+  /** Where the grid last moved the sheet itself, until a layout has reported it; see `scrollPosition` below. */
+  let broughtTo: { x: number; y: number } | null = null;
+  /**
+   * Where the sheet is scrolled: written when the selection is brought
+   * into view, and kept current by `scrollPosition` when anything else
+   * scrolls it.
+   */
   const scrollX = internalState(0);
   const scrollY = internalState(0);
   let gridNode: UiNode | null = null;
@@ -3339,7 +3346,38 @@ export function Grid(
         gridNode = node;
         gridNode$.next(node);
       },
-      modifiers: [viewport.modifier, contextMenu({ onOpen: at => onContext(at) })],
+      modifiers: [
+        viewport.modifier,
+        contextMenu({ onOpen: at => onContext(at) }),
+        /**
+         * Where the sheet really is, kept in the two states bound into it.
+         *
+         * The wheel, a trackpad and the scrollbar move the window without
+         * writing these, so they said wherever the selection had last been
+         * brought to, and everything that measures from them was off by
+         * however far the sheet had been scrolled by hand since: a click on
+         * a cell in plain view moved the sheet, and one after scrolling back
+         * up put the cell at the top. The selection's border and the
+         * popups hung off a cell are placed from them too. Gesso's own
+         * answer for a bound offset, `scrollPosition`.
+         */
+        scrollPosition({
+          onChange: offset => {
+            // A move the grid made itself is written before the layout
+            // that applies it reports: the report it skips is of the
+            // layout before the move, which would put the sheet back.
+            if (broughtTo !== null) {
+              const brought = broughtTo;
+              broughtTo = null;
+              if (offset.x !== brought.x || offset.y !== brought.y) {
+                return;
+              }
+            }
+            scrollX.value = offset.x;
+            scrollY.value = offset.y;
+          }
+        })
+      ],
       onKeyDown: onKey,
       // A press on a column's letter, a row's number or the corner. A
       // press on a cell is the cell's own click, and this lets it be.
@@ -3938,8 +3976,13 @@ export function Grid(
     const width = sheetWindow.widthOf(at.column);
     // The frozen strips cover the near edges, so a cell is only really
     // visible once it is past them.
-    scrollY.value = bring(scrollY.value, top, sheetWindow.rowHeightOf(at.row), view.height, HEADER_HEIGHT);
-    scrollX.value = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
+    const y = bring(scrollY.value, top, sheetWindow.rowHeightOf(at.row), view.height, HEADER_HEIGHT);
+    const x = bring(scrollX.value, left, width, view.width, GUTTER_WIDTH);
+    if (y !== scrollY.value || x !== scrollX.value) {
+      broughtTo = { x, y };
+    }
+    scrollY.value = y;
+    scrollX.value = x;
   };
   // What moved is what is brought into view: the corner, when Shift
   // moved it and left the active cell where it was; the active cell
