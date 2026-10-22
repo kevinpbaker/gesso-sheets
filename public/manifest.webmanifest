@@ -1,7 +1,7 @@
 {
   "name": "Tessera",
   "short_name": "Tessera",
-  "description": "A spreadsheet that keeps recalculating while the page is frozen.",
+  "description": "The spreadsheet that keeps working when your browser doesn't.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
