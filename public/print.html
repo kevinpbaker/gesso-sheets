@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Print — Gessosheet</title>
+    <title>Print — Tessera</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <!--
       The print window — Phase 39.
@@ -11,7 +11,7 @@
       The spreadsheet is a canvas, and a canvas prints as a picture of
       the screen. This page is the table instead: the application worker
       builds it (src/app/SheetPrint.ts) and sends it here on the
-      `gessosheet-print` BroadcastChannel, and the browser does the rest
+      `tessera-print` BroadcastChannel, and the browser does the rest
       — page breaks, margins, and Save as PDF in its own dialog.
 
       Plain DOM and no build step, on purpose: it is a page for a
@@ -121,7 +121,7 @@
     </div>
     <main id="sheet"><p class="waiting">Waiting for the sheet…</p></main>
     <script>
-      const channel = new BroadcastChannel('gessosheet-print');
+      const channel = new BroadcastChannel('tessera-print');
       let drawn = 0;
       channel.onmessage = event => {
         const job = event.data;

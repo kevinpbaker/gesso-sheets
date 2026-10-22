@@ -34,7 +34,7 @@ def prop(name, value):
 
 
 def connect():
-    profile = tempfile.mkdtemp(prefix='gessosheet-lo-')
+    profile = tempfile.mkdtemp(prefix='tessera-lo-')
     office = subprocess.Popen([
         'soffice', '--headless', '--invisible', '--nologo', '--norestore',
         f'-env:UserInstallation=file://{profile}',

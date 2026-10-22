@@ -36,7 +36,7 @@ import type { SheetCommands, SheetView } from './SheetContract';
  */
 
 export const WORKBOOK: ShellFileType = {
-  description: 'Gessosheet workbook',
+  description: 'Tessera workbook',
   mediaType: 'application/json',
   extensions: ['.gsheet']
 };
@@ -193,7 +193,7 @@ export function fileActions(ctx: ComponentContext, sheet: ChannelReplica<SheetVi
      * which the application worker builds and sends it.
      */
     print: pdf => {
-      void shell.openPopup({ url: '/print.html', name: 'gessosheet-print', width: 1000, height: 760 }).then(opened => {
+      void shell.openPopup({ url: '/print.html', name: 'tessera-print', width: 1000, height: 760 }).then(opened => {
         if (!opened) {
           sheet.send.reportFile('The print window was blocked. Allow pop-ups for this site, then print again.');
         }

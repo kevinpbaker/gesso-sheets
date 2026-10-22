@@ -204,7 +204,7 @@ describe('the File menu', () => {
     await mount();
     h!.service.setCell(0, 0, 'Region');
     await menu('f', 'Print…');
-    expect(h!.popups).toEqual([{ id: expect.any(Number), url: '/print.html', name: 'gessosheet-print' }]);
+    expect(h!.popups).toEqual([{ id: expect.any(Number), url: '/print.html', name: 'tessera-print' }]);
     expect(h!.printed).toHaveLength(1);
     expect(h!.printed[0]).toMatchObject({ title: 'Untitled', pdf: false });
     expect(h!.printed[0].html).toContain('<td>Region</td>');

@@ -1,5 +1,5 @@
 {
-  "name": "gessosheet",
+  "name": "tessera",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "proof": "node --experimental-strip-types scripts/frame-budget.ts",
     "icons": "node --experimental-strip-types scripts/icons.ts",
+    "app-icon": "node --experimental-strip-types scripts/app-icon.ts",
     "touch": "node --experimental-strip-types scripts/touch-check.ts"
   },
   "dependencies": {

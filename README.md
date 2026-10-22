@@ -1,6 +1,6 @@
 <div align="center">
 
-# gessosheet
+# Tessera
 
 **A million-cell spreadsheet that keeps recalculating while your browser is frozen solid.**
 
@@ -11,6 +11,11 @@ TypeScript · Canvas · three threads · zero DOM under the sheet · a frame bud
 [Sixty seconds](#sixty-seconds) · [What it does](#what-it-does-today) · [The numbers](#the-numbers) · [How](#how-it-works) · [Not yet](#what-it-is-not-yet) · [Under the hood](#under-the-hood)
 
 </div>
+
+Called Gessosheet until October 2026, and still `gesso-sheets` as a
+repository and in the roadmap. What the browser has already saved keeps
+the old name too — the `gessosheet:` settings and `gessosheet.json` in
+the origin's private files — so a rename does not lose anyone's work.
 
 ---
 

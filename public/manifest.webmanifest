@@ -1,6 +1,6 @@
 {
-  "name": "Gessosheet",
-  "short_name": "Gessosheet",
+  "name": "Tessera",
+  "short_name": "Tessera",
   "description": "A spreadsheet that keeps recalculating while the page is frozen.",
   "start_url": "/",
   "scope": "/",

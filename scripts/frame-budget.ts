@@ -156,7 +156,7 @@ async function main(): Promise<void> {
   let preview: ChildProcess | undefined;
   let browser: ChildProcess | undefined;
   let devtools: DevTools | undefined;
-  const profile = mkdtempSync(join(tmpdir(), 'gessosheet-proof-'));
+  const profile = mkdtempSync(join(tmpdir(), 'tessera-proof-'));
 
   try {
     if (process.env.SKIP_BUILD === undefined) {
@@ -177,7 +177,7 @@ async function main(): Promise<void> {
      * `/` is the spreadsheet on its own: no strip, and no recalculate
      * button to press, because neither belongs in front of somebody
      * who came for a spreadsheet. Everything this script reads — the
-     * frame recording on `globalThis.gessosheetProof`, the block
+     * frame recording on `globalThis.tesseraProof`, the block
      * button, the heatmap, the button with two hundred thousand cells
      * behind it — lives on `/proof`, which is the page that exists to
      * be measured.
@@ -197,7 +197,7 @@ async function main(): Promise<void> {
     // application to be up.
     await waitFor(
       'the first frame',
-      async () => ((await devtools.evaluate<number>('globalThis.gessosheetProof?.frames().length ?? 0')) > 0 ? true : undefined),
+      async () => ((await devtools.evaluate<number>('globalThis.tesseraProof?.frames().length ?? 0')) > 0 ? true : undefined),
       30_000
     );
 
@@ -579,7 +579,7 @@ async function main(): Promise<void> {
     await devtools.press('c', 67, 2);
     await sleep(300);
 
-    await devtools.evaluate('globalThis.gessosheetProof.reset()');
+    await devtools.evaluate('globalThis.tesseraProof.reset()');
     const blockButton = await devtools.evaluate<{ x: number; y: number }>(
       `(() => {
          const box = document.getElementById('gesso-proof-block').getBoundingClientRect();
@@ -610,8 +610,8 @@ async function main(): Promise<void> {
     // "frames drawn during it" for a worker that drew none. gessologic's
     // proof, which copied this, found exactly that: a render worker
     // stalled for the whole block, passing the old count.
-    const recorded = await devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
-    const window = await devtools.evaluate<{ start: number; end: number } | null>('globalThis.gessosheetProof.lastBlock()');
+    const recorded = await devtools.evaluate<ProofFrame[]>('globalThis.tesseraProof.frames()');
+    const window = await devtools.evaluate<{ start: number; end: number } | null>('globalThis.tesseraProof.lastBlock()');
     if (window === null) {
       throw new Error('The block button did not record a block.');
     }
@@ -818,13 +818,13 @@ async function chooseItem(devtools: DevTools, label: string): Promise<void> {
 
 async function scrollRun(devtools: DevTools, what: string, notches = NOTCHES): Promise<ProofFrame[]> {
   console.log(`  ${what}…`);
-  await devtools.evaluate('globalThis.gessosheetProof.reset()');
+  await devtools.evaluate('globalThis.tesseraProof.reset()');
   for (let notch = 0; notch < notches; notch++) {
     await devtools.wheel(SIZE[0] / 2, SIZE[1] / 2, notch % 20 === 19 ? 120 : 0, 100);
     await sleep(16);
   }
   await sleep(200);
-  return devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
+  return devtools.evaluate<ProofFrame[]>('globalThis.tesseraProof.frames()');
 }
 
 /**
@@ -847,7 +847,7 @@ async function thumbRun(devtools: DevTools): Promise<ProofFrame[]> {
   await devtools.click(grid.left + 300, grid.top + 200);
   await devtools.press('Home', 36, 2);
   await sleep(300);
-  await devtools.evaluate('globalThis.gessosheetProof.reset()');
+  await devtools.evaluate('globalThis.tesseraProof.reset()');
   const x = grid.right - 5;
   let y = grid.top + 12;
   await devtools.drag('mousePressed', x, y);
@@ -858,7 +858,7 @@ async function thumbRun(devtools: DevTools): Promise<ProofFrame[]> {
   }
   await devtools.drag('mouseReleased', x, y);
   await sleep(200);
-  const frames = await devtools.evaluate<ProofFrame[]>('globalThis.gessosheetProof.frames()');
+  const frames = await devtools.evaluate<ProofFrame[]>('globalThis.tesseraProof.frames()');
   await devtools.press('Home', 36, 2);
   await sleep(300);
   return frames;

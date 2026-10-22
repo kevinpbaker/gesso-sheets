@@ -65,7 +65,7 @@ function printWindow(): ((job: PrintJob) => void) | undefined {
   if (typeof BroadcastChannel === 'undefined') {
     return undefined;
   }
-  const channel = new BroadcastChannel('gessosheet-print');
+  const channel = new BroadcastChannel('tessera-print');
   let last: PrintJob | null = null;
   channel.onmessage = event => {
     if ((event.data as { ready?: boolean } | null)?.ready === true && last !== null) {

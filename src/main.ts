@@ -34,7 +34,7 @@ if (host === null) {
   throw new Error('index.html has no #app element to mount into.');
 }
 
-const panel = isProofPath(location.pathname) ? proofPanel(host, { global: 'gessosheetProof', layout: true }) : null;
+const panel = isProofPath(location.pathname) ? proofPanel(host, { global: 'tesseraProof', layout: true }) : null;
 const app = createApp({
   ...(panel?.options ?? {}),
   history: { mode: 'path' },

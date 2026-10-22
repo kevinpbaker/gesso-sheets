@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   let preview: ChildProcess | undefined;
   let browser: ChildProcess | undefined;
   let devtools: DevTools | undefined;
-  const profile = mkdtempSync(join(tmpdir(), 'gessosheet-touch-'));
+  const profile = mkdtempSync(join(tmpdir(), 'tessera-touch-'));
   try {
     if (process.env.SKIP_BUILD === undefined) {
       await run('npx', ['vite', 'build']);
